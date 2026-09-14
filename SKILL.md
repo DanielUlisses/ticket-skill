@@ -1,0 +1,63 @@
+---
+name: ticket
+description: Opens an isolated ticket in Herdr — creates a tab in the current workspace, a worktree of this repo via `ga` (Omarchy), splits the tab into terminal (left) + Claude Code in plan mode with Opus (right), and hands the ticket off to the agent, which then orchestrates implementation (Sonnet), code review, and testing (Haiku) without committing. Use with /ticket <task description>.
+argument-hint: "<task description>"
+disable-model-invocation: true
+allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write
+---
+
+# /ticket
+
+Ticket received:
+
+<ticket>
+$ARGUMENTS
+</ticket>
+
+Your job here is only to **set up the environment and hand off the ticket**. Do not plan or implement the task in this session — that's done by the agent you're about to start in the new tab.
+
+Follow the `herdr` skill's rules (check `HERDR_ENV=1`, read IDs from the JSON, don't close anything you didn't create, don't answer blocked dialogs without the user). The authoritative syntax is whatever the installed binary exposes (`herdr tab`, `herdr pane`, `herdr agent`).
+
+## 1. Validate the input
+
+If the ticket is empty, ask for the task description and stop.
+
+## 2. Derive the names (without asking for confirmation)
+
+- **Tab label**: 2–3 words, lowercase, up to 20 characters, describing the task. E.g.: `retry webhook`, `aks node pool`.
+- **Branch**: `<type>-<slug>`, kebab-case, in English, up to 40 characters.
+  - `type` ∈ `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`.
+  - `slug` with 2–4 semantic words. E.g.: `fix-webhook-retry-backoff`, `feat-aks-spot-nodepool`.
+  - **No `/` and no `--`**: `ga` uses the branch in the directory name (`../<repo>--<branch>`) and `gd` splits repo/branch at the first `--`.
+
+## 3. Save the ticket to a file
+
+Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text into it with the Write tool, **exactly** as received (no summarizing or rewriting).
+
+## 4. Run the launcher
+
+```bash
+~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>"
+```
+
+The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the tab in the current workspace, runs `ga <branch>` in the tab's pane, splits it with Claude Code on the right (`--model opus --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`.
+
+Handle the exit code:
+
+- **0** — all set. Go to step 5.
+- **3** — Claude Code in the new tab stopped at a dialog (usually "trust this folder?", since the worktree is a new directory). Tell the user to open the tab, answer the dialog, and let you know. Once they confirm, run the `launch.sh prompt ...` command the script printed.
+- **Other, pull failure, or root not on the base branch** — the script stops before creating the tab. Explain the error to the user and stop. Do not checkout, stash, reset, or merge in the root on your own.
+- **Other** — read the error. If it's a Herdr syntax change, check `herdr tab`, `herdr pane`, and `herdr agent` and do the steps manually (section below). If it's a git problem (branch or directory already exists), pick another branch name and run again. Do not delete existing branches or worktrees.
+
+## 5. Report
+
+Reply in a few lines: tab name, branch, worktree path, agent name, and that the plan will show up for approval in that tab. Don't wait around for the agent to finish.
+
+## Manual fallback (only if the script fails due to a CLI change)
+
+0. In the main repo root, confirm you're on the base branch and run `git pull --ff-only origin <base>`; stop if it fails.
+1. `herdr tab create` in `$HERDR_WORKSPACE_ID` with the label; read the root pane from `.result.root_pane`.
+2. `herdr pane run <root-pane> "cd <main-repo-root> && ga <branch>"` and wait until the `../<repo>--<branch>` directory exists on the right branch.
+3. `herdr pane split <root-pane> --direction right --cwd <worktree> --no-focus`; read `.result.pane`.
+4. `herdr agent start tk-<branch> --kind claude --pane <new-pane> -- --model opus --permission-mode plan --disallowedTools "Bash(git commit:*)" "Bash(git push:*)"`.
+5. Render `templates/agent-prompt.md` (substitute `{{TICKET}}`, `{{BRANCH}}`, `{{BASE_BRANCH}}`, `{{BASE_COMMIT}}`, `{{WORKTREE}}`) and send it with `herdr agent prompt tk-<branch> "<prompt>"`.
