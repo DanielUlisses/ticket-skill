@@ -19,7 +19,7 @@ Investigate the necessary code and present a plan with: goal, files that must ch
 
 ### Phase 2 — Implementation (Sonnet subagent)
 
-After the plan is approved, **do not implement it yourself**. Delegate to the `ticket-implementer` subagent (model: sonnet), passing the full approved plan, the worktree path, and the inviolable rules. If the plan is large, split it into sequential steps. Keep the change summary it returns.
+After the plan is approved, **do not implement it yourself**. Delegate to the `ticket-implementer` subagent (model: sonnet), passing the full approved plan and the worktree path — its own inviolable rules travel with it. If the plan is large, split it into sequential steps. Keep the change summary it returns.
 
 ### Phase 3 — Code review (separate subagent)
 

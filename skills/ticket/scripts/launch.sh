@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# /ticket launcher — Herdr + Omarchy `ga` + Claude Code
+# /ticket implementation launcher — Herdr + Omarchy `ga` + Claude Code
+#
+# Same tab/worktree/pane mechanics as /small-ticket's launcher, aimed at an
+# already-approved ticket instead of a plan to be drafted: the right-hand
+# pane runs unattended (no plan mode, no one there to click a permission
+# prompt on a Bash call mid-TDD-loop), so the guardrail moves entirely to
+# --disallowedTools: git add/commit/push/stash/reset/rebase and branch
+# switches are blocked, since this ticket must land unstaged for review.
 #
 # Usage:
 #   launch.sh <tab-label> <branch> <ticket-file>
 #   launch.sh prompt <agent-name> <prompt-file>
 #
 # Optional variables:
-#   TICKET_AGENT_KIND  (default: claude)  — Claude Code kind in Herdr (`herdr agent`)
-#   TICKET_PLAN_MODEL  (default: opus)
-#   TICKET_GA_TIMEOUT  (default: 90)      — seconds to wait for the worktree
-#   TICKET_REMOTE      (default: origin)
-#   TICKET_BASE_BRANCH (default: remote's default branch, e.g. main)
+#   TICKET_AGENT_KIND      (default: claude)           — Claude Code kind in Herdr (`herdr agent`)
+#   TICKET_IMPL_MODEL      (default: sonnet)
+#   TICKET_IMPL_PERMISSION_MODE (default: bypassPermissions) — acceptEdits only covers Edit/Write, not the Bash implement/test loop
+#   TICKET_GA_TIMEOUT      (default: 90)               — seconds to wait for the worktree
+#   TICKET_REMOTE          (default: origin)
+#   TICKET_BASE_BRANCH     (default: remote's default branch, e.g. main)
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 
@@ -22,9 +30,10 @@ log() { echo "==> $*" >&2; }
 need() { command -v "$1" >/dev/null 2>&1 || die "command '$1' not found in PATH"; }
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEMPLATE="$SKILL_DIR/templates/agent-prompt.md"
+TEMPLATE="$SKILL_DIR/templates/ticket-agent-prompt.md"
 AGENT_KIND="${TICKET_AGENT_KIND:-claude}"
-PLAN_MODEL="${TICKET_PLAN_MODEL:-opus}"
+IMPL_MODEL="${TICKET_IMPL_MODEL:-sonnet}"
+IMPL_PERMISSION_MODE="${TICKET_IMPL_PERMISSION_MODE:-bypassPermissions}"
 GA_TIMEOUT="${TICKET_GA_TIMEOUT:-90}"
 REMOTE="${TICKET_REMOTE:-origin}"
 
@@ -172,13 +181,15 @@ fi
 RIGHT="$(jq -r '.result.pane.pane_id // .result.pane.id // empty' <<<"$SPLIT_JSON")"
 [[ -n "$RIGHT" ]] || die "couldn't read the new pane from the response: $SPLIT_JSON"
 
-# ---- 4. start Claude Code in plan mode --------------------------------------
+# ---- 4. start Claude Code unattended, blocked from staging/committing/pushing ------
 sleep 1
-log "starting '$AGENT' ($AGENT_KIND, $PLAN_MODEL, plan mode) in pane $RIGHT"
+log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, $IMPL_PERMISSION_MODE) in pane $RIGHT"
 set +e
 START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$RIGHT" -- \
-  --model "$PLAN_MODEL" --permission-mode plan \
-  --disallowedTools "Bash(git commit:*)" "Bash(git push:*)" 2>&1)"
+  --model "$IMPL_MODEL" --permission-mode "$IMPL_PERMISSION_MODE" \
+  --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" \
+    "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)" \
+    "Bash(git checkout:*)" "Bash(git switch:*)" 2>&1)"
 START_RC=$?
 set -e
 

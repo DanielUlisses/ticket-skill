@@ -1,12 +1,12 @@
 ---
-name: ticket
-description: Opens an isolated ticket in Herdr — creates a tab in the current workspace, a worktree of this repo via `ga` (Omarchy), splits the tab into terminal (left) + Claude Code in plan mode with Opus (right), and hands the ticket off to the agent, which then orchestrates implementation (Sonnet), code review, and testing (Haiku) without committing. Use with /ticket <task description>.
+name: small-ticket
+description: Opens an isolated Herdr worktree for one already-defined ticket, plans it in Claude Code, then implements, reviews, and tests it via subagents, leaving everything uncommitted. For a rough idea that still needs sharpening and splitting into tickets, use /ticket instead.
 argument-hint: "<task description>"
 disable-model-invocation: true
-allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write
+allowed-tools: Bash(~/.claude/skills/small-ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write
 ---
 
-# /ticket
+# /small-ticket
 
 Ticket received:
 
@@ -37,7 +37,7 @@ Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text i
 ## 4. Run the launcher
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>"
+~/.claude/skills/small-ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>"
 ```
 
 The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the tab in the current workspace, runs `ga <branch>` in the tab's pane, splits it with Claude Code on the right (`--model opus --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`.
