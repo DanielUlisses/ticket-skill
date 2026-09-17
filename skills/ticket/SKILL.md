@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead.
+description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to disk, use /implement-tickets.
 argument-hint: "<task description>"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
@@ -48,7 +48,7 @@ Once approved, write one file per ticket to `.scratch/<feature-slug>/issues/<NN>
 
 ## Phase 3 — Pick tickets to implement
 
-Ask the developer which to implement now: **all**, **none**, or **specific numbers** (AskUserQuestion, or plainly if the options don't fit). If the answer is none, stop here — the tickets are saved for a later `/ticket` run.
+Ask the developer which to implement now: **all**, **none**, or **specific numbers** (AskUserQuestion, or plainly if the options don't fit). If the answer is none, stop here — the tickets are saved, and `/implement-tickets` picks them up later without re-running phases 1–3.
 
 Check every selected ticket's blocked-by edges against the rest of the *selection*: a ticket blocked by one that's neither landed nor also launching right now would build against code that doesn't exist yet. Hold those back and note which unmet blocker gates each one. Launch only the frontier of the selection.
 
@@ -73,4 +73,4 @@ Handle the exit code exactly as `small-ticket` does: **0** → move to the next 
 
 ## Phase 5 — Report
 
-List, per launched ticket: tab, branch, worktree, agent. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/ticket` again once blockers land. Don't wait for any coordinator to finish.
+List, per launched ticket: tab, branch, worktree, agent. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
