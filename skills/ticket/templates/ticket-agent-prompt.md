@@ -13,13 +13,17 @@ The plan behind this ticket was already settled with the developer before this s
 
 ## Phase 1 — Implement
 
-Run `/implement` against the ticket above: it drives TDD at the agreed seams, typechecks and runs single test files as it goes, and runs the full suite once at the end. Follow that process, but stop before its last two steps — do not run its internal review and do not commit; Phase 2 below reviews this in a clean context, and nothing gets committed here regardless.
+Implement the ticket above with mattpocock's `implement` process, **inlined here in full**. That skill ships `disable-model-invocation: true`, so nothing in this session can invoke it — don't go looking for `/implement`, and don't report it as unavailable. The whole of it is:
 
-If `/implement` doesn't trigger as a command in this context, run the same process by hand instead: drive `/tdd` at the seams, typecheck and run single test files repeatedly, run the full suite once, then stop.
+- Drive TDD at pre-agreed seams. Call the Skill tool with `mattpocock-skills:tdd` — that one *is* model-invocable — and follow its process as loaded.
+- Typecheck regularly, and run single test files regularly, as you go.
+- Run the full test suite once, at the end.
+
+Its last two steps do not apply here: don't run its review (Phase 2 does that below, with a fixed point it doesn't know about) and don't commit (nothing is committed in this worktree, ever).
 
 ## Phase 2 — Review
 
-Run `/code-review`, with three overrides for this mid-flow diff:
+Call the Skill tool with `mattpocock-skills:code-review`. Use that namespaced name: Claude Code also ships a built-in `code-review`, which hunts correctness bugs in a diff rather than checking it against standards and spec, and the overrides below only make sense for mattpocock's. Apply three overrides for this mid-flow diff:
 
 - Fixed point: `{{BASE_COMMIT}}`. Nothing has been committed since, so the usual `git diff {{BASE_COMMIT}}...HEAD` is empty — use `git diff {{BASE_COMMIT}}` (working tree against base) instead.
 - Spec: the ticket above. No tracker is configured here, so treat it as the spec source directly and skip any prompt to run `/setup-matt-pocock-skills`.
