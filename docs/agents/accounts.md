@@ -22,11 +22,11 @@ summary's `ACCOUNT=` line says it, and the launcher proves it rather than assumi
 ## Overriding it
 
 ```bash
-launch.sh --account <name> "<label>" "<branch>" "<ticket-file>" [model]
+launch.sh --account <name> [--effort <level>] "<label>" "<branch>" "<ticket-file>" [model]
 ```
 
-Which name goes there is settled **once a session**, with the model, in the one question the
-skills ask before their first launch — see [`session-settings.md`](session-settings.md). This
+Which name goes there is settled **once a session**, with the model and the effort, in the one
+question the skills ask before their first launch — see [`session-settings.md`](session-settings.md). This
 section is the knob; that one is when it gets turned.
 
 `<name>` is an account as `claude-acc list` prints it, or `default` for the standard

@@ -30,6 +30,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - **Wide refactor exception**: one mechanical change with a codebase-wide blast radius (rename a column, retype a shared symbol) doesn't fit a vertical slice. Sequence it instead as expand (add the new form beside the old) → migrate in blast-radius-sized batches, each its own ticket, CI green batch to batch → contract (delete the old form once nothing calls it).
 - Give each ticket its **blocked-by** edges: the other tickets that must land first. No blockers means it's on the **frontier** — startable immediately.
 - Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Phase 4's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
+- Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — Phase 3's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs.
 - Number tickets `01`, `02`, … in dependency order (blockers first).
 
@@ -68,11 +69,15 @@ Issues being *enabled* is GitHub's default and proves nothing on its own, which 
 
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
+**Suggested effort:** <low|medium|high|xhigh|max> — <one clause: why this ticket needs that much thinking, or that little>
+
 - [ ] <Acceptance criterion>
 - [ ] <Acceptance criterion>
 ```
 
 The two homes differ in only two places: the GitHub home carries the heading as the issue **title** rather than as a `# ` line, and writes `**Blocked by:**` as issue references (`#12, #13`) where the file home writes ticket numbers (`01, 02`).
+
+`**Suggested effort:**` is written the same way in **both** homes — a body line like the two above it, in the file under `.scratch/` and in the issue body alike. It is what Phase 3's launch question pre-selects, and what `/implement-tickets` reads back off a board later; a ticket written before this line existed simply carries none, and the launcher's own `medium` stands.
 
 ### Writing to a GitHub tracker
 
@@ -144,9 +149,9 @@ Once the selection is settled, settle the session's launch settings below — un
 
 ### The session's launch settings
 
-Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — this skill's whole wave, and anything `/small-ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, so this comes after the selection above, never on load.
+Three things govern every ticket a session launches: the **account** it bills to, the **model** that implements it, and the **effort** — how hard that model thinks — it runs at. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — this skill's whole wave, and anything `/small-ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, so this comes after the selection above, never on load.
 
-**Already settled** — this session answered, in an earlier wave or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+**Already settled** — this session answered, in an earlier wave or because the developer named them up front: don't ask again. State which account, model and effort are in force when you launch and move on.
 
 **Not settled yet** — read the defaults before you state them, rather than assuming them:
 
@@ -154,15 +159,21 @@ Two things govern every ticket a session launches: the **account** it bills to a
 ~/.claude/skills/ticket/scripts/launch.sh defaults
 ```
 
-It changes nothing and prints one line per setting, plus the options for the account:
+It changes nothing and prints one line per setting, plus the options for the account and for the effort:
 
 ```
 MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+EFFORT=medium (from /home/you/.claude/skills/ticket-models.env)
+EFFORTS=low medium high xhigh max
 ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
 ACCOUNTS=default work
 ```
 
 The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch every ticket somewhere else. Quote what the command printed.
+
+`EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
+
+**The tickets suggest the effort.** Every ticket Phase 2 wrote carries a `**Suggested effort:**` line — read the *selection's* and pre-select it over the launcher's `EFFORT=` default. Where the selected tickets disagree, name the spread and pre-select the highest of them: the ticket that asked for more thinking is the one that loses by getting less, and a single ticket can still be launched at its own level as a per-ticket override. Where none of them carries the line — a board written before this existed — `EFFORT=` stands.
 
 Then ask with **one** `AskUserQuestion` call, one question per setting:
 
@@ -170,17 +181,18 @@ Then ask with **one** `AskUserQuestion` call, one question per setting:
 |---|---|---|---|
 | Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
 | Model | "Which model should implement this session's tickets?" | the `MODEL=` value first, labelled `(default)`, then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary agrees with what launched |
+| Effort | "How hard should the model think on this session's tickets?" | the suggested level first, labelled `(suggested by the tickets)` — or the `EFFORT=` value labelled `(default)` where none of them suggests one — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary agrees with what launched |
 
 One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
 
-**Then hold them.** Every launch in this session passes both and names both in its report. Two overrides exist and they are different things:
+**Then hold them.** Every launch in this session passes all three and names all three in its report. Two overrides exist and they are different things:
 
-- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
+- **For one ticket** — the developer names an account, a model or an effort for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
 - **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
 
 Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
 
-Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model governs both — there is no separate review model here the way `/small-ticket` has one.
+Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model **and the chosen effort** govern both — there is no separate review model here the way `/small-ticket` has one, and no separate review effort anywhere. Trading effort down for a cheaper run buys a shallower review with it.
 
 ## Phase 4 — Launch one coordinator per launched ticket
 
@@ -194,24 +206,28 @@ For each ticket to launch, derive names the same way `small-ticket` does:
 Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/ticket/scripts/launch.sh [--account <name>] --effort "<level>" "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-Both values come from the session's launch settings above: `--account <name>` unless the
+All three values come from the session's launch settings above: `--account <name>` unless the
 session inherits, in which case the flag is left off entirely and the ticket resolves the
-developer's own directory link, exactly as every ticket did before this knob existed. A
-per-ticket override the developer named for *this* ticket replaces one value here and leaves
-the session's settings alone. An unknown account name stops the script before anything is
+developer's own directory link, exactly as every ticket did before this knob existed;
+`--effort <level>` always, since unlike the account there is no "inherit" for it and an
+explicit flag is what makes the launch and its summary agree. A level the launcher doesn't
+know stops it before anything is created — Claude Code itself would only warn and run at its
+own default, so a typo would otherwise look like it worked. A per-ticket override the
+developer named for *this* ticket replaces one value here and leaves the session's settings
+alone. An unknown account name stops the script before anything is
 created, and `claude-acc list` is the answer to show them. See `docs/agents/accounts.md` and
 `docs/agents/session-settings.md`.
 
 The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
-Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `ACCOUNT=` line names the Claude account that ticket actually started under.
+Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `MODEL=`, `EFFORT=` and `ACCOUNT=` lines name what that ticket actually started on.
 
 ## Phase 5 — Report
 
-List, per launched ticket: workspace, branch, worktree, agent, and the account and model it ran on — the launcher's `ACCOUNT=` line, not what you asked for, since that one is verified in the pane. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
+List, per launched ticket: workspace, branch, worktree, agent, and the account, model and effort it ran on — the launcher's own `ACCOUNT=`, `MODEL=` and `EFFORT=` lines, not what you asked for; the account one in particular is verified in the pane. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
 
 ## Manual fallback (only if the script fails due to a CLI change)
 
@@ -221,7 +237,7 @@ Only step 3, starting the agent, differs — `/ticket` runs unattended, so it do
 
 ```bash
 herdr agent start tk-<branch> --kind claude --pane <root-pane> -- \
-  --model <the chosen model> --permission-mode bypassPermissions \
+  --model <the chosen model> --effort <the chosen effort> --permission-mode bypassPermissions \
   --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" \
     "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)" \
     "Bash(git checkout:*)" "Bash(git switch:*)"
