@@ -41,8 +41,15 @@ Ask once, with `AskUserQuestion`: "Which model should implement this ticket?" �
 ## 5. Run the launcher
 
 ```bash
-~/.claude/skills/small-ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
+
+`--account` is optional and rarely wanted: leave it off and the ticket inherits whatever
+account the developer's own directory link resolves to, which is what every ticket has
+always done. Pass it only when the developer names an account — to spread work across
+subscriptions rather than exhaust one — and pass exactly what they said. The summary's
+`ACCOUNT=` line reports which account ran either way, verified in the pane; see
+`docs/agents/accounts.md`.
 
 The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model also drives the `ticket-implementer` subagent (and this pane's plan-mode orchestrator); `ticket-reviewer` and `ticket-tester` follow `TICKET_REVIEW_MODEL` / `TICKET_TEST_MODEL` from `config/models.env` — see `docs/agents/models.md`.
 
@@ -50,6 +57,7 @@ Handle the exit code:
 
 - **0** — all set. Go to step 6.
 - **3** — Claude Code in the new tab stopped at a dialog (usually "trust this folder?", since the worktree is a new directory). Tell the user to open the tab, answer the dialog, and let you know. Once they confirm, run the `launch.sh prompt ...` command the script printed.
+- **1, on an unknown account name** — the script stops before creating anything. Show the developer `claude-acc list` and ask which account they meant; don't guess a name.
 - **1, on a pull failure or a root not on the base branch** — the script stops before creating the worktree. Explain the error to the user and stop. Do not checkout, stash, reset, or merge in the root on your own.
 - **Other** — read the error. Every Herdr call reports Herdr's own message (`ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), so read that rather than guessing. If it's a Herdr syntax change, check `herdr worktree`, `herdr tab`, `herdr pane`, and `herdr agent` and do the steps manually (section below). If it's a git problem (branch or directory already exists), pick another branch name and run again. Do not delete existing branches or worktrees.
 

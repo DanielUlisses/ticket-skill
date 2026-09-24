@@ -12,6 +12,13 @@ Every ticket `/ticket` or `/implement-tickets` launches leaves **five** things b
 
 a Herdr **workspace**, its three **tabs** (`agent`, `review`, `shell`), their **panes**, a git **worktree**, and a **branch**.
 
+A ticket launched on a named account (`--account`) leaves a **sixth**: a `claude-acc`
+directory link. `remove --worktree` takes it with the worktree, and says `REMOVED account
+link for <path>` when it does — link entries never expire on their own, so a sweep that
+left them would grow `~/.claude-switch/links` a line per ticket forever. A ticket that
+inherited its account has no link of its own and nothing is said. See
+`docs/agents/accounts.md`.
+
 When the developer merges the PR and moves on, all five stay. Over a few waves they accumulate: a sidebar full of workspaces for work that landed days ago, and a `git branch` list that no longer means anything. Nothing in the workflow clears them, deliberately — `/implement-tickets` names the cleanup and refuses to act on it, because removing a worktree is not a coordinator's decision. This skill is where that decision gets made, with the developer in the room.
 
 **Listing is safe and always available. Removal is opt-in per item, and a worktree with uncommitted changes is never removed — not with `--force`, not on the developer's say-so.**

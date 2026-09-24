@@ -127,12 +127,18 @@ For each ticket to launch, derive names the same way `small-ticket` does:
 Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
+
+`--account` is optional and off by default: without it the ticket inherits the developer's
+own directory link, exactly as every ticket has. Pass it only when the developer names an
+account to spread a wave across subscriptions, and pass what they said — an unknown name
+stops the script before anything is created, and `claude-acc list` is the answer to show
+them. See `docs/agents/accounts.md`.
 
 The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
-Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, and its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell.
+Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `ACCOUNT=` line names the Claude account that ticket actually started under.
 
 ## Phase 5 — Report
 

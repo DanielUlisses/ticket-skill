@@ -8,7 +8,12 @@ on its own.
 | File | Holds | Sourced by |
 |---|---|---|
 | `lib/ticket-git-repo.sh` | `die`/`log`/`need`, `resolve_repo_root`, `resolve_base_branch`, `run_git_net` | all three scripts |
+| `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
 | `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory resolution, `fill_prose`, `load_ticket_models`, `launcher_main` | the two launchers |
+
+`ticket-account.sh` is shared three ways for the same reason the git half is: the launchers
+write the links and `/sweep-tickets` takes them away again, and both halves have to agree on
+what counts as a link a ticket owns. See [`accounts.md`](accounts.md).
 
 ## Why one level up
 
@@ -40,6 +45,20 @@ values, not code paths.
 `load_ticket_models` is called by the launcher *before* it sets those parameters,
 because `ticket-models.env` may set any `TICKET_*` variable and anything resolved
 from the environment has to be resolved after the config file has been read.
+
+The account is a launch-time argument rather than one of those six parameters: it varies
+per ticket, not per skill, so `--account` (or `TICKET_ACCOUNT`) is parsed inside
+`launcher_main` and both skills get it from the one definition.
+
+## The one place the tab sequence forks
+
+`launcher_main` builds the `agent` tab two ways, and the fork is not a preference — a pane
+resolves its Claude account once, when its shell starts. Inheriting the account (the
+default, and every launch before this existed) nothing is written, so the worktree's own tab
+is renamed and the agent keeps the root pane. Overriding it, that pane's shell predates the
+link, so the agent gets a tab created afterwards and the stale one is closed. Both skills
+take the same fork; neither needed the function split. [`accounts.md`](accounts.md) has the
+table and the reasoning.
 
 ## Why `/sweep-tickets` shares the git half
 

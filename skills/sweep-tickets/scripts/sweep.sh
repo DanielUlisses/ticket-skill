@@ -3,7 +3,9 @@
 #
 # A ticket launched by /ticket or /implement-tickets leaves five things behind:
 # a Herdr workspace, its tabs, its panes, a git worktree, and a branch. This
-# script reports all of them and removes them one item at a time.
+# script reports all of them and removes them one item at a time. A ticket
+# launched with --account leaves a sixth, a claude-acc directory link, which
+# `remove --worktree` takes with the worktree (see docs/agents/accounts.md).
 #
 # Usage:
 #   sweep.sh list [--no-fetch]
@@ -47,7 +49,7 @@ else
     [[ -f "$d/ticket-git-repo.sh" ]] && { LIB_DIR="$d"; break; }
   done
 fi
-for lib in ticket-git-repo.sh; do
+for lib in ticket-git-repo.sh ticket-account.sh; do
   [[ -f "${LIB_DIR:-}/$lib" ]] \
     || { echo "ERROR: shared library $lib not found in ${LIB_DIR:-<no library directory found next to $SKILL_DIR>} — re-run install.sh, or set TICKET_LIB_DIR" >&2; exit 1; }
   # shellcheck source=/dev/null
@@ -456,6 +458,18 @@ remove_worktree() {
     echo "SKIPPED $path — branch '$branch' is $BRANCH_STATE ($BRANCH_REASON); pass --force to remove it anyway" >&2
     exit 4
   fi
+
+  # Past every guard, so this worktree is going — and this is the last moment the
+  # link can be taken back through claude-acc, which unlinks the directory it is
+  # standing in and has nothing to stand in once the removal below has run. It
+  # has to be here rather than after the removal for that reason, and after the
+  # guards rather than before them because a worktree the sweep refuses keeps its
+  # account: a `SKIPPED` item is one the developer still has.
+  #
+  # Only a link this worktree owns outright is removed. A ticket that never
+  # overrode its account has none, and the inherited one above it is the
+  # developer's.
+  account_release "$path"
 
   ws="${WS_OF_PATH[$path]:-}"
   if [[ "$prunable" == "yes" || ! -d "$path" ]]; then
