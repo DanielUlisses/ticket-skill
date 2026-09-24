@@ -233,7 +233,8 @@ printf '%s\n' "$tpl" > "$PROMPT_FILE"
 
 # ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
 # One call either returns the worktree or fails with Herdr's own error. `--path`
-# pins it to ../<repo>--<branch>, so `gd <repo>--<branch>` still removes it.
+# pins it to ../<repo>--<branch>, the convention /sweep-tickets reports against
+# (and that `gd <repo>--<branch>` still removes by hand).
 log "creating the worktree $WT (branch '$BRANCH' off '$BASE_BRANCH')"
 create=(worktree create --cwd "$ROOT" --branch "$BRANCH" --base "$BASE_BRANCH" --path "$WT" --label "$LABEL")
 has_flag --no-focus worktree create && create+=(--no-focus)
