@@ -199,8 +199,13 @@ Recorded so a future reader knows what to re-check rather than trusting this:
 
 - herdr-projects **v0.2.11**, published 2026-09-24; 12 releases, all `v0.2.x`;
   391 stars, 16 forks, 0 open issues; MIT; 17,031 lines of Rust.
-- Plugin requires Herdr **0.9.1+**; this machine runs **0.8.2** (client and server).
+- Plugin requires Herdr **0.9.1+**. This machine ran **0.8.2** when the decision was made; it has since
+  been updated to **0.9.1** (client and server), so the version floor is no longer a constraint.
 - `herdr worktree create` **is** present on 0.8.2 with the needed flags.
 - Plugin defaults: `thread_agent = "claude"`, `max_parallel_threads = 3`,
   `auto_resolve_days = 7`. Multi-repo per project is supported.
-- **The plugin was never run.** Every claim here is read from source at v0.2.11.
+- **The plugin was never run.** Every claim here is read from source at v0.2.11. That was forced at the
+  time by the version floor; now that the machine is on 0.9.1 it is a *choice*, not a constraint. The
+  decision itself does not turn on it — it rests on the two-coordinator conflict and the missing
+  dependency graph, neither of which is version-related — so running the plugin would refine the
+  evidence, not reverse the finding.
