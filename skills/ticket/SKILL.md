@@ -73,10 +73,26 @@ Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) 
 ~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-The script reuses `small-ticket`'s worktree/pane mechanics (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — and split that pane), then starts Claude Code unattended — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md`. That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
+The script reuses `small-ticket`'s worktree/tab mechanics (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`, exactly as `small-ticket` does; its **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md`. That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
-Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (a failed creation carries Herdr's own message, `ERROR: herdr worktree create failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block.
+Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, and its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell.
 
 ## Phase 5 — Report
 
-List, per launched ticket: tab, branch, worktree, agent. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
+List, per launched ticket: workspace, branch, worktree, agent. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
+
+## Manual fallback (only if the script fails due to a CLI change)
+
+Steps 0–2 and 4 are `small-ticket`'s **Manual fallback**, unchanged: update the base branch, `herdr worktree create`, lay the workspace out as the three tabs `agent` | `review` | `shell` (rename the worktree's numeric tab to `agent`; move the reviewr plugin's pane into a `review` tab, or create an empty one; append `shell`), then render and send the prompt. Read that section for the exact calls and for why `review` is built by moving a pane.
+
+Only step 3, starting the agent, differs — `/ticket` runs unattended, so it does **not** use plan mode and blocks eight git verbs rather than two:
+
+```bash
+herdr agent start tk-<branch> --kind claude --pane <root-pane> -- \
+  --model <the chosen model> --permission-mode bypassPermissions \
+  --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" \
+    "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)" \
+    "Bash(git checkout:*)" "Bash(git switch:*)"
+```
+
+Step 4 sends `templates/ticket-agent-prompt.md`, not `small-ticket`'s `templates/agent-prompt.md`.
