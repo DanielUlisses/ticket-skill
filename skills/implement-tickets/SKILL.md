@@ -85,9 +85,9 @@ Save the ticket file's full body to a temp file (`mktemp -t ticket.XXXXXX.md`) a
 ~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-It discovers the repo root, fast-forwards the base branch, creates the tab, runs `ga <branch>`, splits the pane, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md`. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
+It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, so `gd` keeps working), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md`. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
 
-Exit codes, exactly as `/ticket` handles them: **0** → next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error, don't delete branches or worktrees, try the next ticket. Launch one ticket at a time and keep each summary block.
+Exit codes, exactly as `/ticket` handles them: **0** → next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (a failed creation carries Herdr's own message, not a timeout), don't delete branches or worktrees, try the next ticket. Launch one ticket at a time and keep each summary block.
 
 Immediately after a successful launch, **write the run state into the ticket file** — this is the coordinator's only durable memory:
 

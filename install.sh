@@ -47,4 +47,6 @@ done
 for cmd in herdr git jq gh; do
   command -v "$cmd" >/dev/null || echo "warning: '$cmd' not found in PATH"
 done
-bash -ic 'type ga >/dev/null 2>&1' || echo "warning: Omarchy's 'ga' function not found in interactive bash"
+# The launchers create worktrees with `herdr worktree create`, not Omarchy's `ga`;
+# `gd` is still what the skills point at for cleanup.
+bash -ic 'type gd >/dev/null 2>&1' || echo "warning: Omarchy's 'gd' function not found in interactive bash (only used for cleanup)"
