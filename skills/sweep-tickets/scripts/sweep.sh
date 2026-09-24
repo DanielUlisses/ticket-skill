@@ -19,6 +19,7 @@
 #   TICKET_REMOTE        (default: origin)
 #   TICKET_BASE_BRANCH   (default: the remote's default branch, e.g. main)
 #   TICKET_DIGEST_GLOB   (default: /tmp/implement-tickets-digest-*.txt)
+#   TICKET_LIB_DIR       — the directory holding the shared ticket-*.sh libraries (default: <skills-dir>)
 #
 # Exit codes:
 #   0 = ok | 1 = error | 2 = skipped, uncommitted changes | 3 = skipped, live agent
@@ -26,12 +27,36 @@
 
 set -euo pipefail
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-log() { echo "==> $*" >&2; }
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---- the shared repo-resolution library --------------------------------------
+# It gives this script die/log/need, run_git_net, and — the point of sharing it —
+# the very same ROOT and BASE_BRANCH the launchers resolve, which is what the
+# guards below rest on when they refuse the main checkout or a dirty worktree.
+# ---- the shared libraries ----------------------------------------------------
+# Installed one level up from the skill directories (~/.claude/skills/ticket-*.sh),
+# where config/models.env also lands; in this repo's source tree they are in lib/.
+# TICKET_LIB_DIR replaces that search outright rather than joining the front of
+# it, so a typo in it is an error instead of a silent fall-through to another
+# copy. `die` isn't defined until the libraries are sourced, so these errors are
+# raw. Every script that sources them uses this block verbatim, bar the list.
+if [[ -n "${TICKET_LIB_DIR:-}" ]]; then
+  LIB_DIR="$TICKET_LIB_DIR"
+else
+  for d in "$(dirname "$SKILL_DIR")" "$(dirname "$(dirname "$SKILL_DIR")")/lib"; do
+    [[ -f "$d/ticket-git-repo.sh" ]] && { LIB_DIR="$d"; break; }
+  done
+fi
+for lib in ticket-git-repo.sh; do
+  [[ -f "${LIB_DIR:-}/$lib" ]] \
+    || { echo "ERROR: shared library $lib not found in ${LIB_DIR:-<no library directory found next to $SKILL_DIR>} — re-run install.sh, or set TICKET_LIB_DIR" >&2; exit 1; }
+  # shellcheck source=/dev/null
+  source "$LIB_DIR/$lib"
+done
 
 REMOTE="${TICKET_REMOTE:-origin}"
 
-command -v git >/dev/null 2>&1 || die "command 'git' not found in PATH"
+need git
 HAVE_JQ=0; command -v jq >/dev/null 2>&1 && HAVE_JQ=1
 HAVE_GH=0; command -v gh >/dev/null 2>&1 && HAVE_GH=1
 # Herdr is only reachable from inside a Herdr pane; outside one, the sweep still
@@ -40,13 +65,9 @@ HAVE_HERDR=0
 [[ "${HERDR_ENV:-}" == 1 ]] && command -v herdr >/dev/null 2>&1 && [[ $HAVE_JQ -eq 1 ]] && HAVE_HERDR=1
 
 # ---- the repo, from wherever this is run ------------------------------------
-# NR==1 of `worktree list` is always the main worktree, so a sweep run from a
-# ticket's own worktree resolves the same root as one run from the checkout.
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "the current directory is not a git repository"
-ROOT="$(git worktree list --porcelain | awk 'NR==1 && /^worktree /{ sub(/^worktree /, ""); print }')"
-[[ -n "$ROOT" && -d "$ROOT" ]] || die "couldn't determine the main repo root"
-SELF="$(git rev-parse --show-toplevel)"
-REPO_NAME="$(basename "$ROOT")"
+# Sets ROOT (the main checkout, so a sweep run from a ticket's own worktree
+# resolves what one run from the checkout would), REPO_NAME, and SELF.
+resolve_repo_root
 
 # `<owner>/<repo>` for `gh --repo`, derived once. A function caching into a global
 # wouldn't: every call site is a `$(...)`, so the assignment would die with the
@@ -64,27 +85,7 @@ GH_REPO="$(git -C "$ROOT" config --get "remote.$REMOTE.url" 2>/dev/null \
 # the two leaves one behind.
 DIGEST_GLOB="${TICKET_DIGEST_GLOB:-/tmp/implement-tickets-digest-*${REPO_NAME}*.txt}"
 
-# git over the network: no credential prompt, and a timeout where the system has
-# one, exactly as the launchers' run_git_net does.
-run_git_net() {
-  if command -v timeout >/dev/null 2>&1; then
-    GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$ROOT" "$@"
-  else
-    GIT_TERMINAL_PROMPT=0 git -C "$ROOT" "$@"
-  fi
-}
-
-BASE_BRANCH="${TICKET_BASE_BRANCH:-}"
-if [[ -z "$BASE_BRANCH" ]]; then
-  BASE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null || true)"
-  BASE_BRANCH="${BASE_BRANCH#"$REMOTE"/}"
-fi
-if [[ -z "$BASE_BRANCH" ]]; then
-  for b in main master; do
-    git -C "$ROOT" show-ref --verify --quiet "refs/heads/$b" && { BASE_BRANCH="$b"; break; }
-  done
-fi
-[[ -n "$BASE_BRANCH" ]] || die "couldn't detect the base branch (set TICKET_BASE_BRANCH)"
+resolve_base_branch
 
 # The ref every merge question is asked against: the remote's base where it
 # exists (a merge the developer hasn't pulled is still a merge), the local one

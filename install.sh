@@ -9,6 +9,13 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESTS=("$@")
 [[ ${#DESTS[@]} -gt 0 ]] || DESTS=("$HOME/.claude")
 
+# lib/ticket-*.sh holds the worktree/tab/agent mechanics and the repo/base-branch
+# resolution the skills' scripts share. Checked here, before the first file is
+# copied: without them nothing installed below would run, and failing halfway
+# through the loop would leave a config root half-installed.
+LIBS=("$SRC"/lib/ticket-*.sh)
+[[ -f "${LIBS[0]}" ]] || { echo "error: no shared libraries found in $SRC/lib — the launchers and /sweep-tickets could not run; nothing was installed" >&2; exit 1; }
+
 for DEST in "${DESTS[@]}"; do
   DEST_SKILLS="$DEST/skills"
   DEST_AGENTS="$DEST/agents"
@@ -27,6 +34,15 @@ for DEST in "${DESTS[@]}"; do
     done
   done
   cp "$SRC"/agents/*.md "$DEST_AGENTS/"
+
+  # A skill installs as a self-contained directory, so the shared libraries go one
+  # level up — the same place config/models.env has always gone — where every
+  # installed skill's scripts find them. Unlike that config, these are code:
+  # they are overwritten on every install, never kept.
+  for lib in "${LIBS[@]}"; do
+    cp "$lib" "$DEST_SKILLS/"
+    echo "installed: $DEST_SKILLS/$(basename "$lib")"
+  done
 
   # config/models.env is shared by the launch.sh of the three launching skills
   # (small-ticket, ticket, implement-tickets), one level up from the individual
