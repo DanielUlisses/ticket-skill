@@ -2,15 +2,23 @@
 # /small-ticket launcher — Herdr + Omarchy `ga` + Claude Code
 #
 # Usage:
-#   launch.sh <tab-label> <branch> <ticket-file>
+#   launch.sh <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
+#
+# Model resolution, highest wins: the optional 4th positional arg above →
+# TICKET_IMPL_MODEL exported in the environment → config/models.env (installed
+# as ticket-models.env next to this skill) → the in-script fallback below. This
+# one model drives both the plan-mode orchestrator started here and the
+# ticket-implementer subagent it delegates to. TICKET_PLAN_MODEL is retired —
+# see docs/agents/models.md.
 #
 # Optional variables:
 #   TICKET_AGENT_KIND  (default: claude)  — Claude Code kind in Herdr (`herdr agent`)
-#   TICKET_PLAN_MODEL  (default: opus)
+#   TICKET_IMPL_MODEL   — orchestrator + implementer model; see resolution order above (fallback: opus)
 #   TICKET_GA_TIMEOUT  (default: 90)      — seconds to wait for the worktree
 #   TICKET_REMOTE      (default: origin)
 #   TICKET_BASE_BRANCH (default: remote's default branch, e.g. main)
+#   TICKET_MODELS_CONF (default: <skills-dir>/ticket-models.env) — override the config file path
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 
@@ -23,8 +31,18 @@ need() { command -v "$1" >/dev/null 2>&1 || die "command '$1' not found in PATH"
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$SKILL_DIR/templates/agent-prompt.md"
+
+# ---- shared model config (config/models.env, installed as ticket-models.env) ----
+MODELS_CONF="${TICKET_MODELS_CONF:-$(dirname "$SKILL_DIR")/ticket-models.env}"
+if [[ -f "$MODELS_CONF" ]]; then
+  # shellcheck source=/dev/null
+  source "$MODELS_CONF" || die "failed to load model config: $MODELS_CONF"
+fi
+IMPL_MODEL="${TICKET_IMPL_MODEL:-opus}"
+REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
+TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
+
 AGENT_KIND="${TICKET_AGENT_KIND:-claude}"
-PLAN_MODEL="${TICKET_PLAN_MODEL:-opus}"
 GA_TIMEOUT="${TICKET_GA_TIMEOUT:-90}"
 REMOTE="${TICKET_REMOTE:-origin}"
 
@@ -50,8 +68,9 @@ if [[ "${1:-}" == "prompt" ]]; then
 fi
 
 # ---- arguments ---------------------------------------------------------------
-[[ $# -eq 3 ]] || die "usage: launch.sh <tab-label> <branch> <ticket-file>"
+[[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh <tab-label> <branch> <ticket-file> [model]"
 LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
+[[ -n "${4:-}" ]] && IMPL_MODEL="$4"
 [[ -n "${HERDR_WORKSPACE_ID:-}" ]] || die "HERDR_WORKSPACE_ID is empty"
 [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
 [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
@@ -59,6 +78,7 @@ LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
 [[ "$BRANCH" =~ ^[a-z][a-z0-9-]{2,39}$ && "$BRANCH" != *--* && "$BRANCH" != *- ]] \
   || die "invalid branch '$BRANCH' — use kebab-case without '/' or '--', up to 40 chars (e.g. fix-webhook-retry)"
 git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
+[[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
 
 # ---- main repo (ga uses the basename of $PWD) ---------------------
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "the current directory is not a git repository"
@@ -128,6 +148,9 @@ tpl="${tpl//'{{BRANCH}}'/"$BRANCH"}"
 tpl="${tpl//'{{BASE_BRANCH}}'/"$BASE_BRANCH"}"
 tpl="${tpl//'{{BASE_COMMIT}}'/"$BASE_SHORT"}"
 tpl="${tpl//'{{WORKTREE}}'/"$WT"}"
+tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
+tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
+tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
 tpl="${tpl//'{{TICKET}}'/"$ticket"}"   # last, so we don't replace placeholders inside the ticket text
 printf '%s\n' "$tpl" > "$PROMPT_FILE"
 
@@ -174,10 +197,10 @@ RIGHT="$(jq -r '.result.pane.pane_id // .result.pane.id // empty' <<<"$SPLIT_JSO
 
 # ---- 4. start Claude Code in plan mode --------------------------------------
 sleep 1
-log "starting '$AGENT' ($AGENT_KIND, $PLAN_MODEL, plan mode) in pane $RIGHT"
+log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, plan mode) in pane $RIGHT"
 set +e
 START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$RIGHT" -- \
-  --model "$PLAN_MODEL" --permission-mode plan \
+  --model "$IMPL_MODEL" --permission-mode plan \
   --disallowedTools "Bash(git commit:*)" "Bash(git push:*)" 2>&1)"
 START_RC=$?
 set -e

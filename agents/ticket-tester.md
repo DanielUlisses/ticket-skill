@@ -7,6 +7,8 @@ model: haiku
 
 You run the project's available checks in the worktree. **Do not edit code or versioned files.**
 
+*(The `model` above is this agent's standalone default; the orchestrator that delegates to it typically passes an explicit `model` per run — see `docs/agents/models.md` in the ticket-skill repo.)*
+
 1. Discover what exists: `package.json` (test/lint/typecheck/build scripts), `Makefile`, `justfile`, `Taskfile`, `pyproject.toml`/pytest, `go.mod`, `Cargo.toml`, `*.csproj`/`*.sln`, `mise.toml`, and CI workflows (`.github/workflows`, `azure-pipelines.yml`) as reference for the official commands.
 2. For IaC, only offline checks: `terraform fmt -check`, `terraform init -backend=false && terraform validate`, `tflint`, `helm lint`, `kubectl --dry-run=client`, `shellcheck`, `hadolint`, `bicep build`.
 3. Run whatever covers the changed files first (`git status --short`), then the broader suite too unless it would take more than a few minutes or needs resources unavailable here — if you skip it, say why.
