@@ -1,9 +1,9 @@
 ---
 name: ticket
-description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to disk, use /implement-tickets.
+description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
 argument-hint: "<task description>"
 disable-model-invocation: true
-allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
+allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
 ---
 
 # /ticket
@@ -35,20 +35,77 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 
 Present the breakdown as a numbered list — title, blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
-Once approved, write one file per ticket to `.scratch/<feature-slug>/issues/<NN>-<slug>.md` at the project root (find it with `git worktree list --porcelain` if you're not sure you're there already) — this is the durable record, not what the coordinator reads from (see Phase 4):
+Once approved, write the tickets to the repo's **ticket home** — the tracker where the repo keeps one, files under `.scratch/` where it doesn't. Either way the home is the durable record, not what the coordinator reads from (see Phase 4). Detect which home you're in before writing anything, and never split one feature across both.
+
+### Detecting the ticket home
+
+The home is **GitHub issues** when both of these hold, and `.scratch/` otherwise:
+
+1. `gh` can see a tracker on this repo:
+
+   ```bash
+   gh repo view --json nameWithOwner,hasIssuesEnabled --jq 'select(.hasIssuesEnabled) | .nameWithOwner'
+   ```
+
+   Empty output, or a non-zero exit — no GitHub remote, issues disabled, `gh` missing or unauthenticated — settles it: `.scratch/`.
+
+2. The repo actually keeps its issues there. Either it **documents** a tracker (a `docs/agents/issue-tracker.md`, or a line in `CLAUDE.md`/`AGENTS.md` naming one), or the tracker already **holds** at least one issue:
+
+   ```bash
+   gh issue list --state all --limit 1 --json number
+   ```
+
+Issues being *enabled* is GitHub's default and proves nothing on its own, which is what the second test is for: a repo with an empty tracker and no docs about it gets `.scratch/`, so nobody silently acquires a board they never asked for. Where the repo documents its tracker, that doc's conventions win over the commands below — read it first. Say which home you detected, and on what evidence, before you write.
+
+### The ticket body, either home
 
 ```
 # <NN>: <Title>
 
 **What to build:** <end-to-end behaviour, from the user's perspective>
 
-**Blocked by:** <ticket numbers/titles, or "None (can start immediately)">
+**Blocked by:** <blockers, or "None (can start immediately)">
 
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
 - [ ] <Acceptance criterion>
 - [ ] <Acceptance criterion>
 ```
+
+The two homes differ in only two places: the GitHub home carries the heading as the issue **title** rather than as a `# ` line, and writes `**Blocked by:**` as issue references (`#12, #13`) where the file home writes ticket numbers (`01, 02`).
+
+### Writing to a GitHub tracker
+
+Create the issues **in ticket-number order** — blockers first, which is the order they're already numbered in — so every ticket's blockers have issue numbers by the time you write its body.
+
+- **Title**: `<NN>: <Title>`. The `NN:` prefix is what carries ticket order onto a tracker that numbers issues its own way; `/implement-tickets` reads the board back through it.
+- **Label**: `ticket:<feature-slug>`, the tracker's equivalent of the feature directory, and how `/implement-tickets` finds this board again. Create it once up front — `--label` fails on a label that doesn't exist:
+
+  ```bash
+  gh label create "ticket:<feature-slug>" --description "Tickets for <feature>" 2>/dev/null || true
+  ```
+
+- **Body**: the ticket body above, minus the heading. Write it to a file — `--body-file` where `docs/agents/issue-tracker.md` writes `--body "..."` with a heredoc, since a ticket body is multi-line Markdown and a file avoids quoting it twice — and keep the issue number `gh` prints back — the dependency edges below need it, and so does the next ticket's `**Blocked by:**` line:
+
+  ```bash
+  url=$(gh issue create --title "<NN>: <Title>" --label "ticket:<feature-slug>" --body-file <body-file>)
+  number=${url##*/}
+  ```
+
+  Nothing in the stored body names the issue itself: the number doesn't exist until the issue does. The coordinator learns it in Phase 4 instead, which puts a `**Tracker:** <owner>/<repo>#<number> — report against it, don't close it` line at the top of the brief it composes, so an unattended agent knows what it's reporting against without being able to resolve its own ticket.
+
+Then add each blocked-by edge as a **native issue dependency** — the canonical, UI-visible form, per `docs/agents/issue-tracker.md`. The endpoint wants the blocker's numeric **database id**, not its `#number`:
+
+```bash
+blocker_id=$(gh api repos/<owner>/<repo>/issues/<blocker-number> --jq .id)
+gh api --method POST repos/<owner>/<repo>/issues/<child-number>/dependencies/blocked_by -F issue_id="$blocker_id"
+```
+
+If that endpoint refuses (not available on the repo), say so once and leave it: the `**Blocked by:** #12, #13` line in the body is the documented fallback, and `/implement-tickets` reads blockers from it when an issue carries no dependencies.
+
+### Writing to `.scratch/`
+
+Write one file per ticket to `.scratch/<feature-slug>/issues/<NN>-<slug>.md` at the project root — find it with `git worktree list --porcelain` if you're not sure you're there already — with the heading in place and `**Blocked by:**` holding ticket numbers.
 
 ## Phase 3 — Pick tickets to implement
 

@@ -1,27 +1,29 @@
 ---
 name: implement-tickets
-description: Implements tickets that are already written. Reads a directory of ticket files (default `.scratch`), asks which to start, launches one unattended Herdr coordinator per frontier ticket, then stays on as the ticket coordinator — verifying each merge the developer reports, marking that ticket resolved in its file, and launching whatever the merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
-argument-hint: "[path to the tickets directory]"
+description: Implements tickets that are already written. Reads the board from wherever the repo keeps tickets — GitHub issues where it has a tracker, files under `.scratch` where it doesn't — asks which to start, launches one unattended Herdr coordinator per frontier ticket, then stays on as the ticket coordinator — verifying each merge the developer reports, marking that ticket resolved in its home, and launching whatever the merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
+argument-hint: "[tickets directory, or a ticket label / feature slug]"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Bash(ls *), Bash(cat *), Bash(find *), Bash(grep *), Bash(awk *), Read, Write, Edit, Glob, Grep, AskUserQuestion, ToolSearch, Monitor
 ---
 
 # /implement-tickets
 
-Tickets path received (may be empty):
+Board received — a tickets directory, a ticket label, or a feature slug (may be empty):
 
-<path>
+<board>
 $ARGUMENTS
-</path>
+</board>
 
 The tickets already exist. Skip grilling and breakdown entirely — `/ticket` phases 1–3 already happened, or the developer wrote the files by hand. You start at implementation, and then **you stay**: this session is the **ticket coordinator** for the whole run, not just a launcher.
 
 Two jobs, in order:
 
 1. **Launch** an unattended Herdr coordinator per frontier ticket, exactly as `/ticket` phase 4 does.
-2. **Coordinate**: when the developer tells you a ticket has merged, verify it against the base branch, mark it resolved in its file, and launch whatever that unblocks — until the board is done or the developer stops you.
+2. **Coordinate**: when the developer tells you a ticket has merged, verify it against the base branch, mark it resolved in its home, and launch whatever that unblocks — until the board is done or the developer stops you.
 
-## Phase 0 — Find the tickets
+## Phase 0 — Find the board
+
+Tickets live in the repo's **ticket home**: GitHub issues where the repo keeps a tracker, files under `.scratch/` where it doesn't. `/ticket` phase 2 chose that home when it wrote them; this phase finds it again. Everything after this phase works off tickets, not files — the home only decides how you read and write them.
 
 Resolve the **main repo root** first (this session may be inside a worktree):
 
@@ -29,31 +31,105 @@ Resolve the **main repo root** first (this session may be inside a worktree):
 git worktree list --porcelain | awk 'NR==1 && /^worktree /{ sub(/^worktree /, ""); print }'
 ```
 
-Then resolve the path:
+Then read the argument:
 
-- **Argument given** — use it, relative to the main repo root unless it's absolute.
-- **Empty** — default to `<root>/.scratch`.
+- **A path** — it contains a `/`, ends in `.md`, or names an existing directory. A **file board** there, relative to the main repo root unless it's absolute.
+- **A label or feature slug** — `ticket:<slug>`, or a bare `<slug>` that matches one of the tracker's `ticket:*` labels. A **GitHub board** scoped to that label.
+- **Empty** — detect the home, the same two tests `/ticket` phase 2 uses. A **GitHub board** when both hold, a **file board** at `<root>/.scratch` otherwise:
 
-Now find the ticket files under it (`*.md`, recursively). `/ticket` writes them as `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, so a bare `.scratch` is two levels above the tickets and may hold **several feature directories**. If the path resolves to more than one feature directory, list them and ask the developer which one (AskUserQuestion). If it resolves to no `.md` files at all, say so with the path you looked in and stop — don't invent tickets.
+  ```bash
+  gh repo view --json nameWithOwner,hasIssuesEnabled --jq 'select(.hasIssuesEnabled) | .nameWithOwner'   # 1. a tracker exists
+  gh issue list --state all --limit 1 --json number                                                      # 2. ...and it holds issues
+  ```
 
-Also check whether the tickets are ignored by git (`git check-ignore <path>`; exit 1 means **not ignored**). If they aren't ignored, mention once that marking tickets resolved will dirty the repo root, and that `.scratch/` in `.gitignore` avoids it. Don't edit `.gitignore` yourself.
+  Empty output or a non-zero exit from the first — no GitHub remote, issues disabled, `gh` missing or unauthenticated — settles it as a file board. A repo that **documents** a tracker (`docs/agents/issue-tracker.md`, or a line in `CLAUDE.md`/`AGENTS.md` naming one) satisfies the second test even with an empty tracker, and its conventions win over the commands here.
+
+Say which home you resolved and on what evidence, before reading anything.
+
+### A GitHub board
+
+Scope the board to a label, where the tickets carry one:
+
+```bash
+gh label list --search "ticket:" --json name --jq '.[].name'
+```
+
+- **One `ticket:*` label** — that's the board.
+- **Several** — list them with their open counts and ask the developer which (AskUserQuestion); this is the same question a multi-feature `.scratch` asks.
+- **None** — the board is the tracker's own tickets: every issue whose title starts with `<NN>:`. Say that's what you're treating as the board before reading it, since it's the whole tracker rather than one feature.
+
+### A file board
+
+Find the ticket files under the path (`*.md`, recursively). `/ticket` writes them as `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, so a bare `.scratch` is two levels above the tickets and may hold **several feature directories**. If the path resolves to more than one feature directory, list them and ask the developer which one (AskUserQuestion).
+
+Also check whether the tickets are ignored by git (`git check-ignore <path>`; exit 1 means **not ignored**). If they aren't ignored, mention once that marking tickets resolved will dirty the repo root, and that `.scratch/` in `.gitignore` avoids it. Don't edit `.gitignore` yourself. A GitHub board has no equivalent concern — nothing in the working tree changes.
+
+Either way, if the home resolves to no tickets at all — no issues on the label, no `.md` files under the path — say so with exactly where you looked, and stop. Don't invent tickets, and don't fall back to the other home: an empty board is a wrong argument or a wrong home, and the developer settles which.
 
 ## Phase 1 — Read the board
 
-Read every ticket file. For each, extract:
+Read every ticket in the home. Whichever home it is, each one comes out as the same six things — **number**, **title**, **status** (`open`, `in-progress`, `resolved`), **blockers**, **branch**, **model** — and every phase after this works off those.
+
+### From a file board
 
 - **Number and title** from the `# <NN>: <Title>` heading (fall back to the filename).
-- **Status** from a `**Status:**` line — one of `open`, `in-progress`, `resolved`. **A missing `Status` line means `open`**; `/ticket` writes files without one, and this skill has to read those unchanged.
+- **Status** from a `**Status:**` line. **A missing `Status` line means `open`**; `/ticket` writes files without one, and this skill has to read those unchanged.
 - **Branch** from a `**Branch:**` line, if a previous run recorded one.
-- **Blocked by** from the `**Blocked by:**` line. This is free text — `01, 02`, `None (can start immediately)`, `Ticket 02 (schema)`. Parse it leniently: case-insensitive `none` (or empty) means no blockers; otherwise take every digit-run on that line as a ticket number.
+- **Blocked by** from the `**Blocked by:**` line.
 - **Model** from a `**Model:**` line, if a previous run recorded one — that's what that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once.
 
-Then reconcile each ticket against reality, because a previous coordinator session may have died mid-run (see *Re-entrancy* below):
+### From a GitHub board
+
+One call reads the whole board, dependencies included — drop `--label` on an unlabelled board:
+
+```bash
+gh issue list --label "ticket:<slug>" --state all --limit 200 \
+  --json number,title,body,state,assignees,labels,blockedBy,comments
+```
+
+- **Number and title** from the issue title's `<NN>: <Title>`. The ticket number is the `NN` prefix, **not** the issue number; keep both, because `NN` orders the board and the issue number is what you act on. On an unlabelled board, an issue whose title carries no `<NN>:` prefix isn't a ticket — skip it.
+- **Status**: a **closed** issue is `resolved`. An open one is `in-progress` if it's **assigned** or carries a **run-state comment** from a previous wave (see *Writing back to the board*), and `open` otherwise. Both signals are in the call above — that's why it asks for `assignees` and `comments`. An assignee alone means in-progress even with no run-state comment: `docs/agents/issue-tracker.md` treats assignment as the claim, so somebody is on it whether or not this skill launched them.
+- **Blocked by** from `blockedBy.nodes` — GitHub's native issue dependencies, which is where `/ticket` phase 2 puts the edges. A node that's still `OPEN` is a live blocker; a `CLOSED` one is satisfied:
+
+  ```bash
+  --jq '[.[] | {number, open_blockers: [.blockedBy.nodes[] | select(.state == "OPEN") | .number]}]'
+  ```
+
+  This is the same gate `docs/agents/issue-tracker.md` names as `issue_dependencies_summary.blocked_by`, reached through the CLI instead of the REST API: that field counts **open** blockers only, so a `select(.state == "OPEN")` count over `blockedBy.nodes` equals it, and `nodes | length` equals its `total_blocked_by`. Use the CLI form — `issueDependenciesSummary` is not a `gh --json` field, and `gh api` per issue would be one call per ticket instead of one for the board.
+
+  Where an issue carries **no** dependencies at all, fall back to the `**Blocked by:**` line in its body — a board written before dependencies were available, or one whose repo refused the endpoint, has its edges only there.
+- **Branch** and **Model** from the run-state comment.
+- **Brief** — the ticket as the coordinator will receive it: the **issue body** with `# <NN>: <Title>` put back on top and a `**Tracker:** <owner>/<repo>#<issue> — report against it, don't close it` line under it. That's what Phase 3 writes to its temp file, so the launcher and the agent prompt never know which home it came from.
+
+  Keep **brief** and **issue body** apart from here on: the brief is composed fresh for each launch and is never written back, and the issue body is what actually lives on the tracker. Editing the issue with a brief would duplicate the title as an H1 and plant a `**Tracker:**` self-reference that was never there.
+
+### Blockers are free text either way
+
+The `**Blocked by:**` line is free text — `01, 02`, `#12, #13`, `None (can start immediately)`, `Ticket 02 (schema)`. Parse it leniently: case-insensitive `none` (or empty) means no blockers. Otherwise, a digit-run written as `#<n>` is an **issue** number — resolve it straight against the board — and a bare digit-run is a ticket `NN`, resolved through the `NN` you parsed from each heading or title. Ignore a reference that matches nothing on the board, and say which one you dropped; a typo'd blocker shouldn't silently become "unblocked".
+
+### Reconcile, then confirm
+
+Reconcile each ticket against reality, because a previous coordinator session may have died mid-run (see *Re-entrancy* below):
 
 - `in-progress` with a branch that's already merged → it's really **resolved**; write that back now.
 - `in-progress` with no live Herdr agent and an unmerged branch → the work exists but nobody is driving it; flag it to the developer.
 
-Print the board as a table — number, title, status, blockers, branch — followed by the parsed dependency graph (`03 ← 01, 02`) and ask the developer to confirm the graph reads right before anything launches. A silently mis-parsed `Blocked by:` line launches work against code that doesn't exist yet; this one cheap question turns that into a visible error.
+Print the board as a table — number, title, status, blockers, branch, and the issue number too on a GitHub board — followed by the parsed dependency graph (`03 ← 01, 02`) and ask the developer to confirm the graph reads right before anything launches. A silently mis-parsed blocker launches work against code that doesn't exist yet; this one cheap question turns that into a visible error.
+
+### Writing back to the board
+
+Later phases say to write things "into the ticket file" — run state after a launch (Phase 3), the resolved status and ticked criteria after a verified merge (Phase 4). Read those as **into the home**, and do the equivalent there:
+
+| | File board | GitHub board |
+|---|---|---|
+| Record run state | write the block into the file, under the heading | post it as a comment (`gh issue comment <n> --body-file …`) and claim the issue: `gh issue edit <n> --add-assignee @me` |
+| Update run state | edit the existing block in place | post a fresh comment; the newest run-state comment wins |
+| Mark resolved | rewrite the `**Status:**` line | `gh issue close <n> --comment "<the same resolved line>"` — closing *is* the resolved status |
+| Tick a criterion | edit the checkbox in the file | rewrite the **issue body** with the box ticked (`gh issue edit <n> --body-file …`) — read it back with `gh issue view <n> --json body`, never reuse a brief |
+
+These use `--body-file` where `docs/agents/issue-tracker.md` writes `--body "..."` with a heredoc. Same thing, deliberately: a run-state block or a ticket body is multi-line Markdown, and a file avoids quoting it twice.
+
+Everything else — verifying the merge, computing the frontier, the launcher and its exit codes — is the same in both homes.
 
 ## Phase 2 — Pick what to start
 
