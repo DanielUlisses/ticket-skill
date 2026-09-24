@@ -29,9 +29,11 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Each ticket is a vertical slice through every layer it touches (schema, API, UI, tests) — demoable or verifiable on its own, sized to fit a single fresh context window.
 - **Wide refactor exception**: one mechanical change with a codebase-wide blast radius (rename a column, retype a shared symbol) doesn't fit a vertical slice. Sequence it instead as expand (add the new form beside the old) → migrate in blast-radius-sized batches, each its own ticket, CI green batch to batch → contract (delete the old form once nothing calls it).
 - Give each ticket its **blocked-by** edges: the other tickets that must land first. No blockers means it's on the **frontier** — startable immediately.
+- Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Phase 4's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
+- Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs.
 - Number tickets `01`, `02`, … in dependency order (blockers first).
 
-Present the breakdown as a numbered list — title, blocked by, what it delivers — and ask the developer whether the granularity feels right, the blocking edges are correct, and anything should merge or split. Iterate until they approve it.
+Present the breakdown as a numbered list — title, blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
 Once approved, write one file per ticket to `.scratch/<feature-slug>/issues/<NN>-<slug>.md` at the project root (find it with `git worktree list --porcelain` if you're not sure you're there already) — this is the durable record, not what the coordinator reads from (see Phase 4):
 
@@ -41,6 +43,8 @@ Once approved, write one file per ticket to `.scratch/<feature-slug>/issues/<NN>
 **What to build:** <end-to-end behaviour, from the user's perspective>
 
 **Blocked by:** <ticket numbers/titles, or "None (can start immediately)">
+
+**Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
 - [ ] <Acceptance criterion>
 - [ ] <Acceptance criterion>
