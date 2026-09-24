@@ -10,7 +10,7 @@ Single-context layout: `CONTEXT.md` + `docs/adr/` at the repo root (created lazi
 
 ### Project memory
 
-Each repo may keep a `docs/agents/project-memory.md` — short, factual, hand-curated — which every ticket launcher folds into the brief it sends, so a ticket starts knowing the repo. Agents report durable lessons under `## Remember` and never write to the file; what the repo remembers is the developer's call. Absent is a supported state, and this repo keeps one. See `docs/agents/memory.md`.
+Each repo may keep a `docs/agents/project-memory.md` — short, factual, hand-curated — which every ticket launcher folds into the brief it sends, so a ticket starts knowing the repo. Agents report durable lessons under `## Remember` and never write to the file; what the repo remembers is the developer's call. Absent is a supported state. See `docs/agents/memory.md`.
 
 ### Agent models
 
