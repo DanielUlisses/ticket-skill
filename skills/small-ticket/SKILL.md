@@ -36,9 +36,9 @@ Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text i
 
 ## 4. Settle the session's launch settings
 
-Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — a second `/small-ticket` here, and anything `/ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, which is why this comes after step 1 has found a ticket to launch.
+Three things govern every ticket a session launches: the **account** it bills to, the **model** that implements it, and the **effort** — how hard that model thinks — it runs at. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — a second `/small-ticket` here, and anything `/ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, which is why this comes after step 1 has found a ticket to launch.
 
-**Already settled** — this session answered, for an earlier ticket or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+**Already settled** — this session answered, for an earlier ticket or because the developer named them up front: don't ask again. State which account, model and effort are in force when you launch and move on.
 
 **Not settled yet** — a fresh session, a single ad-hoc ticket included: read the defaults before you state them, rather than assuming them:
 
@@ -46,15 +46,21 @@ Two things govern every ticket a session launches: the **account** it bills to a
 ~/.claude/skills/small-ticket/scripts/launch.sh defaults
 ```
 
-It changes nothing and prints one line per setting, plus the options for the account:
+It changes nothing and prints one line per setting, plus the options for the account and for the effort:
 
 ```
 MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+EFFORT=medium (from /home/you/.claude/skills/ticket-models.env)
+EFFORTS=low medium high xhigh max
 ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
 ACCOUNTS=default work
 ```
 
 The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch the ticket somewhere else. Quote what the command printed.
+
+`EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
+
+**The ticket may suggest the effort.** A ticket written by `/ticket` carries a `**Suggested effort:**` line; where the text saved in step 3 has one, pre-select that level over the launcher's `EFFORT=` default and say it came from the ticket. An ad-hoc ticket carries none, and `EFFORT=` stands.
 
 Then ask with **one** `AskUserQuestion` call, one question per setting:
 
@@ -62,12 +68,13 @@ Then ask with **one** `AskUserQuestion` call, one question per setting:
 |---|---|---|---|
 | Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
 | Model | "Which model should implement this session's tickets?" | the `MODEL=` value first, labelled `(default)`, then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the rendered prompt agree with what launched |
+| Effort | "How hard should the model think on this session's tickets?" | the ticket's suggested level first, labelled `(suggested by the ticket)` — or the `EFFORT=` value labelled `(default)` where it suggests none — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary agrees with what launched |
 
 One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
 
-**Then hold them.** Every launch in this session passes both and names both in its report. Two overrides exist and they are different things:
+**Then hold them.** Every launch in this session passes all three and names all three in its report. Two overrides exist and they are different things:
 
-- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
+- **For one ticket** — the developer names an account, a model or an effort for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
 - **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
 
 Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
@@ -75,17 +82,20 @@ Neither is a reason to re-ask on the next ticket; re-ask only when the developer
 ## 5. Run the launcher
 
 ```bash
-~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-Both values come from step 4. `--account <name>` is passed only where the session settled on
+All three values come from step 4. `--account <name>` is passed only where the session settled on
 a named account; where it inherits, the flag is left off entirely and the ticket resolves the
-developer's own directory link, which is what every ticket did before this knob existed. A
-per-ticket override the developer named for *this* ticket replaces one value here and leaves
-the session's settings alone. The summary's `ACCOUNT=` line reports which account ran either
-way, verified in the pane; see `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
+developer's own directory link, which is what every ticket did before this knob existed.
+`--effort <level>` is passed always — there is no "inherit" for it, and a level the launcher
+doesn't know stops the script before anything is created, since Claude Code itself would only
+warn and then run at its own default. A per-ticket override the developer named for *this*
+ticket replaces one value here and leaves the session's settings alone. The summary's `ACCOUNT=` line reports which account ran either
+way, verified in the pane, and its `MODEL=` and `EFFORT=` lines what it started on; see
+`docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
-The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model also drives the `ticket-implementer` subagent (and this pane's plan-mode orchestrator); `ticket-reviewer` and `ticket-tester` follow `TICKET_REVIEW_MODEL` / `TICKET_TEST_MODEL` from `config/models.env` — see `docs/agents/models.md`.
+The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --effort <the chosen effort> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model also drives the `ticket-implementer` subagent (and this pane's plan-mode orchestrator); `ticket-reviewer` and `ticket-tester` follow `TICKET_REVIEW_MODEL` / `TICKET_TEST_MODEL` from `config/models.env` — see `docs/agents/models.md`. The chosen effort is the pane's, so it governs the orchestrator; the subagents it delegates to get their own model but no effort of their own.
 
 Handle the exit code:
 
@@ -97,7 +107,7 @@ Handle the exit code:
 
 ## 6. Report
 
-Reply in a few lines: workspace name, branch, worktree path, agent name, the account and model it launched on — the summary's `ACCOUNT=` line rather than what you asked for, since that one is verified in the pane — and that the plan will show up for approval in the workspace's `agent` tab. Don't wait around for the agent to finish.
+Reply in a few lines: workspace name, branch, worktree path, agent name, the account, model and effort it launched on — the summary's own `ACCOUNT=`, `MODEL=` and `EFFORT=` lines rather than what you asked for; the account one in particular is verified in the pane — and that the plan will show up for approval in the workspace's `agent` tab. Don't wait around for the agent to finish.
 
 ## Manual fallback (only if the script fails due to a CLI change)
 
@@ -107,7 +117,7 @@ Reply in a few lines: workspace name, branch, worktree path, agent name, the acc
    1. `herdr tab rename <tab> agent` — `--label` above named the *workspace*; the tab it came with is labelled by number (`1`). Rename it rather than replace it: that keeps the agent on the root pane, which already has the worktree as its cwd.
    2. `review` — the `persiyanov.reviewr` plugin auto-opens its own pane on Herdr's `worktree.created` event, placed from *its* config file, not from anything you pass (see the note below). Wait a few seconds for it with `herdr pane list --workspace <workspace>` (the reviewr pane is the one whose `herdr pane process-info --pane <pane>` shows `herdr-reviewr` in its foreground processes), then `herdr pane move <that-pane> --new-tab --label review --no-focus` and read `.result.move_result.created_tab`. If no such pane shows up, `herdr tab create --workspace <workspace> --cwd <worktree> --label review --no-focus` instead and say so in the report.
    3. `herdr tab create --workspace <workspace> --cwd <worktree> --label shell --no-focus`; read `.result.tab`.
-3. `herdr agent start tk-<branch> --kind claude --pane <root-pane> -- --model <the chosen model> --permission-mode plan --disallowedTools "Bash(git commit:*)" "Bash(git push:*)"`.
+3. `herdr agent start tk-<branch> --kind claude --pane <root-pane> -- --model <the chosen model> --effort <the chosen effort> --permission-mode plan --disallowedTools "Bash(git commit:*)" "Bash(git push:*)"`.
 4. Render `templates/agent-prompt.md` (substitute `{{TICKET}}`, `{{BRANCH}}`, `{{BASE_BRANCH}}`, `{{BASE_COMMIT}}`, `{{WORKTREE}}`, `{{IMPL_MODEL}}`, `{{REVIEW_MODEL}}`, `{{TEST_MODEL}}`, `{{PROJECT_MEMORY}}`) and send it with `herdr agent prompt tk-<branch> "<prompt>"`. `{{PROJECT_MEMORY}}` is the contents of `<main-repo-root>/docs/agents/project-memory.md` under a `## Project memory` heading, or **nothing at all** — heading included, and the blank line after the placeholder with it — when that file is missing or blank (`docs/agents/memory.md`).
 
 ### Why the `review` tab is built by moving a pane

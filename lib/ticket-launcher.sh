@@ -389,18 +389,60 @@ verify_ticket_account() {
 }
 
 # ---- shared model config (config/models.env, installed as ticket-models.env) ----
+
+# The effort levels Claude Code knows, as `claude --effort` itself lists them.
+# One list, so the check below and every message that names the valid values
+# can't drift apart.
+EFFORT_LEVELS="low medium high xhigh max"
+# Word by word rather than a substring match on the list: `--effort=` hands this
+# an empty string, which a `*" $1 "*` pattern would match against any of the
+# single spaces in the list and wave through — and `claude --effort ''` warns and
+# runs at its default exactly like a typo does.
+effort_valid() {
+  local level
+  for level in $EFFORT_LEVELS; do [[ "$1" == "$level" ]] && return 0; done
+  return 1
+}
+
+# The refusal, in one place for the reason EFFORT_LEVELS is: two copies of a
+# message that names the valid values are two things to keep in step. Called
+# from the two points where nothing can override the resolved level any more —
+# see load_ticket_models for why it is neither of them.
+require_valid_effort() {
+  effort_valid "$IMPL_EFFORT" \
+    || die "invalid effort '$IMPL_EFFORT' from $IMPL_EFFORT_SOURCE — one of: $EFFORT_LEVELS"
+}
+
+# Says where a resolved value came from, for `launch.sh defaults` to quote.
+# Takes the variable's name and what the environment held under it *before* the
+# config file was sourced — the file sets its values with `:=`, so an exported
+# variable wins silently and afterwards the two are indistinguishable, and only
+# the caller can have kept the earlier reading. What the name holds *now* is
+# read here rather than passed, so the two can't be handed in disagreeing.
+# A question that states its default has to be able to say where it came from.
+config_source() {
+  local var="$1" exported="$2" after="${!1:-}"
+  if [[ -n "$exported" ]]; then
+    echo "exported $var"
+  elif [[ -n "$after" ]]; then
+    echo "$MODELS_CONF"
+  elif [[ -f "$MODELS_CONF" ]]; then
+    echo "the launcher's built-in fallback — nothing set it in $MODELS_CONF"
+  else
+    # Said apart from the case above, because the skills quote this line to the
+    # developer: "nothing set it in <path>" about a file that isn't there sends
+    # them to edit a file they'd have to create.
+    echo "the launcher's built-in fallback — no $MODELS_CONF"
+  fi
+}
+
 # Called by the caller before it sets its own parameters, never from
 # launcher_main: the config file may set any TICKET_* variable, so anything
 # resolved from the environment — PERMISSION_MODE among them — has to be
 # resolved after this has run, which is the order both launchers have always had.
 load_ticket_models() {
   MODELS_CONF="${TICKET_MODELS_CONF:-$(dirname "$SKILL_DIR")/ticket-models.env}"
-  # Where the model would come from if the launch named none — read *before* the
-  # file is sourced, because the file sets its values with `:=` and an exported
-  # TICKET_IMPL_MODEL therefore wins silently: afterwards the two are
-  # indistinguishable. `launch.sh defaults` reports this, and a question that
-  # states its default has to be able to say where the default came from.
-  local exported="${TICKET_IMPL_MODEL:-}"
+  local exported_model="${TICKET_IMPL_MODEL:-}" exported_effort="${TICKET_IMPL_EFFORT:-}"
   if [[ -f "$MODELS_CONF" ]]; then
     # shellcheck source=/dev/null
     source "$MODELS_CONF" || die "failed to load model config: $MODELS_CONF"
@@ -408,30 +450,35 @@ load_ticket_models() {
   IMPL_MODEL="${TICKET_IMPL_MODEL:-opus}"
   REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
   TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
-  if [[ -n "$exported" ]]; then
-    IMPL_MODEL_SOURCE="exported TICKET_IMPL_MODEL"
-  elif [[ -n "${TICKET_IMPL_MODEL:-}" ]]; then
-    IMPL_MODEL_SOURCE="$MODELS_CONF"
-  elif [[ -f "$MODELS_CONF" ]]; then
-    IMPL_MODEL_SOURCE="the launcher's built-in fallback — nothing set it in $MODELS_CONF"
-  else
-    # Said apart from the case above, because the skills quote this line to the
-    # developer: "nothing set it in <path>" about a file that isn't there sends
-    # them to edit a file they'd have to create.
-    IMPL_MODEL_SOURCE="the launcher's built-in fallback — no $MODELS_CONF"
-  fi
+  IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
+
+  # The in-script fallback is what covers a ticket-models.env installed before
+  # this knob existed: that file simply sets nothing, so the effort resolves to
+  # `medium` and the launch is unchanged. install.sh never overwrites a
+  # destination copy, so those files stay as they are until the developer
+  # deletes one — see docs/agents/models.md.
+  IMPL_EFFORT="${TICKET_IMPL_EFFORT:-medium}"
+  IMPL_EFFORT_SOURCE="$(config_source TICKET_IMPL_EFFORT "$exported_effort")"
+  # Deliberately *not* validated here. This runs at source time, before
+  # launcher_main has parsed `--effort`, and the flag is the top of the
+  # precedence order — dying on the environment here would let a bad exported
+  # TICKET_IMPL_EFFORT veto a launch that explicitly named a good level. The two
+  # places that can validate are the ones where nothing can override any more:
+  # after the flag loop, and inside print_launch_defaults.
 }
 
 # ---- what a launch would do if it were told nothing --------------------------
-# The two values the skills' once-a-session launch question has to state before
-# it asks: the model an unnamed launch would use, and the account an unnamed
-# launch would inherit. Prints them, changes nothing, and needs neither Herdr nor
-# a ticket — it runs before the developer has settled what to launch, sometimes
-# before they have settled whether to.
+# The values the skills' once-a-session launch question has to state before it
+# asks: the model an unnamed launch would use, the effort it would run at, and
+# the account an unnamed launch would inherit. Prints them, changes nothing, and
+# needs neither Herdr nor a ticket — it runs before the developer has settled
+# what to launch, sometimes before they have settled whether to.
 #
-# Both are read rather than assumed, because both are easy to state wrongly from
-# inside a session. The model may come from a hand-edited ticket-models.env or an
-# exported variable, not from this repo's config. And the account a *new* worktree
+# All are read rather than assumed, because each is easy to state wrongly from
+# inside a session. The model and the effort may come from a hand-edited
+# ticket-models.env or an exported variable, not from this repo's config — and a
+# ticket-models.env installed before the effort knob existed sets no effort at
+# all, which is the built-in fallback's case and says so. And the account a *new* worktree
 # inherits is not the account the asking session runs under: a ticket is cut as a
 # sibling of the main checkout, so what it inherits is whatever the directory
 # holding the checkout resolves to — which is the question asked here, and the
@@ -444,10 +491,17 @@ load_ticket_models() {
 print_launch_defaults() {
   need git
   resolve_repo_root
+  # `defaults` takes no flags, so what load_ticket_models resolved is final here
+  # and this is where a bad environment or config file has to be caught: the
+  # whole point of the line below is to be quoted into a question, and quoting a
+  # level Claude Code would silently ignore is worse than refusing to answer.
+  require_valid_effort
   local parent cfg
   parent="$(dirname "$ROOT")"
 
   echo "MODEL=$IMPL_MODEL (from $IMPL_MODEL_SOURCE)"
+  echo "EFFORT=$IMPL_EFFORT (from $IMPL_EFFORT_SOURCE)"
+  echo "EFFORTS=$EFFORT_LEVELS"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -504,6 +558,11 @@ launcher_main() {
   # it — the same order the model knob uses, and for the same reason: the skills'
   # allowed-tools entries are prefix patterns, which a `TICKET_ACCOUNT=x ...`
   # prefix would no longer match.
+  #
+  # --effort is a flag for the same reason and one more: the model's positional
+  # slot is only bearable because the model is the one thing that varies every
+  # run, and a fifth positional would make the call site a row of bare words
+  # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
@@ -511,11 +570,20 @@ launcher_main() {
       --account)   [[ $# -ge 2 ]] || die "--account needs an account name"
                    ACCOUNT_REQUESTED="$2"; shift 2 ;;
       --account=*) ACCOUNT_REQUESTED="${1#--account=}"; shift ;;
+      --effort)    [[ $# -ge 2 ]] || die "--effort needs a level — one of: $EFFORT_LEVELS"
+                   IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
+      --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
       -*)          die "unknown flag: $1" ;;
       *)           ARGS+=("$1"); shift ;;
     esac
   done
   set -- ${ARGS[@]+"${ARGS[@]}"}
+
+  # Refused here rather than passed through: `claude --effort bogus` only prints
+  # "Warning: Unknown --effort value 'bogus' — ignoring it and using the default
+  # effort" and then runs, so a typo would launch a whole ticket at an effort
+  # nobody chose and nothing in the summary would say so.
+  require_valid_effort
 
   # ---- subcommand: prompt -------------------------------------------------------
   if [[ "${1:-}" == "prompt" ]]; then
@@ -525,7 +593,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
@@ -738,10 +806,10 @@ launcher_main() {
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
   sleep 1
-  log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, $PERMISSION_LABEL) in pane $AGENT_PANE"
+  log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, effort $IMPL_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE"
   set +e
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
-    --model "$IMPL_MODEL" --permission-mode "$PERMISSION_MODE" \
+    --model "$IMPL_MODEL" --effort "$IMPL_EFFORT" --permission-mode "$PERMISSION_MODE" \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
   set -e
@@ -754,6 +822,8 @@ WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
+MODEL=$IMPL_MODEL
+EFFORT=$IMPL_EFFORT
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
 PROMPT_FILE=$PROMPT_FILE

@@ -1,10 +1,10 @@
 # The session's launch settings
 
-Which Claude **account** a ticket bills to and which **model** implements it are settled
-**once per session**, at the first launch, and every launch in that session uses the answer.
-The knobs themselves are older than this and unchanged — [`accounts.md`](accounts.md) owns
-`--account`, [`models.md`](models.md) owns the model. This is about *when the values are
-decided, and by whom*.
+Which Claude **account** a ticket bills to, which **model** implements it and at what
+**effort** that model thinks are settled **once per session**, at the first launch, and every
+launch in that session uses the answer. The knobs themselves are owned elsewhere —
+[`accounts.md`](accounts.md) owns `--account`, [`models.md`](models.md) owns the model and the
+effort. This is about *when the values are decided, and by whom*.
 
 ## What was wrong with asking per ticket, and with not asking at all
 
@@ -31,9 +31,20 @@ setting, and the answer is held for the rest of the session.
 |---|---|---|
 | Account | inherited — whatever the directory holding the worktrees resolves to | `--account <name>`, or no flag at all where it inherits |
 | Model | `ticket-models.env` ([`models.md`](models.md)) | the positional `[model]`, always passed explicitly |
+| Effort | `medium`, from `ticket-models.env` ([`models.md`](models.md)) | `--effort <level>`, always passed explicitly |
 
 A further setting is another row and another field carried through the session, not another
-round of questions — which is what the table shape is for.
+round of questions — which is what the table shape is for. Effort was the first setting added
+after that sentence was written, and it went in as a row.
+
+Effort differs from the other two in where its *default* comes from: the ticket itself can
+suggest one. `/ticket` Phase 2 writes a `**Suggested effort:**` line into each ticket body with
+one clause of justification, and the launch question offers that level pre-selected instead of
+a bare `medium` — the coordinator suggests, the developer decides, the same asymmetry project
+memory has. A ticket carrying no such line (every ticket written before this) falls back to the
+launcher's `EFFORT=` default, and where a wave's tickets disagree, the question names the spread
+and pre-selects the highest of them: the ticket that asked for more thinking is the one that
+loses by getting less.
 
 Three rules follow from "settled once":
 
@@ -53,6 +64,8 @@ wrong from inside a session. So the skills read them rather than assuming them:
 ```bash
 $ ~/.claude/skills/ticket/scripts/launch.sh defaults
 MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+EFFORT=medium (from /home/you/.claude/skills/ticket-models.env)
+EFFORTS=low medium high xhigh max
 ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
 ACCOUNTS=default work
 ```
@@ -66,6 +79,12 @@ directory the worktrees are cut in.
   installed `ticket-models.env`, or the launcher's built-in fallback. It has to be read before
   the config file is sourced to be able to say: the file sets its values with `:=`, so an
   exported variable wins silently and afterwards the two are indistinguishable.
+- **`EFFORT=`** is the same line for the effort, with its source named the same way. On a
+  machine whose `ticket-models.env` predates the effort knob it reads
+  `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and
+  is the truth: `install.sh` never overwrites a destination config, so that file keeps saying
+  nothing about effort. **`EFFORTS=`** is its option list, printed for the same reason
+  `ACCOUNTS=` is — so the question doesn't carry its own copy of a list the launcher owns.
 - **`ACCOUNT=`** is the account a **new worktree** would inherit — resolved at the directory
   the worktrees are cut in, which is the parent of the main checkout. That is a *different
   question* from which account the asking session is running under, and the difference is the
@@ -81,8 +100,14 @@ developer rather than to guess.
 
 ## Where a wave records what it chose
 
-`/implement-tickets` writes `**Model:**` and `**Account:**` into each ticket's run state at
-launch, from the launcher's own verified `ACCOUNT=` line rather than from what was asked for.
+`/implement-tickets` writes `**Model:**`, `**Effort:**` and `**Account:**` into each ticket's run
+state at launch, from the launcher's own lines rather than from what was asked for — the
+`ACCOUNT=` one in particular being verified in the pane. Those summary lines are bare values
+(`MODEL=opus`, `EFFORT=high`) — they say what launched, where the same-named lines from
+`defaults` carry a `(from …)` saying where a value *would* come from. Different commands,
+different questions. `**Effort:**` there is a record of what
+the ticket launched at, and is a different line from the body's `**Suggested effort:**`, which is
+the author's recommendation and is never rewritten.
 Two things hang off that: a resumed session pre-selects what the board is already running on
 instead of drifting onto another model or another subscription, and a resolved ticket keeps
 the record of what implemented it and what paid for it. A later change to the session's

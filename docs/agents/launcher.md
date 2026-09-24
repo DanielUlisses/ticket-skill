@@ -48,13 +48,23 @@ from the environment has to be resolved after the config file has been read.
 
 The account is a launch-time argument rather than one of those six parameters: it varies
 per ticket, not per skill, so `--account` (or `TICKET_ACCOUNT`) is parsed inside
-`launcher_main` and both skills get it from the one definition.
+`launcher_main` and both skills get it from the one definition. `--effort` sits in the same
+loop for the same reason, and is validated there against the five levels Claude Code knows:
+the CLI only *warns* on a level it doesn't recognise and then runs at its own default, so a
+value passed through would make a typo look like it worked. `load_ticket_models` deliberately
+does **not** run that check: it runs at source time, before the flag loop, and the flag is the
+top of the precedence order — a bad exported `TICKET_IMPL_EFFORT` must not be able to veto a
+launch that explicitly named a good level. The check belongs where nothing can override any
+more, which is the two places it sits: after the flag loop, and inside
+`print_launch_defaults`, so `defaults` refuses a bad config rather than quoting it into a
+question.
 
 ## `launch.sh defaults` launches nothing
 
 `launcher_main` answers two subcommands. `prompt` re-sends a rendered prompt after a trust
 dialog, once the usual preconditions have been checked; `defaults` prints what a launch that
-named neither account nor model would use, and starts nothing.
+named nothing would use — model, effort and account, each with its source, plus the option
+lists for the last two — and starts nothing.
 
 `defaults` is dispatched **ahead of every launch requirement** — before the `HERDR_ENV` check,
 before `need herdr`, before anything reads a ticket. The skills run it to state the defaults in

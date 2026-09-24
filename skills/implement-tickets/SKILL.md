@@ -103,7 +103,7 @@ One call, and only the six fields. Parse it per home:
 One call for the whole board, and it reads the header lines without pulling in the prose under them:
 
 ```bash
-grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Account|Worktree|Agent|Blocked by):' <path> --include='*.md'
+grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent|Blocked by|Suggested effort):' <path> --include='*.md'
 ```
 
 - **Number and title** from the `# <NN>: <Title>` heading (fall back to the filename).
@@ -112,7 +112,8 @@ grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Account|Worktree|Agent|B
 - **Base** from a `**Base:**` line — the commit the branch was cut from. Read 3's empty-branch guard needs it, so a run state without it degrades that read; see there for the fallback.
 - **Agent** from the `**Agent:**` line, the name read 2 matches on.
 - **Blocked by** from the `**Blocked by:**` line.
-- **Model** and **Account** from the `**Model:**` and `**Account:**` lines, if a previous run recorded them — the session settings that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once, and what Phase 2 pre-selects for a resumed session.
+- **Model**, **Effort** and **Account** from the `**Model:**`, `**Effort:**` and `**Account:**` lines, if a previous run recorded them — the session settings that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once, and what Phase 2 pre-selects for a resumed session.
+- **Suggested effort** from the `**Suggested effort:**` line `/ticket` wrote into the body. Unlike the three above, it is the ticket author's recommendation rather than a record of a run, and it is what Phase 2 pre-selects on a board nothing has launched yet. Tickets written before that line existed carry none.
 
 #### From a GitHub board
 
@@ -254,9 +255,9 @@ Ask the developer which to start (AskUserQuestion, or plainly if the options don
 
 Only if something will be launched — a round that starts nothing asks nothing, and neither does a session that never reaches a wave.
 
-Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first wave of the session, and every later wave reuses the answer without re-asking — as does anything `/ticket` or `/small-ticket` launches later in the same session.
+Three things govern every ticket a session launches: the **account** it bills to, the **model** that implements it, and the **effort** — how hard that model thinks — it runs at. They are settled **once**, at the first wave of the session, and every later wave reuses the answer without re-asking — as does anything `/ticket` or `/small-ticket` launches later in the same session.
 
-**Already settled** — this session answered, for an earlier wave or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+**Already settled** — this session answered, for an earlier wave or because the developer named them up front: don't ask again. State which account, model and effort are in force when you launch and move on.
 
 **Not settled yet** — read the defaults before you state them, rather than assuming them:
 
@@ -264,17 +265,25 @@ Two things govern every ticket a session launches: the **account** it bills to a
 ~/.claude/skills/ticket/scripts/launch.sh defaults
 ```
 
-It changes nothing and prints one line per setting, plus the options for the account:
+It changes nothing and prints one line per setting, plus the options for the account and for the effort:
 
 ```
 MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+EFFORT=medium (from /home/you/.claude/skills/ticket-models.env)
+EFFORTS=low medium high xhigh max
 ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
 ACCOUNTS=default work
 ```
 
 The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch the whole wave somewhere else. Quote what the command printed.
 
-**A resumed board answers part of it for you.** Where an `in-progress` ticket carries a `**Model:**` or `**Account:**` line (Phase 1 parsed both), that is what this board is *already* running on — say so and pre-select it over the launcher's default, so a resumed session stays with its wave instead of silently drifting onto another model or another subscription. Where in-progress tickets disagree (one wave on Sonnet, another on Opus), list what each is running on and pre-select the most recently launched. Whatever the board says nothing about still comes from `defaults`.
+`EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
+
+**A resumed board answers part of it for you.** Where an `in-progress` ticket carries a `**Model:**`, `**Effort:**` or `**Account:**` line (Phase 1 parsed all three), that is what this board is *already* running on — say so and pre-select it over the launcher's default, so a resumed session stays with its wave instead of silently drifting onto another model or another subscription. Where in-progress tickets disagree (one wave on Sonnet, another on Opus), list what each is running on and pre-select the most recently launched. Whatever the board says nothing about still comes from `defaults`.
+
+**The tickets suggest the effort, where the board has recorded none.** Each ticket `/ticket` wrote carries a `**Suggested effort:**` line. Pre-select, in this order: the effort in-progress tickets are already running on, else the level the *wave's* tickets suggest, else `EFFORT=`. Where the wave's suggestions disagree, name the spread and pre-select the highest of them — the ticket that asked for more thinking is the one that loses by getting less, and a single ticket can still be launched at its own level as a per-ticket override.
+
+On a **file board** the digest already carries the line. On a **GitHub board** it lives in the issue body, which the digest deliberately leaves out — so read it for the wave alone, with the same `gh issue view <n> --json body --jq .body` Phase 3 makes, keeping nothing from the body but that one line. The digest's no-prose rule is about the board, not about the handful of tickets already chosen to launch.
 
 Then ask with **one** `AskUserQuestion` call, one question per setting:
 
@@ -282,12 +291,13 @@ Then ask with **one** `AskUserQuestion` call, one question per setting:
 |---|---|---|---|
 | Account | "Which Claude account should this session's tickets run on?" | the pre-selected name first — the board's, else the `ACCOUNT=` one labelled `(default — inherited)` — then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
 | Model | "Which model should implement this session's tickets?" | the pre-selected value first — the board's, else the `MODEL=` one labelled `(default)` — then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the recorded run state agree with what launched |
+| Effort | "How hard should the model think on this session's tickets?" | the pre-selected level first — the board's, else the wave's suggestion labelled `(suggested by the tickets)`, else the `EFFORT=` one labelled `(default)` — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary and the recorded run state agree with what launched |
 
 One call with one question per setting, not one question then another: a further setting is another row here, another field you carry, and another line in the run state Phase 3 records — not another round of questions.
 
-**Then hold them.** Every launch in this session passes both, records both in the ticket's run state, and names both in the round's report. Two overrides exist and they are different things:
+**Then hold them.** Every launch in this session passes all three, records all three in the ticket's run state, and names all three in the round's report. Two overrides exist and they are different things:
 
-- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone, is recorded on that ticket, and leaves the session's settings standing for the rest of the wave.
+- **For one ticket** — the developer names an account, a model or an effort for a single launch. It goes to that launch alone, is recorded on that ticket, and leaves the session's settings standing for the rest of the wave.
 - **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it. Tickets already running keep what they launched on; the run state is what each is on, not what the session now says.
 
 Neither is a reason to re-ask on the next wave; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
@@ -315,17 +325,20 @@ Compose the **brief**: the ticket as the coordinator will receive it — the bod
 Save the brief to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical. State which account and model the wave is using (the session's settings from Phase 2) before launching:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/ticket/scripts/launch.sh [--account <name>] --effort "<level>" "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-Both values come from Phase 2 and cover the whole wave. `--account <name>` is passed only
+All three values come from Phase 2 and cover the whole wave. `--account <name>` is passed only
 where the session settled on a named account; where it inherits, the flag is left off
 entirely and each ticket resolves the developer's own directory link, as every ticket did
-before this knob existed. A wave is exactly where a named account pays — rate limits meter
-per account, so spreading a wave across two subscriptions doubles the headroom — and a
+before this knob existed. `--effort <level>` is passed always — there is no "inherit" for it,
+and a level the launcher doesn't know stops that ticket before anything is created, since
+Claude Code itself would only warn and then run at its own default. A wave is exactly where a
+named account pays — rate limits meter per account, so spreading a wave across two
+subscriptions doubles the headroom — and a
 per-ticket override the developer names for one ticket leaves the wave's setting standing.
-Every summary's `ACCOUNT=` line records what each ticket actually ran on, verified in its
-pane. See `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
+Every summary's `ACCOUNT=`, `MODEL=` and `EFFORT=` lines record what each ticket actually ran
+on; the account is verified in its pane. See `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
 It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
 
@@ -338,12 +351,13 @@ Immediately after a successful launch, **write the run state into the ticket fil
 **Branch:** <branch>
 **Base:** <sha>
 **Model:** <model>
+**Effort:** <level>
 **Account:** <account>
 **Worktree:** <worktree path>
 **Agent:** <herdr agent name>  **Tab:** <tab id>
 ```
 
-`Model` and `Account` are what this ticket actually launched on — the launcher's own `ACCOUNT=` line for the account, which is verified in the pane, rather than what was asked for. A later change to the session's settings doesn't rewrite them: they say what this ticket is running on.
+`Model`, `Effort` and `Account` are what this ticket actually launched on — the launcher's own `MODEL=`, `EFFORT=` and `ACCOUNT=` lines rather than what was asked for; the account one is verified in the pane. `Effort` is a record of the run and is distinct from the body's `**Suggested effort:**`, which is the ticket author's recommendation and never rewritten. A later change to the session's settings doesn't rewrite any of them: they say what this ticket is running on.
 
 `Base` is the commit the branch was cut from — `git -C <worktree> rev-parse HEAD` straight after the launch, before anything is committed on it.
 

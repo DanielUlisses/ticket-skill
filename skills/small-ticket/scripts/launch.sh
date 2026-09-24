@@ -7,16 +7,16 @@
 # to approve the plan in the pane.
 #
 # Usage:
-#   launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #   launch.sh defaults
 #
-# `defaults` prints what a launch that named neither account nor model would use
-# — MODEL=, ACCOUNT= (the account a *new* worktree inherits, which is not
-# necessarily the one the asking session runs under) and ACCOUNTS=, the names to
-# choose between. It reads, starts nothing, and needs no Herdr pane: the skills
-# run it once a session to state the defaults in the question they ask before the
-# first launch. See docs/agents/session-settings.md.
+# `defaults` prints what a launch that named nothing would use — MODEL=, EFFORT=,
+# ACCOUNT= (the account a *new* worktree inherits, which is not necessarily the
+# one the asking session runs under), plus the option lists EFFORTS= and
+# ACCOUNTS=. It reads, starts nothing, and needs no Herdr pane: the skills run it
+# once a session to state the defaults in the question they ask before the first
+# launch. See docs/agents/session-settings.md.
 #
 # Model resolution, highest wins: the optional 4th positional arg above →
 # TICKET_IMPL_MODEL exported in the environment → config/models.env (installed
@@ -25,9 +25,18 @@
 # ticket-implementer subagent it delegates to. TICKET_PLAN_MODEL is retired —
 # see docs/agents/models.md.
 #
+# Effort resolution, same shape and highest wins: the `--effort <level>` flag
+# above → TICKET_IMPL_EFFORT exported in the environment → config/models.env →
+# the fallback in the shared ticket-launcher.sh (`medium`). It is a flag rather
+# than a 5th positional for the reason --account is: it is usually absent, and
+# only the model earns a bare positional slot by varying every run. Any level
+# other than low/medium/high/xhigh/max stops the launch — Claude Code itself
+# merely warns and runs at its own default. See docs/agents/models.md.
+#
 # Optional variables:
 #   TICKET_AGENT_KIND  (default: claude)  — Claude Code kind in Herdr (`herdr agent`)
 #   TICKET_IMPL_MODEL   — orchestrator + implementer model; see resolution order above (fallback: opus)
+#   TICKET_IMPL_EFFORT  — how hard the implementation model thinks (low|medium|high|xhigh|max); --effort beats it; see resolution order above (fallback: medium)
 #   TICKET_REMOTE      (default: origin)
 #   TICKET_BASE_BRANCH (default: remote's default branch, e.g. main)
 #   TICKET_MODELS_CONF (default: <skills-dir>/ticket-models.env) — override the config file path
