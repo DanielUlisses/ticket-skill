@@ -11,11 +11,22 @@
 #   sweep.sh list [--no-fetch]
 #   sweep.sh remove --worktree <path> [--keep-branch] [--force]
 #   sweep.sh remove --branch <name> [--force]
+#   sweep.sh remove --workspace <id> [--force]
 #
 # `list` writes nothing but remote-tracking refs (it fetches the base branch, as
 # /implement-tickets' digest does; --no-fetch skips even that) and works from any
 # worktree of the repo. `remove` takes exactly one item per call — there is no
 # "remove everything" verb, deliberately: opt-in per item is the whole point.
+#
+# Leftovers are enumerated from three sources, not two. Git's worktrees and git's
+# branches are the obvious two, and between them they miss the most common
+# leftover there is: `gh pr merge --delete-branch` takes the directory, git's
+# registration and the branch, and leaves the Herdr workspace — its tabs, its
+# panes and an idle agent — with nothing on git's side left to find it by. So
+# Herdr's own workspace list is the third source, scoped to this repo, and it
+# removes with `herdr workspace close <id>` (positional; the --workspace flag
+# form is a usage error) because `herdr worktree remove` cannot see a workspace
+# whose checkout is gone.
 #
 # Optional variables:
 #   TICKET_REMOTE        (default: origin)
@@ -26,6 +37,9 @@
 # Exit codes:
 #   0 = ok | 1 = error | 2 = skipped, uncommitted changes | 3 = skipped, live agent
 #   4 = skipped, branch not merged
+#
+# `remove --workspace` uses 2 and 3 and never 4: a workspace has no branch of its
+# own to classify.
 
 set -euo pipefail
 
@@ -63,13 +77,30 @@ HAVE_JQ=0; command -v jq >/dev/null 2>&1 && HAVE_JQ=1
 HAVE_GH=0; command -v gh >/dev/null 2>&1 && HAVE_GH=1
 # Herdr is only reachable from inside a Herdr pane; outside one, the sweep still
 # reports git's side of the leftovers rather than refusing to run.
-HAVE_HERDR=0
-[[ "${HERDR_ENV:-}" == 1 ]] && command -v herdr >/dev/null 2>&1 && [[ $HAVE_JQ -eq 1 ]] && HAVE_HERDR=1
+#
+# HERDR_WHY names which of the three conditions failed, because with Herdr
+# unreachable a whole source of leftovers — the orphaned workspaces below — goes
+# unenumerated, and "nothing left behind" would then be a lie. A listing that
+# can't see that source has to say so, and say why.
+HAVE_HERDR=0; HERDR_WHY=""
+if [[ "${HERDR_ENV:-}" != 1 ]]; then
+  HERDR_WHY="not running inside a Herdr pane (HERDR_ENV is not 1)"
+elif ! command -v herdr >/dev/null 2>&1; then
+  HERDR_WHY="the 'herdr' command is not in PATH"
+elif [[ $HAVE_JQ -ne 1 ]]; then
+  HERDR_WHY="'jq' is not installed, and Herdr only speaks JSON"
+else
+  HAVE_HERDR=1
+fi
 
 # ---- the repo, from wherever this is run ------------------------------------
 # Sets ROOT (the main checkout, so a sweep run from a ticket's own worktree
 # resolves what one run from the checkout would), REPO_NAME, and SELF.
 resolve_repo_root
+
+# The directory the launchers cut worktrees into (`<parent>/<repo>--<branch>`),
+# derived once because `ws_is_ours` asks about it per workspace.
+ROOT_PARENT="$(dirname "$ROOT")"
 
 # `<owner>/<repo>` for `gh --repo`, derived once. A function caching into a global
 # wouldn't: every call site is a `$(...)`, so the assignment would die with the
@@ -188,13 +219,65 @@ declare -A WS_OF_PATH=()   # worktree path -> herdr workspace id
 declare -A AGENT_OF_WS=()  # herdr workspace id -> "<name-or-kind>:<status>"
 declare -A AGENT_OF_CWD=() # agent cwd -> "<name-or-kind>:<status>"
 
+# Herdr's whole workspace list, which is machine-wide: most of these belong to
+# other repos and `ws_is_ours` is what keeps them out of this repo's listing.
+WS_IDS=()                  # every workspace id Herdr reported, in its own order
+declare -A WS_LABEL=()     # id -> the label shown in the sidebar
+declare -A WS_PATH=()      # id -> worktree.checkout_path, "" when it has none
+declare -A WS_ROOT=()      # id -> worktree.repo_root, "" when it has none
+HERDR_WS_OK=0              # 1 once `herdr workspace list` has actually answered
+
+# The workspace this session is sitting in, resolved once and refused by id as
+# well as by path. Resolving it needs both Herdr calls: `worktree list` answers
+# it through git, and `workspace list` answers it when git no longer can — which
+# is exactly the state an orphan row is emitted for, and the state in which this
+# session's own workspace would otherwise become an option that closes the pane
+# the developer is sitting in.
+SELF_WS=""
+
 load_herdr() {
   [[ $HAVE_HERDR -eq 1 ]] || return 0
-  local json line p w
+  local json line p w id
+  # Reset first. Every array below is filled with `+=` or by key, so a second
+  # call in one process would append a duplicate of everything rather than
+  # refresh it. Nothing calls this twice today; this is what keeps that from
+  # being a silent trap the day something does.
+  WS_OF_PATH=(); AGENT_OF_WS=(); AGENT_OF_CWD=()
+  WS_IDS=(); WS_LABEL=(); WS_ROOT=(); WS_PATH=(); SELF_WS=""; HERDR_WS_OK=0
+
   json="$(herdr worktree list --cwd "$ROOT" 2>/dev/null || true)"
   while IFS=$'\t' read -r p w; do
     [[ -n "$p" && -n "$w" && "$w" != "null" ]] && WS_OF_PATH["$p"]="$w"
   done < <(jq -r '.result.worktrees[]? | [.path, (.open_workspace_id // "")] | @tsv' <<<"$json" 2>/dev/null || true)
+  SELF_WS="${WS_OF_PATH[$SELF]:-}"
+
+  # The third source. `herdr worktree list` is keyed on git — it asks git for the
+  # repo's worktrees and then says which of them a workspace is open for — so a
+  # workspace whose checkout git has forgotten is absent from it. `workspace list`
+  # is keyed on nothing but Herdr's own state, and it keeps the `worktree` block
+  # (checkout_path, repo_root) it was created with even after the checkout is
+  # deleted. That is what makes the orphan findable at all.
+  json="$(herdr workspace list 2>/dev/null || true)"
+  while IFS=$'\t' read -r id line p w; do
+    [[ -n "$id" ]] || continue
+    WS_IDS+=("$id"); WS_LABEL["$id"]="$line"; WS_PATH["$id"]="$p"; WS_ROOT["$id"]="$w"
+    HERDR_WS_OK=1
+  done < <(jq -r '
+      .result.workspaces[]?
+      | [ (.workspace_id // "")
+        , (.label // "")
+        , (.worktree.checkout_path // "")
+        , (.worktree.repo_root // "") ]
+      | @tsv' <<<"$json" 2>/dev/null || true)
+
+  # The second half of resolving SELF_WS, for the case git can't answer: this
+  # worktree's own registration being gone is the very condition that puts a
+  # workspace in the orphan group.
+  if [[ -z "$SELF_WS" ]]; then
+    for id in ${WS_IDS[@]+"${WS_IDS[@]}"}; do
+      [[ "${WS_PATH[$id]:-}" == "$SELF" ]] && { SELF_WS="$id"; break; }
+    done
+  fi
 
   json="$(herdr agent list 2>/dev/null || true)"
   while IFS=$'\t' read -r w p line; do
@@ -206,17 +289,62 @@ load_herdr() {
         , (.cwd // "")
         , ((.name // .agent // "agent") + ":" + (.agent_status // "unknown")) ]
       | @tsv' <<<"$json" 2>/dev/null || true)
+
+  # A `while` loop returns the status of the last command run in its body, and
+  # every one of these bodies ends in a `[[ ]] &&` that is false for a row with a
+  # missing field. Without this the function would hand that 1 back to a caller
+  # running under `set -e`, which would end the sweep on nothing worse than an
+  # agent Herdr reported without a cwd.
+  return 0
+}
+
+# Whether a Herdr workspace is this repo's to offer. `herdr workspace list` is
+# machine-wide: this machine carries workspaces for appofapps, terragrunt,
+# helm-charts and others at any moment, and offering one of those for closing is
+# the one failure this source must never have. So the question is asked
+# conservatively, and a workspace that can't be proved ours is simply not ours.
+#
+# Herdr's own `repo_root` is authoritative wherever it has one — it records the
+# repo the workspace was cut from, and it survives the checkout being deleted,
+# which is the whole case this source exists for. Only where Herdr recorded a
+# checkout path with no repo alongside it does the launcher's path convention
+# answer instead: `<parent>/<repo>--<branch>`, which names this repo in the
+# directory name itself.
+#
+# "Somewhere under the repo's parent" is deliberately *not* one of the answers.
+# Every sibling repo of this one lives under that parent too, so it would match
+# another project's checkout exactly as readily as this one's.
+ws_is_ours() {  # <repo_root> <checkout path>
+  local root="$1" path="$2"
+  [[ -n "$root" ]] && { [[ "$root" == "$ROOT" ]]; return; }
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == "$ROOT" ]] && return 0
+  [[ "$path" == "$ROOT_PARENT/${REPO_NAME}--"* ]]
 }
 
 # "none" is an answer, not a shrug: it means Herdr was asked and returned nothing
 # for this worktree. Where Herdr can't be reached at all the cell reads "unknown",
 # so a row never claims a dead agent on the strength of a missing CLI.
-agent_for() {  # <worktree path> -> "<name>:<status>" | "none" | "unknown"
-  local path="$1" ws="${WS_OF_PATH[$1]:-}"
+agent_for_ws() {  # <workspace id> <cwd> -> "<name>:<status>" | "none" | "unknown"
+  local ws="$1" path="${2:-}"
   [[ $HAVE_HERDR -eq 1 ]] || { printf 'unknown'; return 0; }
   if [[ -n "$ws" && -n "${AGENT_OF_WS[$ws]:-}" ]]; then printf '%s' "${AGENT_OF_WS[$ws]}"; return 0; fi
-  if [[ -n "${AGENT_OF_CWD[$path]:-}" ]]; then printf '%s' "${AGENT_OF_CWD[$path]}"; return 0; fi
+  if [[ -n "$path" && -n "${AGENT_OF_CWD[$path]:-}" ]]; then printf '%s' "${AGENT_OF_CWD[$path]}"; return 0; fi
   printf 'none'
+}
+
+agent_for() {  # <worktree path> -> "<name>:<status>" | "none" | "unknown"
+  agent_for_ws "${WS_OF_PATH[$1]:-}" "$1"
+}
+
+# The flag an agent cell earns, so the two row loops that report an agent can't
+# drift into describing the same cell differently.
+agent_flag() {  # <agent cell> -> "no-agent" | "agent-unknown" | "agent-idle" | "agent-busy"
+  case "$1" in
+    none)    printf 'no-agent' ;;
+    unknown) printf 'agent-unknown' ;;
+    *)       if agent_busy "$1"; then printf 'agent-busy'; else printf 'agent-idle'; fi ;;
+  esac
 }
 
 # Whether an agent is doing something that removing its pane would interrupt.
@@ -275,8 +403,13 @@ board_disagrees() {  # <board cell> <sweep state>
 # ---- the worktree inventory --------------------------------------------------
 # Parsed once into four parallel arrays, so `list` and `remove` see one inventory.
 WT_PATHS=(); WT_BRANCHES=(); WT_PRUNABLE=(); WT_MAIN=()
+# The same inventory keyed by path, which is the question the workspace source
+# asks: does any git worktree still claim this checkout?
+declare -A WT_BY_PATH=()
 load_worktrees() {
   local path="" branch="" prunable="" first=1
+  # Reset first, for the same reason load_herdr does: these are appended to.
+  WT_PATHS=(); WT_BRANCHES=(); WT_PRUNABLE=(); WT_MAIN=(); WT_BY_PATH=()
   while IFS= read -r l || [[ -n "$l" ]]; do
     case "$l" in
       worktree\ *) path="${l#worktree }"; branch="-"; prunable="no" ;;
@@ -286,15 +419,25 @@ load_worktrees() {
       "")
         if [[ -n "$path" ]]; then
           WT_PATHS+=("$path"); WT_BRANCHES+=("$branch"); WT_PRUNABLE+=("$prunable")
-          WT_MAIN+=("$first"); first=0; path=""
+          WT_MAIN+=("$first"); WT_BY_PATH["$path"]=1; first=0; path=""
         fi ;;
     esac
   done < <(git -C "$ROOT" worktree list --porcelain; echo)
 }
 
-dirty_count() {  # <path> -> number of porcelain lines, or "-" when the path is gone
+# `?` is the third answer and it exists for the workspace source: a directory
+# that is there but is not a git worktree any more answers `git status` with
+# nothing, and counting that as zero would call a directory full of files clean.
+# Only `0` and `-` are treated as safe to remove, so `?` holds the item back.
+dirty_count() {  # <path> -> porcelain line count, "-" when gone, "?" when not a worktree
+  local out rc=0
   [[ -d "$1" ]] || { printf '%s' '-'; return 0; }
-  git -C "$1" status --porcelain 2>/dev/null | grep -c '' || true
+  out="$(git -C "$1" status --porcelain 2>/dev/null)" || rc=$?
+  [[ $rc -eq 0 ]] || { printf '%s' '?'; return 0; }
+  # Empty output is a clean worktree, and has to be answered before grep sees it:
+  # a here-string of "" is one empty line, which `grep -c ''` counts as 1.
+  [[ -n "$out" ]] || { printf '%s' '0'; return 0; }
+  grep -c '' <<<"$out"
 }
 
 # ---- list --------------------------------------------------------------------
@@ -342,11 +485,7 @@ do_list() {
     flags=""
     [[ "$state" == "merged" ]] && flags+="orphan,"
     [[ "$state" == "empty" ]] && flags+="never-started,"
-    case "$agent" in
-      none)    flags+="no-agent," ;;
-      unknown) flags+="agent-unknown," ;;
-      *)       if agent_busy "$agent"; then flags+="agent-busy,"; else flags+="agent-idle,"; fi ;;
-    esac
+    flags+="$(agent_flag "$agent"),"
     [[ "$dirty" != "-" && "$dirty" != "0" ]] && flags+="dirty,"
     [[ "$prunable" == "yes" ]] && flags+="prunable,"
     [[ "$path" == "$SELF" ]] && flags+="self,"
@@ -379,10 +518,72 @@ do_list() {
     rows+=("branch	$branch	-	$state	$reason	-	-	-	$board	${flags%,}")
   done < <(git -C "$ROOT" for-each-ref --format='%(refname:short)' refs/heads/)
 
+  # Herdr workspaces git has lost track of — the third source, and the one that
+  # catches the ordinary leftover of `gh pr merge --delete-branch`. Neither loop
+  # above can reach these: there is no worktree entry and no branch to enumerate
+  # them from, so without this the workspace, its tabs, its panes and its idle
+  # agent are reported as nothing at all.
+  local id wpath wroot label
+  for id in ${WS_IDS[@]+"${WS_IDS[@]}"}; do
+    wpath="${WS_PATH[$id]:-}"; wroot="${WS_ROOT[$id]:-}"; label="${WS_LABEL[$id]:-}"
+    ws_is_ours "$wroot" "$wpath" || continue
+    # A workspace Herdr never recorded a checkout for can't be placed, can't be
+    # checked for uncommitted work, and isn't a worktree leftover.
+    [[ -n "$wpath" ]] || continue
+    # Still claimed by a git worktree, so it already has a `worktree` row above —
+    # including the main checkout's own workspace.
+    [[ -n "${WT_BY_PATH[$wpath]:-}" ]] && continue
+
+    if [[ -d "$wpath" ]]; then
+      state="unregistered"; reason="no-git-worktree"
+    else
+      state="gone"; reason="checkout-missing"
+    fi
+    # The sidebar label is how the developer recognises one of these ("w17
+    # project memory"); the branch column stays `-` because a workspace has no
+    # branch, and guessing one from the path would invite `remove --branch`.
+    [[ -n "$label" ]] && reason+=" ($label)"
+    agent="$(agent_for_ws "$id" "$wpath")"
+    dirty="$(dirty_count "$wpath")"
+
+    flags="orphan-workspace,"
+    flags+="$(agent_flag "$agent"),"
+    case "$dirty" in
+      -|0) ;;
+      \?) flags+="dirty-unknown," ;;
+      *)   flags+="dirty," ;;
+    esac
+    [[ "$wpath" == "$SELF" || "$id" == "$SELF_WS" ]] && flags+="self,"
+    # The same conditions `remove --workspace` enforces. There is no branch guard
+    # here because there is no branch: whatever branch this workspace was cut for
+    # is either gone already or standing on its own as a `branch` row above.
+    if [[ ( "$dirty" == "0" || "$dirty" == "-" ) \
+          && "$wpath" != "$SELF" && "$id" != "$SELF_WS" ]] \
+       && ! agent_busy "$agent"; then
+      flags+="removable,"
+    else
+      flags+="keep,"
+    fi
+
+    rows+=("workspace	-	$wpath	$state	$reason	$agent	$dirty	$id	-	${flags%,}")
+  done
+
   echo "# root=$ROOT base=$BASE_REF gh=$([[ $HAVE_GH -eq 1 ]] && echo yes || echo no) herdr=$([[ $HAVE_HERDR -eq 1 ]] && echo yes || echo no)"
+  # Say when a whole source could not be read, rather than letting its silence
+  # read as absence. This is the failure the source was added for: the workspaces
+  # were always there, and the listing said "nothing left behind".
+  if [[ $HAVE_HERDR -ne 1 ]]; then
+    echo "# source unavailable: Herdr workspaces — $HERDR_WHY. Orphaned workspaces cannot be listed; what follows is git's side only."
+  elif [[ $HERDR_WS_OK -ne 1 ]]; then
+    echo "# source unavailable: Herdr workspaces — 'herdr workspace list' returned nothing usable. Orphaned workspaces cannot be listed; what follows is git's side only."
+  fi
   echo "# kind	branch	path	state	reason	agent	dirty	workspace	board	flags"
   if [[ ${#rows[@]} -eq 0 ]]; then
-    echo "# nothing left behind"
+    if [[ $HAVE_HERDR -eq 1 && $HERDR_WS_OK -eq 1 ]]; then
+      echo "# nothing left behind"
+    else
+      echo "# nothing left behind that git knows about — Herdr's workspaces were not checked (see above)"
+    fi
   else
     printf '%s\n' "${rows[@]}"
   fi
@@ -499,6 +700,77 @@ remove_worktree() {
   fi
 }
 
+# The third kind. A workspace whose git worktree is gone cannot be removed the
+# way the other two are: `herdr worktree remove --workspace <id>` asks git for
+# the repo's worktrees first and doesn't list this one at all, so it is the wrong
+# verb. `herdr workspace close <id>` is the working call — positional, because
+# the `--workspace` flag form prints a usage error — and it takes the workspace,
+# its tabs and its panes, which is everything that is actually left.
+remove_workspace() {
+  local id="$1" force="$2" wpath wroot label agent dirty
+  [[ $HAVE_HERDR -eq 1 ]] \
+    || die "Herdr is unavailable ($HERDR_WHY) — 'remove --workspace' has nothing to talk to"
+  load_worktrees; load_herdr
+  [[ $HERDR_WS_OK -eq 1 ]] \
+    || die "'herdr workspace list' returned nothing usable — refusing to close '$id' without being able to check it belongs to $ROOT"
+  # Checked before it is used as an array subscript: a workspace id is `w17`, and
+  # anything carrying `]` or `[` would be read as a subscript pattern rather than
+  # as the key it is.
+  [[ "$id" =~ ^[A-Za-z0-9_:.-]+$ ]] || die "'$id' is not a Herdr workspace id (see: sweep.sh list)"
+  [[ -n "${WS_LABEL[$id]+set}" ]] || die "no such Herdr workspace: $id (see: sweep.sh list)"
+
+  wpath="${WS_PATH[$id]:-}"; wroot="${WS_ROOT[$id]:-}"; label="${WS_LABEL[$id]:-}"
+
+  # Guard 0 — whose workspace this is. Herdr's list is machine-wide, so this is
+  # the guard that stands between a typo'd id and another project's workspace.
+  ws_is_ours "$wroot" "$wpath" \
+    || die "workspace $id (${label:-no label}) doesn't belong to $ROOT — its checkout is ${wpath:-unrecorded} and its repo ${wroot:-unrecorded}; refusing"
+  [[ -n "$wpath" ]] \
+    || die "workspace $id has no checkout path recorded — refusing, since nothing here can tell what it is a leftover of"
+  [[ "$wpath" == "$SELF" || "$id" == "$SELF_WS" ]] \
+    && die "workspace $id is the one this command is running in — refusing"
+  [[ -n "${WT_BY_PATH[$wpath]:-}" ]] \
+    && die "workspace $id still holds the git worktree $wpath — remove it that way instead, so the worktree and the branch go with it: sweep.sh remove --worktree $wpath"
+
+  # Guard 1 — uncommitted changes. Moot when the checkout is gone, which is the
+  # ordinary case here, and not skipped when it isn't. Not overridable by --force.
+  dirty="$(dirty_count "$wpath")"
+  if [[ "$dirty" == "?" ]]; then
+    echo "SKIPPED workspace $id — $wpath is still on disk and git can't read it as a worktree, so there is no telling what is in it; look at it and remove the directory by hand" >&2
+    exit 2
+  fi
+  if [[ "$dirty" != "-" && "$dirty" != "0" ]]; then
+    echo "SKIPPED workspace $id — uncommitted changes in $wpath ($dirty file(s)); commit or discard them first" >&2
+    git -C "$wpath" status --short >&2
+    exit 2
+  fi
+
+  # Guard 2 — a live agent. Closing the workspace kills the pane it runs in.
+  agent="$(agent_for_ws "$id" "$wpath")"
+  if agent_busy "$agent" && [[ "$force" != "1" ]]; then
+    echo "SKIPPED workspace $id — agent $agent is mid-turn in it; let it finish or stop it, or pass --force" >&2
+    exit 3
+  fi
+
+  # There is no guard 3: a workspace has no branch of its own to classify. The
+  # branch this one was cut for either went with the merge or is standing on its
+  # own as a `branch` row, where `remove --branch` classifies it properly.
+
+  # The same moment, and the same reason, as in remove_worktree: past every guard,
+  # so this is going. `account_unlink` handles the directory already being gone by
+  # dropping the `<path>=<account>` line in place, which is exactly this case —
+  # see docs/agents/accounts.md.
+  account_release "$wpath"
+
+  herdr workspace close "$id" >/dev/null \
+    || die "herdr workspace close $id failed (run it by hand to see Herdr's message)"
+  echo "REMOVED workspace $id${label:+ ($label)} with its tabs and panes — git had no worktree left for $wpath"
+
+  if [[ -d "$wpath" ]]; then
+    echo "KEPT directory $wpath — no git worktree was registered for it, so closing the workspace left it where it is; remove it by hand if it is a leftover"
+  fi
+}
+
 remove_branch() {
   local branch="$1" force="$2" i
   load_worktrees
@@ -523,27 +795,29 @@ do_remove() {
     case "$1" in
       --worktree) [[ -n "$kind" ]] && die "pass one of --worktree / --branch, not both"
                   kind=worktree; target="${2:-}"; shift ;;
-      --branch)   [[ -n "$kind" ]] && die "pass one of --worktree / --branch, not both"
+      --branch)   [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace, not more than one"
                   kind=branch; target="${2:-}"; shift ;;
+      --workspace) [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace, not more than one"
+                  kind=workspace; target="${2:-}"; shift ;;
       --keep-branch) keep_branch=1 ;;
       --force) force=1 ;;
       *) die "unknown flag for remove: $1" ;;
     esac
     shift
   done
-  [[ -n "$kind" && -n "$target" ]] || die "usage: sweep.sh remove --worktree <path> [--keep-branch] [--force] | --branch <name> [--force]"
-  [[ "$kind" == "branch" && $keep_branch -eq 1 ]] && die "--keep-branch makes no sense with --branch"
+  [[ -n "$kind" && -n "$target" ]] || die "usage: sweep.sh remove --worktree <path> [--keep-branch] [--force] | --branch <name> [--force] | --workspace <id> [--force]"
+  [[ "$kind" != "worktree" && $keep_branch -eq 1 ]] && die "--keep-branch only makes sense with --worktree"
 
-  if [[ "$kind" == "worktree" ]]; then
-    remove_worktree "$target" "$keep_branch" "$force"
-  else
-    remove_branch "$target" "$force"
-  fi
+  case "$kind" in
+    worktree)  remove_worktree "$target" "$keep_branch" "$force" ;;
+    branch)    remove_branch "$target" "$force" ;;
+    workspace) remove_workspace "$target" "$force" ;;
+  esac
 }
 
 # ---- dispatch ----------------------------------------------------------------
 case "${1:-}" in
   list)   shift; do_list "$@" ;;
   remove) shift; do_remove "$@" ;;
-  *) die "usage: sweep.sh list [--no-fetch] | sweep.sh remove --worktree <path> [--keep-branch] [--force] | sweep.sh remove --branch <name> [--force]" ;;
+  *) die "usage: sweep.sh list [--no-fetch] | sweep.sh remove --worktree <path> [--keep-branch] [--force] | sweep.sh remove --branch <name> [--force] | sweep.sh remove --workspace <id> [--force]" ;;
 esac

@@ -67,3 +67,10 @@ the git half is shared rather than copied: it refuses the main checkout **even w
 `--force`**, and a dirty worktree returns exit 2 that `--force` **cannot** override.
 Both rest on `ROOT` and `SELF` resolving to exactly what the launcher that created
 the worktree resolved. One definition is how that stays true.
+
+A third guard now rests on the same resolution, and on the launcher's path convention
+besides. `herdr workspace list` is machine-wide, so the sweep's orphaned-workspace
+source decides which of those workspaces are this repo's from `ROOT`, `REPO_NAME` and
+`<parent>/<repo>--<branch>` — the very expression `launcher_main` builds `WT` from. If
+the launcher ever cuts worktrees somewhere else, that scoping rule moves with it, or
+the sweep starts missing its own leftovers.

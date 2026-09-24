@@ -158,6 +158,14 @@ inherited entry on its own, and the sweep asks the same question before calling 
 directory is already gone (the `prunable` case) the single `<path>=<account>` line is dropped
 in place instead, under the same lock, with every other line copied through untouched.
 
+`remove --workspace` — the sweep's third kind, a Herdr workspace whose git worktree has
+already been removed — releases the link the same way and at the same point. Its checkout
+path is gone by definition, so that is exactly the drop-the-line-in-place case, and it is the
+one route by which a link left behind by an ordinary `gh pr merge --delete-branch` can still
+be reached: `claude-acc unlink` takes no path argument and cannot `cd` into a directory that
+no longer exists. It reaches only the links whose workspace is still open, though. Links whose
+workspace has *also* gone are not enumerated from anywhere yet.
+
 ## Provider switching is out of scope
 
 `herdr agent start --kind` accepts 24 kinds, and Codex uses the same
