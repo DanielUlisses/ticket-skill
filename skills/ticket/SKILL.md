@@ -105,6 +105,33 @@ If that endpoint refuses (not available on the repo), say so once and leave it: 
 
 ### Writing to `.scratch/`
 
+#### First, make sure `.scratch/` is ignored
+
+Only on this path — a repo with a tracker creates no `.scratch/`, so none of this runs there. Before writing the first ticket, check at the project root, with a **trailing slash**:
+
+```bash
+git -C <root> check-ignore .scratch/
+```
+
+Exit 0 means ignored: say nothing further and write the tickets. Exit 1 means not ignored. Any other exit (128 — not a repo, bad root) is an error rather than an answer: report it and edit nothing.
+
+The trailing slash is what makes that answer right *before* the directory exists. The conventional entry is `.scratch/`, a directory-only pattern, and git won't match it against a `.scratch` that isn't on disk yet — so the bare path reports a repo that already ignores the board as one that doesn't, and the developer gets asked to add an entry that's already there. (`/implement-tickets` Phase 0 checks the bare path and is right to: by the time it reads a board, the directory exists.)
+
+Not ignored means every `git status` in the root shows `?? .scratch/` from here on, and any `git add -A` sweeps the board into a commit. The board lives in the root checkout alone — each ticket's worktree branches off the base before the board is there, so it never travels — which makes the branch the root is on, normally the **default branch**, the one the entry belongs on. Name it rather than assuming:
+
+```bash
+git -C <root> symbolic-ref --quiet --short refs/remotes/<remote>/HEAD   # strip the leading `<remote>/`
+git -C <root> branch --show-current
+```
+
+Resolve it the way `resolve_base_branch` does, so the branch you name is the one the launchers will pull: `TICKET_BASE_BRANCH` where it's set, else that remote's `HEAD` (`TICKET_REMOTE`, default `origin`), else whichever of `main`/`master` exists locally.
+
+- **The root is on the default branch** — tell the developer `.scratch/` isn't ignored, that you'd add it to `.gitignore` on `<default-branch>`, and that this is a tracked change they'll be committing. Ask (`AskUserQuestion`), and edit only on a yes: `Read` the `.gitignore` and `Write` it back with `.scratch/` appended as its own line, preserving everything already there, or `Write` just that line where there's no file yet. Never edit it silently.
+- **The root is on another branch** — say which branch it's on and which is the default, and that the entry belongs on the default one. Don't edit this branch's `.gitignore` and don't switch branches: the entry would land where the board won't. Leave it with the developer.
+- **Declined, or left with the developer** — write the tickets anyway. An un-ignored board is a noisy root, not a broken one.
+
+#### Then write the tickets
+
 Write one file per ticket to `.scratch/<feature-slug>/issues/<NN>-<slug>.md` at the project root — find it with `git worktree list --porcelain` if you're not sure you're there already — with the heading in place and `**Blocked by:**` holding ticket numbers.
 
 ## Phase 3 — Pick tickets to implement
