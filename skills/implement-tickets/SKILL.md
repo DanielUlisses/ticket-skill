@@ -91,6 +91,7 @@ It **must not** include:
 - **Diffs, logs, or worktree listings.** Ancestry answers landed-or-not, and nothing in a round needs to know what changed inside a branch.
 - **Anything that writes.** No launches, no status write-backs, no closes, no assignee changes. The digest is read-only; Phases 2–4 are what act on it.
 - **Anything that waits.** No `Monitor`, no `herdr agent wait`, no polling. A digest is a snapshot and ends in the turn it started.
+- **The repo's project memory.** It's prose, and it's read once per *launch* by the launcher (`docs/agents/memory.md`), not once per round. A digest that carried it would pay for it every round to tell you nothing that changed.
 - **Detail on resolved tickets** beyond their status line. Their blockers are satisfied and their worktrees are gone; the status is all the board still needs from them.
 
 ### Read 1 — the board and its statuses
@@ -277,7 +278,7 @@ Save the brief to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`
 ~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md`. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
+It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
 
 Exit codes, exactly as `/ticket` handles them: **0** → next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (a failed creation carries Herdr's own message, not a timeout), don't delete branches or worktrees, try the next ticket. Launch one ticket at a time and keep each summary block.
 

@@ -7,6 +7,8 @@ You're in a worktree dedicated to this ticket:
 
 The plan behind this ticket was already settled with the developer before this session started. You are not here to re-open it, interview anyone, or propose a different approach — turn it into working code, reviewed, left unstaged.
 
+{{PROJECT_MEMORY}}
+
 ## Ticket
 
 {{TICKET}}
@@ -50,6 +52,31 @@ Call the Skill tool with `mattpocock-skills:code-review`. Use that namespaced na
 ## Phase 3 — Hand back for review
 
 Stop. Report: files changed (one line each), how you verified it (the suite you ran, or that this repo has none and the exact commands you exercised instead), the Phase 2 findings, and how to look at it (`git status` / `git diff` in `{{WORKTREE}}`). Everything stays unstaged — the developer reviews, commits, and pushes it themselves.
+
+### `## Remember` — what the next ticket should already know
+
+Close the report with a `## Remember` section. Repos here are long-running, and the
+next ticket against this repo is briefed from its project memory file; this section
+is the only way anything you learned today reaches it.
+
+Keep it to what is **durable and non-obvious**:
+
+- A convention or a layout rule the repo follows but never states.
+- A hard-won fact: a command that only works a certain way, a dependency that
+  behaves unexpectedly, a file that looks authoritative and isn't.
+- A trap that cost you time here and would cost the next agent the same.
+
+Leave out what this ticket changed (that's the rest of the report), anything
+`CLAUDE.md`, `CONTEXT.md` or a `## Project memory` section in this brief already
+says, anything true only of this branch, and anything you're not confident of.
+
+One bullet per lesson, one line each, written as a fact about the repo rather
+than a story about your session. **Nothing durable is a perfectly good answer** —
+write `## Remember` with `Nothing durable this ticket.` under it and stop there;
+a padded list is worse than an empty one, because someone has to read it.
+
+You do **not** write any of this into the memory file yourself. Reporting is
+yours; deciding what the repo remembers is the developer's.
 
 ## Inviolable rules
 

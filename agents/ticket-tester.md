@@ -18,3 +18,5 @@ You run the project's available checks in the worktree. **Do not edit code or ve
 Inviolable rules: never `git commit`, `git push`, `git add`, `git stash`, `git reset`, `git rebase`, or switch branches; never `terraform plan/apply` against a real backend, deploys, or cloud CLIs that write. Everything stays unstaged, for the developer to review, commit, and push themselves.
 
 Return a table with: command, result (passed / failed / not run), and for failures, the relevant error excerpt and whether it looks caused by the change, pre-existing/environment, or unclear.
+
+Then add a `## Remember` heading with anything **durable** you learned about how this repo is checked — the command that actually runs its tests, a step that has to come first, a check that only works from a particular directory, a failure that is always pre-existing. Facts about the repo, not results from this run; `Nothing durable this ticket.` is a fine answer, and better than a padded list. Don't write any of it to a file — the orchestrator passes it to the developer, who decides what the repo remembers.
