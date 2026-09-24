@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# /small-ticket launcher — Herdr + Omarchy `ga` + Claude Code
+# /small-ticket launcher — Herdr worktree + Claude Code
 #
 # Usage:
 #   launch.sh <tab-label> <branch> <ticket-file> [model]
@@ -15,7 +15,6 @@
 # Optional variables:
 #   TICKET_AGENT_KIND  (default: claude)  — Claude Code kind in Herdr (`herdr agent`)
 #   TICKET_IMPL_MODEL   — orchestrator + implementer model; see resolution order above (fallback: opus)
-#   TICKET_GA_TIMEOUT  (default: 90)      — seconds to wait for the worktree
 #   TICKET_REMOTE      (default: origin)
 #   TICKET_BASE_BRANCH (default: remote's default branch, e.g. main)
 #   TICKET_MODELS_CONF (default: <skills-dir>/ticket-models.env) — override the config file path
@@ -43,7 +42,6 @@ REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
 TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
 
 AGENT_KIND="${TICKET_AGENT_KIND:-claude}"
-GA_TIMEOUT="${TICKET_GA_TIMEOUT:-90}"
 REMOTE="${TICKET_REMOTE:-origin}"
 
 [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1)"
@@ -71,7 +69,6 @@ fi
 [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh <tab-label> <branch> <ticket-file> [model]"
 LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
 [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
-[[ -n "${HERDR_WORKSPACE_ID:-}" ]] || die "HERDR_WORKSPACE_ID is empty"
 [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
 [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
 
@@ -80,7 +77,7 @@ LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
 git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
 [[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
 
-# ---- main repo (ga uses the basename of $PWD) ---------------------
+# ---- main repo (--path keeps the worktree at ../<repo>--<branch>, so `gd` still works) ----
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "the current directory is not a git repository"
 ROOT="$(git worktree list --porcelain | awk 'NR==1 && /^worktree /{ sub(/^worktree /, ""); print }')"
 [[ -n "$ROOT" && -d "$ROOT" ]] || die "couldn't determine the main repo root"
@@ -91,7 +88,7 @@ git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && die "branch '$B
 [[ -e "$WT" ]] && die "worktree path already exists: $WT"
 
 # ---- update the base branch before creating the worktree -------------------------
-# ga does `git worktree add -b <branch>` from the root's HEAD, so the root
+# `herdr worktree create --base` branches from the root's ref, so the root
 # needs to be on the base branch and up to date with the remote.
 git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 || die "remote '$REMOTE' doesn't exist in $ROOT"
 BASE_BRANCH="${TICKET_BASE_BRANCH:-}"
@@ -108,7 +105,7 @@ fi
 
 CURRENT="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
 [[ "$CURRENT" == "$BASE_BRANCH" ]] \
-  || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. ga creates the worktree from the root's HEAD; check out '$BASE_BRANCH' there and run again."
+  || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
 
 run_git_net() {  # no credential prompt and with a timeout, so it doesn't hang
   if command -v timeout >/dev/null 2>&1; then
@@ -154,37 +151,51 @@ tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
 tpl="${tpl//'{{TICKET}}'/"$ticket"}"   # last, so we don't replace placeholders inside the ticket text
 printf '%s\n' "$tpl" > "$PROMPT_FILE"
 
-# ---- 1. new tab in the current workspace -------------------------------------------
-log "creating tab '$LABEL' in workspace $HERDR_WORKSPACE_ID"
-args=(tab create --label "$LABEL")
-has_flag --workspace tab create && args+=(--workspace "$HERDR_WORKSPACE_ID")
-has_flag --no-focus  tab create && args+=(--no-focus)
-TAB_JSON="$(herdr "${args[@]}")" || die "failed to create the tab"
-TAB_ID="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$TAB_JSON")"
-LEFT="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$TAB_JSON")"
-[[ -n "$LEFT" ]] || die "couldn't read the root pane from the response: $TAB_JSON"
-
-# ---- 2. worktree via ga (Omarchy bash function -> needs the pane's interactive shell)
-sleep 1
-log "running 'ga $BRANCH' in pane $LEFT"
-herdr pane run "$LEFT" "cd $(printf '%q' "$ROOT") && ga $BRANCH" >/dev/null || die "failed to run ga in pane $LEFT"
-
-for ((i = 0; i < GA_TIMEOUT; i++)); do
-  if [[ -d "$WT" && "$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" == "$BRANCH" ]]; then
-    break
-  fi
-  sleep 1
-done
-if [[ ! -d "$WT" ]]; then
-  herdr pane read "$LEFT" --source recent-unwrapped --lines 30 >&2 || true
-  die "the worktree didn't show up within ${GA_TIMEOUT}s ($WT). Is 'ga' available in the Herdr shell?"
+# ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
+# One call either returns the worktree or fails with Herdr's own error. `--path`
+# pins it to ../<repo>--<branch>, so `gd <repo>--<branch>` still removes it.
+log "creating the worktree $WT (branch '$BRANCH' off '$BASE_BRANCH')"
+create=(worktree create --cwd "$ROOT" --branch "$BRANCH" --base "$BASE_BRANCH" --path "$WT" --label "$LABEL")
+has_flag --no-focus worktree create && create+=(--no-focus)
+# Keep stderr out of the JSON: on success herdr writes only the response to
+# stdout, and on failure only an {"error":{"message":...}} object to stderr.
+WT_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ticket-worktree.XXXXXX")"
+set +e
+WT_JSON="$(herdr "${create[@]}" 2>"$WT_ERR_FILE")"
+WT_RC=$?
+set -e
+if [[ $WT_RC -ne 0 ]]; then
+  # Surface Herdr's own message, not a guess about what went wrong.
+  WT_ERR="$(jq -r '.error.message // empty' <"$WT_ERR_FILE" 2>/dev/null || true)"
+  [[ -n "$WT_ERR" ]] || WT_ERR="$(cat "$WT_ERR_FILE")"
+  rm -f "$WT_ERR_FILE"
+  die "herdr worktree create failed: ${WT_ERR:-exit $WT_RC with no output}"
 fi
+rm -f "$WT_ERR_FILE"
+# Every read below assumes JSON; fail as `die` (exit 1) rather than letting jq
+# abort the script with its own status, which the skills' exit-code contract
+# doesn't cover.
+jq -e . >/dev/null 2>&1 <<<"$WT_JSON" \
+  || die "herdr worktree create returned unparseable output: $WT_JSON"
+
+WORKSPACE_ID="$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' <<<"$WT_JSON")"
+TAB_ID="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$WT_JSON")"
+LEFT="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$WT_JSON")"
+[[ -n "$LEFT" ]] || die "couldn't read the worktree's root pane from the response: $WT_JSON"
+WT_PATH="$(jq -r '.result.worktree.path // empty' <<<"$WT_JSON")"
+[[ "$WT_PATH" == "$WT" ]] \
+  || die "herdr created the worktree at '${WT_PATH:-?}', not at the expected $WT"
+
+# The branch matters as much as the path: a detached HEAD or a plain checkout of
+# the base branch would also sit at $BASE_COMMIT.
+WT_BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+[[ "$WT_BRANCH" == "$BRANCH" ]] \
+  || die "worktree at $WT is on '${WT_BRANCH:-?}', not '$BRANCH'"
 WT_COMMIT="$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)"
 [[ "$WT_COMMIT" == "$BASE_COMMIT" ]] \
   || die "worktree was created at $WT_COMMIT, but the updated '$BASE_BRANCH' is at $BASE_COMMIT"
-sleep 2   # let the cd + mise trust finish
 
-# ---- 3. split: terminal on the left, Claude Code on the right -----------------------
+# ---- 2. split: terminal on the left, Claude Code on the right -----------------------
 log "splitting the tab (Claude Code on the right)"
 split=(pane split "$LEFT" --direction right --cwd "$WT")
 has_flag --no-focus pane split && split+=(--no-focus)
@@ -195,7 +206,7 @@ fi
 RIGHT="$(jq -r '.result.pane.pane_id // .result.pane.id // empty' <<<"$SPLIT_JSON")"
 [[ -n "$RIGHT" ]] || die "couldn't read the new pane from the response: $SPLIT_JSON"
 
-# ---- 4. start Claude Code in plan mode --------------------------------------
+# ---- 3. start Claude Code in plan mode --------------------------------------
 sleep 1
 log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, plan mode) in pane $RIGHT"
 set +e
@@ -207,7 +218,7 @@ set -e
 
 summary() {
   cat <<SUMMARY
-TAB=${TAB_ID:-?} ($LABEL)
+TAB=${TAB_ID:-?} (workspace ${WORKSPACE_ID:-?}, labelled '$LABEL')
 BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, updated via pull)
 WORKTREE=$WT
 PANES=left:$LEFT right:$RIGHT
@@ -227,6 +238,6 @@ if [[ $START_RC -ne 0 ]]; then
   die "failed to start the agent: $START_OUT"
 fi
 
-# ---- 5. send the ticket ----------------------------------------------------------
+# ---- 4. send the ticket ----------------------------------------------------------
 send_prompt "$AGENT" "$PROMPT_FILE"
 summary
