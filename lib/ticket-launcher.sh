@@ -206,6 +206,70 @@ $memory"
   fi
 }
 
+# ---- mise trust ---------------------------------------------------------------
+# A ticket's worktree is a brand-new directory, and a path mise has never seen is
+# an untrusted one — so in a repo with a mise config the pane's `mise` either
+# asks to trust it or refuses to read it outright, and the agent starts against a
+# shell with none of the repo's toolchain on PATH. Best-effort by design: a
+# failure logs and the launch carries on. `launcher.md` has the history, the
+# trade-offs, and what this deliberately does not reach; three things need saying
+# here because they are what the code below is shaped by.
+#
+# `mise trust --show` is the detector, not a list of config filenames this repo
+# would have to keep in step by hand. It changes nothing, prints one
+# `<dir>: trusted|untrusted` line per config directory in the chain to stdout,
+# and sees exactly what the agent's pane will see.
+#
+# It walks parents too, so the worktree's *own* line is what is matched — every
+# worktree here is cut as a sibling of the main checkout, and one mise config
+# above `<parent>/` would otherwise make every repo on the machine look like a
+# mise repo. The match is against the resolved path, because mise canonicalises
+# what `-C` gives it and a `$WT` with a symlinked component prints as its real
+# path.
+#
+# `-C <dir>` and never a config-file argument: mise resolves a trust argument to
+# a trust root lexically, and a path that isn't there acts on its parent
+# directory instead — here, the directory holding every worktree and the main
+# checkout. That is also why this runs after the worktree has been verified onto
+# disk and not a line before it.
+trust_worktree_mise() {
+  local wt_real shown out rc
+  command -v mise >/dev/null 2>&1 || return 0
+
+  wt_real="$(readlink -f "$WT" 2>/dev/null || true)"
+  [[ -n "$wt_real" ]] || wt_real="$WT"
+
+  # Read whole, then match — the rule account_pane_config_dir states, for the
+  # same reason. A `grep -q` on the far end of a pipeline can exit before mise
+  # has finished writing, and the SIGPIPE that follows reaches the caller's
+  # `pipefail` as 141, which a `|| return 0` would swallow as "nothing to do".
+  # Silently skipping the trust is the one failure this function must not have.
+  #
+  # </dev/null on both calls: a mise that decides to ask something must not be
+  # able to park the launcher at a prompt, which is the failure being fixed.
+  set +e
+  shown="$(mise trust --show -C "$WT" 2>/dev/null </dev/null)"
+  rc=$?
+  set -e
+  # An empty listing is a real answer (no mise config here) and rc is still 0, so
+  # only a non-zero rc is a failure — and it is reported rather than read as
+  # "doesn't apply", which would be this function going quiet in exactly the repo
+  # that needed it.
+  if [[ $rc -ne 0 ]]; then
+    log "warning: 'mise trust --show' failed in $WT (exit $rc) — can't tell whether this repo has a mise config to trust, so the agent's pane may stop at a trust prompt or run without the repo's toolchain on PATH. Check by hand with: mise trust --show -C $WT"
+    return 0
+  fi
+  grep -qxF "$wt_real: untrusted" <<<"$shown" || return 0
+
+  log "trusting the worktree's mise config (mise trust -C $WT)"
+  set +e
+  out="$(mise trust --yes -C "$WT" 2>&1 </dev/null)"
+  rc=$?
+  set -e
+  [[ $rc -eq 0 ]] \
+    || log "warning: 'mise trust' failed in $WT (exit $rc) — the agent's pane may stop at a trust prompt or run without the repo's toolchain on PATH; trust it by hand with 'mise trust -C $WT'. mise said: ${out:-nothing}"
+}
+
 # ---- the account this ticket runs on ----------------------------------------
 # Three steps, in this order: check the requested account before anything is
 # created, write the link once the worktree exists, and read back what the agent
@@ -487,6 +551,14 @@ launcher_main() {
   WT_COMMIT="$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)"
   [[ "$WT_COMMIT" == "$BASE_COMMIT" ]] \
     || die "worktree was created at $WT_COMMIT, but the updated '$BASE_BRANCH' is at $BASE_COMMIT"
+
+  # ---- 1a. trust the new directory's mise config, where there is one ----------
+  # Immediately after the worktree is proved onto disk and before anything else
+  # touches it: mise resolves a trust path lexically, so this must not run a line
+  # earlier, and every pane created from here on wants the toolchain already
+  # trusted. See trust_worktree_mise for the rest, including what it deliberately
+  # does not do.
+  trust_worktree_mise
 
   # ---- 1b. the account this ticket runs on ------------------------------------
   # Between the worktree and the agent's pane, because the link is keyed by
