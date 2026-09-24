@@ -5,20 +5,23 @@
 # a Herdr workspace, its tabs, its panes, a git worktree, and a branch. This
 # script reports all of them and removes them one item at a time. A ticket
 # launched with --account leaves a sixth, a claude-acc directory link, which
-# `remove --worktree` takes with the worktree (see docs/agents/accounts.md).
+# `remove --worktree` takes with the worktree — and which `remove --link` takes
+# on its own when nothing else is left to attach it to (see
+# docs/agents/accounts.md).
 #
 # Usage:
 #   sweep.sh list [--no-fetch]
 #   sweep.sh remove --worktree <path> [--keep-branch] [--force]
 #   sweep.sh remove --branch <name> [--force]
 #   sweep.sh remove --workspace <id> [--force]
+#   sweep.sh remove --link <path>
 #
 # `list` writes nothing but remote-tracking refs (it fetches the base branch, as
 # /implement-tickets' digest does; --no-fetch skips even that) and works from any
 # worktree of the repo. `remove` takes exactly one item per call — there is no
 # "remove everything" verb, deliberately: opt-in per item is the whole point.
 #
-# Leftovers are enumerated from three sources, not two. Git's worktrees and git's
+# Leftovers are enumerated from four sources, not two. Git's worktrees and git's
 # branches are the obvious two, and between them they miss the most common
 # leftover there is: `gh pr merge --delete-branch` takes the directory, git's
 # registration and the branch, and leaves the Herdr workspace — its tabs, its
@@ -28,10 +31,22 @@
 # form is a usage error) because `herdr worktree remove` cannot see a workspace
 # whose checkout is gone.
 #
+# The fourth is claude-acc's own links file. The same merge leaves the link an
+# `--account` ticket wrote, and once the workspace has been closed too, nothing
+# keyed on git or on Herdr enumerates it any more — while `claude-acc unlink`
+# takes no path argument and cannot cd into a directory that no longer exists.
+# So the entry is read out of ~/.claude-switch/links directly, filtered to this
+# repo's `<parent>/<repo>--<branch>` worktree convention and to paths nothing
+# else still claims, and `remove --link` drops that one line under the same
+# `flock` every other write here takes. It is the one source that needs neither
+# git nor Herdr to answer.
+#
 # Optional variables:
 #   TICKET_REMOTE        (default: origin)
 #   TICKET_BASE_BRANCH   (default: the remote's default branch, e.g. main)
 #   TICKET_DIGEST_GLOB   (default: /tmp/implement-tickets-digest-*.txt)
+#   CLAUDE_SWITCH_DIR    (default: ~/.claude-switch) — read by ticket-account.sh; point it
+#                        at a sandbox to exercise the link source without touching the real file
 #   TICKET_LIB_DIR       — the directory holding the shared ticket-*.sh libraries (default: <skills-dir>)
 #
 # Exit codes:
@@ -39,7 +54,10 @@
 #   4 = skipped, branch not merged
 #
 # `remove --workspace` uses 2 and 3 and never 4: a workspace has no branch of its
-# own to classify.
+# own to classify. `remove --link` uses none of the three: a link entry has no
+# working tree to be dirty, no pane to interrupt and no branch to classify — its
+# refusals are all errors (1), and every one of them names a better answer than
+# forcing, so it takes no --force.
 
 set -euo pipefail
 
@@ -272,12 +290,9 @@ load_herdr() {
 
   # The second half of resolving SELF_WS, for the case git can't answer: this
   # worktree's own registration being gone is the very condition that puts a
-  # workspace in the orphan group.
-  if [[ -z "$SELF_WS" ]]; then
-    for id in ${WS_IDS[@]+"${WS_IDS[@]}"}; do
-      [[ "${WS_PATH[$id]:-}" == "$SELF" ]] && { SELF_WS="$id"; break; }
-    done
-  fi
+  # workspace in the orphan group. Asked through ws_for_path, so "which
+  # workspace holds this checkout path" has one answer in one place.
+  [[ -n "$SELF_WS" ]] || SELF_WS="$(ws_for_path "$SELF")"
 
   json="$(herdr agent list 2>/dev/null || true)"
   while IFS=$'\t' read -r w p line; do
@@ -322,6 +337,32 @@ ws_is_ours() {  # <repo_root> <checkout path>
   [[ "$path" == "$ROOT_PARENT/${REPO_NAME}--"* ]]
 }
 
+# Whether a claude-acc link entry is one of this repo's ticket worktrees.
+#
+# The same question as ws_is_ours, asked with strictly less to go on: a link
+# entry is a path and an account name, and there is no recorded repo beside it
+# the way Herdr records one for a workspace. So the launcher's path convention —
+# `<parent>/<repo>--<branch>` — is the only evidence there is, and it is the
+# whole guard.
+#
+# That guard is what stands between this and the developer's own file.
+# `~/.claude-switch/links` is theirs, hand-managed, and the entry every worktree
+# here inherits from (`~/repos/daniel=pythian`) lives in it. Nothing that fails
+# this test is listed as removable or written away, and `remove --link` asks it
+# again before it writes.
+#
+# The match is the worktree itself and nothing under it. A prefix test alone
+# would also claim `<parent>/<repo>--<branch>/some/subdir`, which the launcher
+# never writes — a link there is one the developer made by hand, inside a ticket
+# worktree, and this is the guard that is supposed to leave those alone. The
+# branch can't put that `/` there itself: the launcher refuses a branch name
+# carrying one (`use kebab-case without '/' or '--'`). The main checkout's own
+# path fails the test too, having no `--<branch>` at all.
+link_is_ours() {  # <linked path>
+  local rest="${1#"$ROOT_PARENT/${REPO_NAME}--"}"
+  [[ "$rest" != "$1" && -n "$rest" && "$rest" != */* ]]
+}
+
 # "none" is an answer, not a shrug: it means Herdr was asked and returned nothing
 # for this worktree. Where Herdr can't be reached at all the cell reads "unknown",
 # so a row never claims a dead agent on the strength of a missing CLI.
@@ -335,6 +376,19 @@ agent_for_ws() {  # <workspace id> <cwd> -> "<name>:<status>" | "none" | "unknow
 
 agent_for() {  # <worktree path> -> "<name>:<status>" | "none" | "unknown"
   agent_for_ws "${WS_OF_PATH[$1]:-}" "$1"
+}
+
+# The Herdr workspace recorded for a checkout path — WS_PATH read backwards. It
+# is `herdr workspace list`'s answer, not `worktree list`'s, so it still answers
+# for a checkout git has forgotten, which is the only case that asks. Scanned
+# rather than indexed: there is one link entry to ask about per merged
+# `--account` ticket, and Herdr's list is tens of rows.
+ws_for_path() {  # <path> -> workspace id, or empty when none has it
+  local id
+  for id in ${WS_IDS[@]+"${WS_IDS[@]}"}; do
+    [[ "${WS_PATH[$id]:-}" == "$1" ]] && { printf '%s' "$id"; return 0; }
+  done
+  return 0
 }
 
 # The flag an agent cell earns, so the two row loops that report an agent can't
@@ -425,6 +479,39 @@ load_worktrees() {
   done < <(git -C "$ROOT" worktree list --porcelain; echo)
 }
 
+# ---- claude-acc's links file -------------------------------------------------
+# The fourth source, read straight out of the file. Every other source is keyed
+# on something that a merge has already deleted; this one is keyed on the write
+# the launcher made, which is precisely what survives.
+LINK_PATHS=()              # every linked path, machine-wide, in the file's order
+declare -A LINK_ACCOUNT=() # path -> account name
+HAVE_LINKS=0               # 1 once the entries have actually been read out
+LINKS_WHY=""               # why they couldn't be, when there is a file and it wouldn't read
+load_links() {
+  # Reset first, for the same reason load_herdr does: this appends.
+  LINK_PATHS=(); LINK_ACCOUNT=(); HAVE_LINKS=0; LINKS_WHY=""
+  # No switcher means no accounts, no links file and nothing to reconcile —
+  # which is absence, not blindness, so it needs no "source unavailable" line.
+  have_claude_acc || return 0
+  [[ -f "$ACCOUNT_LINKS_FILE" ]] || return 0
+  # Read whole, and its status checked, rather than piped in from a process
+  # substitution whose failure would arrive as an empty listing. A file that is
+  # there and won't read is the source that couldn't be asked, and this script's
+  # own rule is that such a source says so instead of reading as absence — the
+  # same distinction HERDR_WS_OK draws for the workspaces.
+  local out lp acct
+  if ! out="$(account_link_entries 2>/dev/null)"; then
+    LINKS_WHY="$ACCOUNT_LINKS_FILE is there but could not be read"
+    return 0
+  fi
+  HAVE_LINKS=1
+  while IFS=$'\t' read -r lp acct; do
+    [[ -n "$lp" ]] || continue
+    LINK_PATHS+=("$lp"); LINK_ACCOUNT["$lp"]="$acct"
+  done <<<"$out"
+  return 0
+}
+
 # `?` is the third answer and it exists for the workspace source: a directory
 # that is there but is not a git worktree any more answers `git status` with
 # nothing, and counting that as zero would call a directory full of files clean.
@@ -459,7 +546,7 @@ do_list() {
       || log "warning: fetch of $REMOTE/$BASE_BRANCH failed — merge answers may be stale"
   fi
 
-  load_worktrees; load_herdr; load_board
+  load_worktrees; load_herdr; load_board; load_links
 
   local rows=() i path branch prunable state reason agent dirty ws board flags
   declare -A SEEN_BRANCH=()
@@ -568,7 +655,61 @@ do_list() {
     rows+=("workspace	-	$wpath	$state	$reason	$agent	$dirty	$id	-	${flags%,}")
   done
 
-  echo "# root=$ROOT base=$BASE_REF gh=$([[ $HAVE_GH -eq 1 ]] && echo yes || echo no) herdr=$([[ $HAVE_HERDR -eq 1 ]] && echo yes || echo no)"
+  # claude-acc links this repo's ticket worktrees left behind — the fourth
+  # source, and the only one that answers with neither git nor Herdr. A worktree
+  # removed outside this script (the ordinary `gh pr merge --delete-branch`)
+  # takes its git registration and, sooner or later, its workspace; the link it
+  # was launched with stays, and `claude-acc unlink` cannot reach it once the
+  # directory it would have to stand in is gone. Unreported, that is a line in
+  # the developer's file that nothing but a text editor can remove.
+  local lp acct lws
+  for lp in ${LINK_PATHS[@]+"${LINK_PATHS[@]}"}; do
+    # The guard, before anything else is asked. Everything else in that file is
+    # the developer's own, including the parent link every worktree here
+    # inherits from.
+    link_is_ours "$lp" || continue
+    # A live worktree's link is in use, not a leftover — and its `worktree` row
+    # above already takes it, at the one moment claude-acc can still be asked to.
+    # This is also what keeps the worktree the sweep is running in out of the
+    # loop, so no row here needs a `self` test: SELF is a registered worktree by
+    # construction, `git rev-parse --show-toplevel` having named it.
+    [[ -n "${WT_BY_PATH["$lp"]:-}" ]] && continue
+
+    acct="${LINK_ACCOUNT["$lp"]:-?}"
+    lws="$(ws_for_path "$lp")"
+    if [[ -d "$lp" ]]; then
+      state="unregistered"; reason="directory-present"
+    else
+      state="gone"; reason="checkout-missing"
+    fi
+    reason+=" (account=$acct)"
+
+    flags="orphan-link,"
+    if [[ -n "$lws" ]]; then
+      flags+="covered-by-workspace,"
+    elif [[ $HAVE_HERDR -ne 1 || $HERDR_WS_OK -ne 1 ]]; then
+      # Herdr couldn't be asked, so "no workspace holds this" is an assumption
+      # here rather than an answer — the row says so instead of reading as
+      # checked, the same way an agent cell never reports `none` on the strength
+      # of a missing CLI. It stays on offer: an unreachable Herdr is no reason to
+      # leave an unreachable line in the file, and dropping the entry takes
+      # nothing else with it even if a workspace did turn out to be open.
+      flags+="workspace-unknown,"
+    fi
+    # Offered only where this is the last thing holding the entry. A workspace
+    # still open for that path has a row of its own that releases the link as it
+    # closes, and a directory still on disk can be unlinked by the tool that owns
+    # the file — `remove --link` refuses both, so neither is offered.
+    if [[ "$state" == "gone" && -z "$lws" ]]; then
+      flags+="removable,"
+    else
+      flags+="keep,"
+    fi
+
+    rows+=("link	-	$lp	$state	$reason	-	-	${lws:--}	-	${flags%,}")
+  done
+
+  echo "# root=$ROOT base=$BASE_REF gh=$([[ $HAVE_GH -eq 1 ]] && echo yes || echo no) herdr=$([[ $HAVE_HERDR -eq 1 ]] && echo yes || echo no) links=$([[ $HAVE_LINKS -eq 1 ]] && echo yes || echo no)"
   # Say when a whole source could not be read, rather than letting its silence
   # read as absence. This is the failure the source was added for: the workspaces
   # were always there, and the listing said "nothing left behind".
@@ -576,6 +717,9 @@ do_list() {
     echo "# source unavailable: Herdr workspaces — $HERDR_WHY. Orphaned workspaces cannot be listed; what follows is git's side only."
   elif [[ $HERDR_WS_OK -ne 1 ]]; then
     echo "# source unavailable: Herdr workspaces — 'herdr workspace list' returned nothing usable. Orphaned workspaces cannot be listed; what follows is git's side only."
+  fi
+  if [[ -n "$LINKS_WHY" ]]; then
+    echo "# source unavailable: claude-acc links — $LINKS_WHY. Orphaned account links cannot be listed; a link this repo left behind would not show up below."
   fi
   echo "# kind	branch	path	state	reason	agent	dirty	workspace	board	flags"
   if [[ ${#rows[@]} -eq 0 ]]; then
@@ -771,6 +915,87 @@ remove_workspace() {
   fi
 }
 
+# The fourth kind. A claude-acc link an `--account` ticket wrote, whose worktree
+# was removed by something other than this script — the ordinary
+# `gh pr merge --squash --delete-branch`, which takes the directory, git's
+# registration and the branch in one go, and never comes past here.
+#
+# This is the only removal in this script that edits the developer's own file
+# rather than calling the tool that owns it, and it does so because the tool
+# cannot: `claude-acc unlink` takes no path argument — `claude-acc unlink <path>`
+# is `error: unexpected argument` — and unlinks the directory it is standing in,
+# which by now does not exist. Every guard below is there because of that, and
+# the first of them is the one that matters: only a path under this repo's
+# worktree convention is ever touched.
+remove_link() {
+  local path="$1" force="$2" norm lws rc=0
+  have_claude_acc \
+    || die "claude-acc is not installed, so there is no links file to reconcile"
+  [[ "$force" != "1" ]] \
+    || die "--force means nothing with --link: none of its refusals is about proving work landed, and each one names a better answer than forcing"
+  # Not load_links: the entry is looked up by exact path below, which reads the
+  # file itself, and this needs no inventory of the rest of it.
+  load_worktrees; load_herdr
+
+  # Matched against the file as it is written first, and only then against a
+  # resolved path. The entry is a literal line in the developer's file, and a
+  # path put through `pwd -P` is not necessarily the string that is in it. The
+  # directory is normally gone, so the resolution can only be of its parent —
+  # which is what remove_worktree does too, and for the same reason.
+  #
+  # The match is made outside the lock and the write re-matches inside it, which
+  # is safe for the one entry this can reach: its directory is gone, so nothing
+  # is going to link that path again while this runs, and a concurrent remover of
+  # the same line leaves account_unlink with nothing to drop rather than dropping
+  # someone else's.
+  if ! account_linked_exactly "$path"; then
+    norm="$(cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")" || printf '%s' "$path")"
+    account_linked_exactly "$norm" \
+      || die "no claude-acc link entry for '$path' in $ACCOUNT_LINKS_FILE (see: sweep.sh list)"
+    path="$norm"
+  fi
+
+  # Guard 0 — whose entry this is. There is no second opinion to ask for a link
+  # the way Herdr's repo_root is one for a workspace, so the path convention is
+  # the whole of it, and a hand-written entry never satisfies it.
+  link_is_ours "$path" \
+    || die "'$path' is not one of this repo's ticket worktrees ($ROOT_PARENT/${REPO_NAME}--<branch>) — refusing. Entries outside that convention are the developer's own, and this never removes one; unlink it yourself if that is really what you want"
+  [[ "$path" != "$SELF" ]] \
+    || die "'$path' is the worktree this command is running in — refusing"
+
+  # Guard 1 — whether anything still holds it. A link is the *last* thing a
+  # ticket leaves, so wherever the worktree or the workspace is still there, that
+  # is the item to remove: both release the link on their way out, at the one
+  # moment claude-acc itself can still be asked to.
+  [[ -z "${WT_BY_PATH[$path]:-}" ]] \
+    || die "'$path' is still a git worktree of $ROOT — remove it that way instead, so the worktree, its workspace and its branch go with the link: sweep.sh remove --worktree $path"
+  lws="$(ws_for_path "$path")"
+  [[ -z "$lws" ]] \
+    || die "Herdr workspace $lws is still open for '$path' — remove it that way instead, so its tabs and panes go with the link: sweep.sh remove --workspace $lws"
+  # With Herdr unreachable that question went unasked, and this goes ahead
+  # anyway: the leaked entry is exactly the case where there is no workspace
+  # left, and an unreadable Herdr is no reason to leave an unreachable line in
+  # the file. The entry is all that is dropped either way — a workspace that did
+  # turn out to be open keeps its tabs, its panes and its agent.
+
+  # Guard 2 — whether the tool could still do this itself. A directory that is
+  # still on disk can be cd'd into, so claude-acc can unlink it, and this script
+  # has no business rewriting the file for a job the owner of the format can do.
+  [[ ! -d "$path" ]] \
+    || die "'$path' is still on disk, so claude-acc can reach its own entry — refusing to rewrite $ACCOUNT_LINKS_FILE for a job the tool can do: cd '$path' && claude-acc unlink"
+
+  # Under the same `flock` every other write to this file takes, and fatal where
+  # the sweep's other two call sites only warn: there, the worktree was going
+  # with or without its link; here the link *is* the item, and saying it went
+  # when it didn't is the silence this whole path exists to end.
+  account_prune_link "$path" || rc=$?
+  if [[ $rc -eq $ACCOUNT_LOCK_UNAVAILABLE ]]; then
+    die "couldn't take the lock on $ACCOUNT_LINKS_LOCK within ${ACCOUNT_LOCK_WAIT}s (or flock is missing) — nothing was written; try again once whatever holds it has finished"
+  elif [[ $rc -ne 0 ]]; then
+    die "couldn't rewrite $ACCOUNT_LINKS_FILE — nothing was written; look at it by hand"
+  fi
+}
+
 remove_branch() {
   local branch="$1" force="$2" i
   load_worktrees
@@ -793,25 +1018,28 @@ do_remove() {
   local kind="" target="" keep_branch=0 force=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --worktree) [[ -n "$kind" ]] && die "pass one of --worktree / --branch, not both"
+      --worktree) [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace / --link, not more than one"
                   kind=worktree; target="${2:-}"; shift ;;
-      --branch)   [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace, not more than one"
+      --branch)   [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace / --link, not more than one"
                   kind=branch; target="${2:-}"; shift ;;
-      --workspace) [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace, not more than one"
+      --workspace) [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace / --link, not more than one"
                   kind=workspace; target="${2:-}"; shift ;;
+      --link)     [[ -n "$kind" ]] && die "pass one of --worktree / --branch / --workspace / --link, not more than one"
+                  kind=link; target="${2:-}"; shift ;;
       --keep-branch) keep_branch=1 ;;
       --force) force=1 ;;
       *) die "unknown flag for remove: $1" ;;
     esac
     shift
   done
-  [[ -n "$kind" && -n "$target" ]] || die "usage: sweep.sh remove --worktree <path> [--keep-branch] [--force] | --branch <name> [--force] | --workspace <id> [--force]"
+  [[ -n "$kind" && -n "$target" ]] || die "usage: sweep.sh remove --worktree <path> [--keep-branch] [--force] | --branch <name> [--force] | --workspace <id> [--force] | --link <path>"
   [[ "$kind" != "worktree" && $keep_branch -eq 1 ]] && die "--keep-branch only makes sense with --worktree"
 
   case "$kind" in
     worktree)  remove_worktree "$target" "$keep_branch" "$force" ;;
     branch)    remove_branch "$target" "$force" ;;
     workspace) remove_workspace "$target" "$force" ;;
+    link)      remove_link "$target" "$force" ;;
   esac
 }
 
@@ -819,5 +1047,5 @@ do_remove() {
 case "${1:-}" in
   list)   shift; do_list "$@" ;;
   remove) shift; do_remove "$@" ;;
-  *) die "usage: sweep.sh list [--no-fetch] | sweep.sh remove --worktree <path> [--keep-branch] [--force] | sweep.sh remove --branch <name> [--force] | sweep.sh remove --workspace <id> [--force]" ;;
+  *) die "usage: sweep.sh list [--no-fetch] | sweep.sh remove --worktree <path> [--keep-branch] [--force] | sweep.sh remove --branch <name> [--force] | sweep.sh remove --workspace <id> [--force] | sweep.sh remove --link <path>" ;;
 esac
