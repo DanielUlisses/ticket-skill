@@ -166,8 +166,9 @@ account_link() {
 
 # Drops <dir>'s own link entry, if it has one. Call through with_links_lock.
 #
-# The directory may already be gone — /sweep-tickets removes worktrees — and
-# claude-acc has no way to unlink a path it cannot cd into. So a live directory
+# The directory may already be gone — /sweep-tickets removes worktrees, and a
+# `gh pr merge --delete-branch` removes them without asking this code anything —
+# and claude-acc has no way to unlink a path it cannot cd into. So a live directory
 # goes through `claude-acc unlink` and a missing one has its single
 # `<path>=<account>` line dropped in place, matching the path exactly and copying
 # every other line through byte for byte.
@@ -186,26 +187,55 @@ account_unlink() {
   mv -f "$tmp" "$ACCOUNT_LINKS_FILE"
 }
 
+# Every entry in the links file, as `<path><TAB><account>` lines, in the file's
+# own order.
+#
+# Read from the file rather than asked of `claude-acc links`, which prints for
+# people; and the entries this exists to find are exactly the ones claude-acc can
+# no longer reach, whose directory is gone. A line carrying no `=` is skipped
+# rather than guessed at, so a file that grows a header or a comment some day
+# reads as having no entry on that line instead of one with an empty account.
+account_link_entries() {
+  [[ -f "$ACCOUNT_LINKS_FILE" ]] || return 0
+  awk '{ p = $0; if (!sub(/=[^=]*$/, "", p)) next; if (p == "") next
+         print p "\t" substr($0, length(p) + 2) }' "$ACCOUNT_LINKS_FILE"
+}
+
+# Drops <dir>'s entry, says so, and returns what happened: 0 removed,
+# ACCOUNT_LOCK_UNAVAILABLE when the lock couldn't be taken, 1 for anything else.
+#
+# Split out from account_release because the two callers want opposite things
+# from a failure. A sweep that is about to remove the worktree anyway must not
+# die on the link (see below). A developer who asked for exactly this one entry
+# to go must not be told it went when it didn't.
+account_prune_link() {
+  local dir="$1" rc=0
+  with_links_lock account_unlink "$dir" || rc=$?
+  [[ $rc -eq 0 ]] && echo "REMOVED account link for $dir"
+  return "$rc"
+}
+
 # Removes <dir>'s link if it has one of its own, and says what it did. Safe to
 # call for any worktree: a ticket that never overrode its account has no entry,
 # and an inherited one is somebody else's.
 #
-# Never fatal. It is called from /sweep-tickets after every guard has passed, so
-# the worktree is going with or without its link — and a stale line in `links` is
-# a smaller problem than a removal that aborts halfway. Both failures name the
-# hand fix instead.
+# Never fatal, and returns 0 whatever happened. It is called from /sweep-tickets
+# after every guard has passed, so the worktree is going with or without its
+# link — and a stale line in `links` is a smaller problem than a removal that
+# aborts halfway. Both failures name the hand fix instead. `remove --link` is the
+# other way round — it is the write the developer asked for — and calls
+# account_prune_link itself.
 account_release() {
   local dir="$1" rc=0
   have_claude_acc || return 0
   account_linked_exactly "$dir" || return 0
-  with_links_lock account_unlink "$dir" || rc=$?
-  if [[ $rc -eq 0 ]]; then
-    echo "REMOVED account link for $dir"
-  elif [[ $rc -eq $ACCOUNT_LOCK_UNAVAILABLE ]]; then
-    log "warning: couldn't take the lock on $ACCOUNT_LINKS_LOCK within ${ACCOUNT_LOCK_WAIT}s (or flock is missing) — leaving the claude-acc link for $dir in place; remove it by hand with 'claude-acc unlink' from that directory"
-  else
-    log "warning: couldn't remove the claude-acc link for $dir — remove it by hand (cd there and run 'claude-acc unlink', or edit $ACCOUNT_LINKS_FILE)"
+  account_prune_link "$dir" || rc=$?
+  if [[ $rc -eq $ACCOUNT_LOCK_UNAVAILABLE ]]; then
+    log "warning: couldn't take the lock on $ACCOUNT_LINKS_LOCK within ${ACCOUNT_LOCK_WAIT}s (or flock is missing) — leaving the claude-acc link for $dir in place; take it back with 'sweep.sh remove --link $dir' once the lock is free"
+  elif [[ $rc -ne 0 ]]; then
+    log "warning: couldn't remove the claude-acc link for $dir — take it back with 'sweep.sh remove --link $dir', or edit $ACCOUNT_LINKS_FILE by hand"
   fi
+  return 0
 }
 
 # The CLAUDE_CONFIG_DIR the process running in <pane> actually got.

@@ -135,7 +135,9 @@ hanging.
 
 **`/sweep-tickets` does the opposite**, and on purpose: a removal that reaches the link has
 already passed all four of its guards, so aborting there would leave the developer worse off
-than a stale line in `links` does. It warns, names the hand fix, and removes the worktree.
+than a stale line in `links` does. It warns, names the way back (`remove --link`), and removes
+the worktree. Its `remove --link` is the third behaviour and the strictest: there the link *is*
+the item, so a lock it can't take is fatal and nothing is written.
 
 Default launches write nothing, so none of this touches them.
 
@@ -160,11 +162,58 @@ in place instead, under the same lock, with every other line copied through unto
 
 `remove --workspace` — the sweep's third kind, a Herdr workspace whose git worktree has
 already been removed — releases the link the same way and at the same point. Its checkout
-path is gone by definition, so that is exactly the drop-the-line-in-place case, and it is the
-one route by which a link left behind by an ordinary `gh pr merge --delete-branch` can still
+path is gone by definition, so that is exactly the drop-the-line-in-place case, and it is one
+route by which a link left behind by an ordinary `gh pr merge --delete-branch` can still
 be reached: `claude-acc unlink` takes no path argument and cannot `cd` into a directory that
-no longer exists. It reaches only the links whose workspace is still open, though. Links whose
-workspace has *also* gone are not enumerated from anywhere yet.
+no longer exists. It reaches only the links whose workspace is still open, though.
+
+### When the worktree goes without the sweep
+
+The sweep is not the only way a worktree disappears, and here it is not the common one. Every PR
+in this repo merges with `gh pr merge --squash --delete-branch`: git takes the directory, the
+registration and the branch, `/sweep-tickets` never runs on that worktree — there is nothing left
+for it to sweep — and the link the launch wrote stays. Close the Herdr workspace as well and
+nothing keyed on git or on Herdr enumerates it any more, while the tool that owns the file cannot
+reach it either. That entry was removable only by hand-editing `~/.claude-switch/links`.
+
+So the sweep reads the links file as a **fourth source**, keyed on the one thing a merge does not
+delete — the line the launcher wrote:
+
+```
+$ sweep.sh list
+link	-	<parent>/<repo>--<branch>	gone	checkout-missing (account=pythian)	-	-	-	-	orphan-link,removable
+$ sweep.sh remove --link <parent>/<repo>--<branch>
+REMOVED account link for <parent>/<repo>--<branch>
+```
+
+`remove --link` is the only removal in the sweep that edits the developer's own file instead of
+calling the tool that owns it, and every guard on it follows from that:
+
+- **Only this repo's ticket worktrees.** A link entry is a path and an account name; there is no
+  repo recorded beside it the way Herdr records one for a workspace, so the launcher's
+  `<parent>/<repo>--<branch>` convention is the only evidence there is and it is the whole guard.
+  A hand-written entry such as `/home/daniel/repos/pythian=pythian`, another project's worktree and
+  the main checkout itself all fail it: never listed as removable, never offered, never written away.
+- **Only where nothing else still holds it.** A path a git worktree still claims sends you to
+  `remove --worktree`, one a Herdr workspace still holds to `remove --workspace` — both release the
+  link on their way out, at the one moment `claude-acc` itself can still be asked to, and the link
+  is the *last* thing a ticket leaves. (With Herdr unreachable that second question can't be asked
+  and it goes ahead anyway: the entry is all that is dropped, and an unreadable Herdr is no reason
+  to leave an unreachable line in the file.)
+- **Only where the tool can't do it.** A directory still on disk can be `cd`'d into, so the entry is
+  claude-acc's to remove and the refusal names the command: `cd <path> && claude-acc unlink`.
+- **Under the same `flock`**, and fatally, and with no `--force` — see the section above.
+
+The developer is asked before the file is written: `list` writes nothing, and `/sweep-tickets` puts
+every removable item to them one at a time.
+
+**This is reconciliation, not teardown-before-removal, deliberately.** The agents here never merge —
+`/implement-tickets` coordinates a merge the developer performs and `/sweep-tickets` doesn't merge at
+all — so there is no agent-side moment before the directory goes, and a hook on any one merge command
+would miss the hand-run `gh`, the web Merge button and a local `git merge` alike. The only moment a
+link can still be taken back *through claude-acc* is while the directory exists, and the sweep's other
+two kinds already take it there. Past that moment the entry can only be reconciled, which is what this
+does.
 
 ## Provider switching is out of scope
 

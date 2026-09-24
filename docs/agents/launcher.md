@@ -8,7 +8,7 @@ on its own.
 | File | Holds | Sourced by |
 |---|---|---|
 | `lib/ticket-git-repo.sh` | `die`/`log`/`need`, `resolve_repo_root`, `resolve_base_branch`, `run_git_net` | all three scripts |
-| `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
+| `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, reading the links file back for entries claude-acc can no longer reach, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
 | `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory resolution, `fill_prose`, `load_ticket_models`, `launcher_main` | the two launchers |
 
 `ticket-account.sh` is shared three ways for the same reason the git half is: the launchers
