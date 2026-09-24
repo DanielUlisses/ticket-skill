@@ -10,10 +10,10 @@ Three roles, each with its own default:
 | Review (`ticket-reviewer`) | `opus` | `config/models.env` (`TICKET_REVIEW_MODEL`); mirrored in `agents/ticket-reviewer.md`'s `model:` frontmatter; rendered as `{{REVIEW_MODEL}}` |
 | Testing (`ticket-tester`) | `haiku` | `config/models.env` (`TICKET_TEST_MODEL`); mirrored in `agents/ticket-tester.md`'s `model:` frontmatter; rendered as `{{TEST_MODEL}}` |
 
-`config/models.env` is the one source of truth for the shell path — both `launch.sh` scripts source
-it. It's installed by `./install.sh` as `skills/ticket-models.env`, one file shared by all three
-skill directories (`ticket`, `small-ticket`, `implement-tickets`), since all three read the same
-values. The `model:` frontmatter in `agents/*.md` is a second, independent copy that Claude Code
+`config/models.env` is the one source of truth for the shell path — the shared
+`lib/ticket-launcher.sh` both `launch.sh` scripts run sources it. It's installed by `./install.sh`
+as `skills/ticket-models.env`, one file shared by all three skill directories (`ticket`,
+`small-ticket`, `implement-tickets`), since all three read the same values. The `model:` frontmatter in `agents/*.md` is a second, independent copy that Claude Code
 reads directly when a subagent is invoked without an explicit `model` override — see "Frontmatter
 can't read the config file" below.
 
@@ -89,8 +89,8 @@ When a new model ships (a new family, or you want to pin a specific id instead o
 3. Mirror the same value in the `model:` frontmatter of `agents/ticket-implementer.md`,
    `agents/ticket-reviewer.md`, and `agents/ticket-tester.md` — the config file and the frontmatter
    are two independent copies kept in sync by hand (see below), and this step is where that happens.
-4. `grep -rniE 'opus|sonnet|haiku|fable' skills agents config docs` to catch any prose that names a
-   model outside the two files above — a stale mention in a `SKILL.md` sentence or this doc itself.
+4. `grep -rniE 'opus|sonnet|haiku|fable' skills agents config docs lib` to catch any prose that names a
+   model outside the two files above — `lib/ticket-launcher.sh` holds the in-script fallbacks — a stale mention in a `SKILL.md` sentence or this doc itself.
 5. Re-run `./install.sh` for every Claude config root in use.
 6. Smoke-test with one `/small-ticket` run and confirm the launched agent, and the subagents it
    delegates to, report the model you expect.

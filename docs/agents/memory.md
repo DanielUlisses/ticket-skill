@@ -75,18 +75,21 @@ its shape rather than inventing one.
 
 ## How injection works
 
-Both launchers (`skills/small-ticket/scripts/launch.sh` and
-`skills/ticket/scripts/launch.sh`) do the same thing, right before rendering the prompt:
-resolve the file against the main repo root, and — if it has any content — wrap it in a
-`## Project memory` heading with a short preamble and substitute it for the
-`{{PROJECT_MEMORY}}` placeholder in the template. Absent or blank substitutes nothing,
-and takes the placeholder's own blank line with it.
+Both launchers reach this through the same code: `lib/ticket-launcher.sh`, which
+`skills/small-ticket/scripts/launch.sh` and `skills/ticket/scripts/launch.sh` each source.
+Right before rendering the prompt it resolves the file against the main repo root, and —
+if it has any content — wraps it in a `## Project memory` heading with a short preamble and
+substitutes it for the `{{PROJECT_MEMORY}}` placeholder in the template. Absent or blank
+substitutes nothing, and takes the placeholder's own blank line with it.
 
 | Skill | Template | Reaches it via |
 |---|---|---|
 | `/small-ticket` | `skills/small-ticket/templates/agent-prompt.md` | its own `launch.sh` |
 | `/ticket` | `skills/ticket/templates/ticket-agent-prompt.md` | its own `launch.sh` |
 | `/implement-tickets` | the same as `/ticket` | it reuses `/ticket`'s `launch.sh` |
+
+The template is the only part of this each `launch.sh` still decides for itself; the
+resolution and the wrapping are the shared library's.
 
 `/implement-tickets` gets injection for free, because it ships no launcher of its own.
 
