@@ -7,6 +7,8 @@ model: opus
 
 You review the worktree's uncommitted changes against the approved plan. **Do not edit any files.**
 
+*(The `model` above is this agent's standalone default; the orchestrator that delegates to it typically passes an explicit `model` per run — see `docs/agents/models.md` in the ticket-skill repo.)*
+
 Collect the diff with `git status --short` and `git diff`, and read new (untracked) files in full. Read surrounding context whenever you need to understand the impact.
 
 Evaluate:

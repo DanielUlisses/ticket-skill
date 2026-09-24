@@ -27,6 +27,20 @@ for DEST in "${DESTS[@]}"; do
   done
   cp "$SRC"/agents/*.md "$DEST_AGENTS/"
 
+  # config/models.env is shared by all three skills' launch.sh, one level up from
+  # the individual skill dirs — never overwrite a destination copy the developer
+  # has hand-edited, since that's the whole point of a per-machine override.
+  MODELS_SRC="$SRC/config/models.env"
+  MODELS_DEST="$DEST_SKILLS/ticket-models.env"
+  if [[ ! -f "$MODELS_SRC" ]]; then
+    echo "warning: $MODELS_SRC not found — skipping model config install (skills/agents were still installed)"
+  elif [[ ! -f "$MODELS_DEST" ]]; then
+    cp "$MODELS_SRC" "$MODELS_DEST"
+    echo "installed: $MODELS_DEST"
+  elif ! cmp -s "$MODELS_SRC" "$MODELS_DEST"; then
+    echo "warning: $MODELS_DEST differs from $MODELS_SRC — keeping the destination copy (hand-edited config is never overwritten)"
+  fi
+
   echo "installed: $DEST_SKILLS/{small-ticket,ticket,implement-tickets} and $DEST_AGENTS/ticket-*.md"
 done
 

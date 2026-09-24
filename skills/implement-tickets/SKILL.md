@@ -46,6 +46,7 @@ Read every ticket file. For each, extract:
 - **Status** from a `**Status:**` line — one of `open`, `in-progress`, `resolved`. **A missing `Status` line means `open`**; `/ticket` writes files without one, and this skill has to read those unchanged.
 - **Branch** from a `**Branch:**` line, if a previous run recorded one.
 - **Blocked by** from the `**Blocked by:**` line. This is free text — `01, 02`, `None (can start immediately)`, `Ticket 02 (schema)`. Parse it leniently: case-insensitive `none` (or empty) means no blockers; otherwise take every digit-run on that line as a ticket number.
+- **Model** from a `**Model:**` line, if a previous run recorded one — that's what that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once.
 
 Then reconcile each ticket against reality, because a previous coordinator session may have died mid-run (see *Re-entrancy* below):
 
@@ -59,6 +60,8 @@ Print the board as a table — number, title, status, blockers, branch — follo
 Compute the **frontier**: tickets that are `open` and whose every blocker is already `resolved`. A blocker that's merely `in-progress` does **not** unblock — this run waits for real merges, so there's no reason to build against unmerged code.
 
 Ask the developer which to start (AskUserQuestion, or plainly if the options don't fit): **all of the frontier**, **specific numbers**, or **none**. If they pick numbers that aren't on the frontier, hold those back and name the unmet blocker for each. If none, stop — nothing was changed.
+
+If anything will be launched, also ask once **per session** which model should implement it, with `AskUserQuestion`: "Which model should implement these tickets?" — options **Opus (default)**, **Sonnet**, **Haiku**, **Other…**, Opus listed first and labelled `(default)`. If the board already carries a `**Model:**` line from an `in-progress` ticket (Phase 1 parsed it), say so and offer that model as the pre-selected option instead of Opus, so a resumed session defaults to what's already running rather than silently drifting to a different one; if in-progress tickets disagree (e.g. one wave on Sonnet, another on Opus), list what each is running on and let the developer choose, pre-selecting the most recently launched. If the developer picks the default, still record it explicitly. Keep this answer for the rest of the session: Phase 3 reuses it for every later wave without re-asking, states which model is being used when it launches, and only re-asks if the developer says so.
 
 ## Phase 3 — Launch a wave
 
@@ -76,10 +79,10 @@ For each ticket in the wave, derive names the same way `/ticket` does:
 - **Tab label**: 2–3 words, lowercase, up to 20 characters.
 - **Branch**: `<type>-<NN>-<slug>`, kebab-case, up to 40 characters, no `/` and no `--` (`type` ∈ `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`).
 
-Save the ticket file's full body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical:
+Save the ticket file's full body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical. State which model is being used (the session's answer from Phase 2) before launching:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>"
+~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
 It discovers the repo root, fast-forwards the base branch, creates the tab, runs `ga <branch>`, splits the pane, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md`. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
@@ -91,6 +94,7 @@ Immediately after a successful launch, **write the run state into the ticket fil
 ```
 **Status:** in-progress
 **Branch:** <branch>
+**Model:** <model>
 **Worktree:** <worktree path>
 **Agent:** <herdr agent name>  **Tab:** <tab id>
 ```
@@ -125,7 +129,7 @@ If both come back negative, tell the developer the merge isn't visible from the 
 
 **On a verified merge**, in this order:
 
-1. Edit the ticket file: `**Status:** resolved — merged into <base> as <short sha> on <YYYY-MM-DD>`, keep the `**Branch:**` line, drop the `**Agent:**`/`**Tab:**` line, and tick the acceptance-criteria checkboxes only if the developer confirms they're met — don't tick them on your own authority.
+1. Edit the ticket file: `**Status:** resolved — merged into <base> as <short sha> on <YYYY-MM-DD>`, keep the `**Branch:**` and `**Model:**` lines — the latter is the historical record of what implemented it — drop the `**Agent:**`/`**Tab:**` line, and tick the acceptance-criteria checkboxes only if the developer confirms they're met — don't tick them on your own authority.
 2. Recompute the frontier over the whole board. Every ticket whose last open blocker just closed is now startable.
 3. If anything became startable, tell the developer what unblocked and run **Phase 3** again for it (precheck the root first — they've just been merging). Ask before launching if the wave is more than a couple of tickets or they asked to be consulted; otherwise launch it and report.
 4. Mention, don't do, the cleanup: the worktree at `<worktree>` and branch `<branch>` are now finished, and `gd <repo>--<branch>` removes them. Removing a worktree isn't yours to decide.

@@ -52,6 +52,8 @@ Ask the developer which to implement now: **all**, **none**, or **specific numbe
 
 Check every selected ticket's blocked-by edges against the rest of the *selection*: a ticket blocked by one that's neither landed nor also launching right now would build against code that doesn't exist yet. Hold those back and note which unmet blocker gates each one. Launch only the frontier of the selection.
 
+Once the selection is settled, ask once for the whole wave, with `AskUserQuestion`: "Which model should implement these tickets?" — options **Opus (default)**, **Sonnet**, **Haiku**, **Other…**, Opus listed first and labelled `(default)`. Every ticket launched in Phase 4 uses this answer; if the developer picks the default, still pass `opus` explicitly, so the summary agrees with what actually launched. Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model governs both — there is no separate review model here the way `/small-ticket` has one.
+
 ## Phase 4 — Launch one coordinator per launched ticket
 
 Follow `herdr` skill's rules (check `HERDR_ENV=1`, read IDs from the JSON, don't close anything you didn't create, don't answer blocked dialogs without the developer).
@@ -64,7 +66,7 @@ For each ticket to launch, derive names the same way `small-ticket` does:
 Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>"
+~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
 The script reuses `small-ticket`'s tab/worktree/pane mechanics (discover the repo root, fast-forward the base branch, create the tab, run `ga <branch>`, split the pane), then starts Claude Code unattended — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md`. That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
