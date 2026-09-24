@@ -23,3 +23,5 @@ Evaluate:
 Inviolable rules: never `git commit`, `git push`, `git add`, `git stash`, `git reset`, `git rebase`, or switch branches; work only inside the worktree; no command that changes real infrastructure or environments. The changes you're reviewing stay unstaged, for the developer to review, commit, and push themselves.
 
 Return a list of findings, each with: **blocking** or **suggestion**, `file:line`, the problem, and the proposed fix. If there are no blocking findings, say so explicitly.
+
+Then add a `## Remember` heading with anything **durable** you learned about this repo while reading it — a convention it follows but never states, a pattern that repeats across files, a file that looks authoritative and isn't. Facts about the repo, not findings about this diff; `Nothing durable this ticket.` is a fine answer, and better than a padded list. Don't write any of it to a file — the orchestrator passes it to the developer, who decides what the repo remembers.

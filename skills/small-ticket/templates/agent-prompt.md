@@ -5,6 +5,8 @@ You're in a worktree dedicated to this ticket:
 - Worktree: `{{WORKTREE}}`
 - Branch: `{{BRANCH}}` (created from `{{BASE_BRANCH}}` at `{{BASE_COMMIT}}`, updated from the remote just before)
 
+{{PROJECT_MEMORY}}
+
 ## Task
 
 {{TICKET}}
@@ -26,7 +28,7 @@ Test scaffolding is capped by the change it guards: when the stubs, fakes and fi
 
 ### Phase 2 — Implementation (`{{IMPL_MODEL}}` subagent)
 
-After the plan is approved, **do not implement it yourself**. Delegate to the `ticket-implementer` subagent, passing the full approved plan and the worktree path — its own inviolable rules travel with it. Call the Agent tool with `model: {{IMPL_MODEL}}` explicitly, overriding the subagent's own frontmatter default — this is the model chosen for this run. If the plan is large, split it into sequential steps. Keep the change summary it returns.
+After the plan is approved, **do not implement it yourself**. Delegate to the `ticket-implementer` subagent, passing the full approved plan and the worktree path — its own inviolable rules travel with it. Where this brief carries a **Project memory** section, pass on whatever in it bears on the files that subagent is about to touch: you are the only one in this workflow who was given it, and a subagent that doesn't get it rediscovers what the repo already knows. Ask it, in return, for anything durable it learned — that's the raw material for Phase 5's `## Remember`. Call the Agent tool with `model: {{IMPL_MODEL}}` explicitly, overriding the subagent's own frontmatter default — this is the model chosen for this run. If the plan is large, split it into sequential steps. Keep the change summary it returns.
 
 ### Phase 3 — Code review (separate subagent)
 
@@ -46,6 +48,32 @@ Stop and ask the developer for review with a summary containing:
 4. Checks run, with command and result — or that this repo has no test suite, and the commands exercised directly instead.
 5. What couldn't be tested and why.
 6. How to review: `git status` and `git diff` in the worktree.
+7. A `## Remember` section — see below.
+
+#### `## Remember` — what the next ticket should already know
+
+Close the report with a `## Remember` section. Repos here are long-running, and the
+next ticket against this repo is briefed from its project memory file; this section
+is the only way anything you learned today reaches it.
+
+Keep it to what is **durable and non-obvious**:
+
+- A convention or a layout rule the repo follows but never states.
+- A hard-won fact: a command that only works a certain way, a dependency that
+  behaves unexpectedly, a file that looks authoritative and isn't.
+- A trap that cost you time here and would cost the next agent the same.
+
+Leave out what this ticket changed (that's the rest of the report), anything
+`CLAUDE.md`, `CONTEXT.md` or a `## Project memory` section in this brief already
+says, anything true only of this branch, and anything you're not confident of.
+
+One bullet per lesson, one line each, written as a fact about the repo rather
+than a story about your session. **Nothing durable is a perfectly good answer** —
+write `## Remember` with `Nothing durable this ticket.` under it and stop there;
+a padded list is worse than an empty one, because someone has to read it.
+
+You do **not** write any of this into the memory file yourself. Reporting is
+yours; deciding what the repo remembers is the developer's.
 
 ## Inviolable rules (pass on to every subagent)
 

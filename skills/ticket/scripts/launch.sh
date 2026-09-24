@@ -24,6 +24,7 @@
 #   TICKET_REMOTE          (default: origin)
 #   TICKET_BASE_BRANCH     (default: remote's default branch, e.g. main)
 #   TICKET_MODELS_CONF     (default: <skills-dir>/ticket-models.env) — override the config file path
+#   TICKET_MEMORY_FILE     (default: docs/agents/project-memory.md, relative to the main repo root) — per-repo project memory folded into the prompt; absent means the launch is unchanged
 #   TICKET_REVIEWR_WAIT    (default: 5) — seconds to wait for the reviewr plugin's pane before opening 'review' as a plain shell tab
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
@@ -223,6 +224,70 @@ if herdr agent list 2>/dev/null | grep -q "\"${AGENT}\""; then
   AGENT="${AGENT:0:28}-$((RANDOM % 900 + 100))"
 fi
 
+# ---- per-repo project memory ------------------------------------------------
+# Read from $ROOT, the MAIN checkout, never from the worktree: the base branch is
+# what the developer has already reviewed and merged, so a lesson reaches future
+# tickets only once it has landed there — that merge is the developer gate on
+# capture. It also puts the file somewhere /sweep-tickets can never take with it,
+# since that skill removes worktrees and branches and leaves the checkout alone.
+# Absent, unreadable or blank means the launch is exactly what it was before this
+# existed: no heading, no placeholder, nothing said to the agent.
+MEMORY_WARN_BYTES=8192   # 8 KiB; memory is paid for on every launch, so warn past a page or so
+MEMORY_FILE="${TICKET_MEMORY_FILE:-docs/agents/project-memory.md}"
+[[ "$MEMORY_FILE" == /* ]] || MEMORY_FILE="$ROOT/$MEMORY_FILE"
+MEMORY_REL="${MEMORY_FILE#"$ROOT"/}"
+MEMORY_BLOCK=""
+MEMORY_STATUS="none ($MEMORY_REL)"
+if [[ -f "$MEMORY_FILE" && -r "$MEMORY_FILE" ]]; then
+  memory="$(cat "$MEMORY_FILE")"
+  if [[ -z "${memory//[[:space:]]/}" ]]; then
+    MEMORY_STATUS="blank ($MEMORY_REL)"
+    log "project memory: $MEMORY_REL is blank — launching without it"
+  else
+    MEMORY_BYTES="$(wc -c <"$MEMORY_FILE" | tr -d ' ')"
+    MEMORY_STATUS="$MEMORY_REL (${MEMORY_BYTES} bytes)"
+    if (( MEMORY_BYTES > MEMORY_WARN_BYTES )); then
+      log "warning: $MEMORY_REL is ${MEMORY_BYTES} bytes — every ticket launch pays for it; keep it short and factual (see docs/agents/memory.md)"
+    fi
+    MEMORY_BLOCK="## Project memory
+
+Accumulated knowledge about this repo, hand-curated by the developer and read at
+launch from \`$MEMORY_REL\` in the main checkout. It is starting knowledge, not
+orders: it never overrides the ticket below, and where it disagrees with the code
+in front of you the code wins — say so in your report when it does. Don't edit
+that file; report durable lessons under \`## Remember\` instead.
+
+$memory"
+    log "project memory: $MEMORY_STATUS"
+  fi
+elif [[ -e "$MEMORY_FILE" ]]; then
+  MEMORY_STATUS="unreadable ($MEMORY_REL)"
+  log "warning: $MEMORY_REL exists but can't be read — launching without project memory"
+else
+  log "project memory: none at $MEMORY_REL — launching without it"
+fi
+
+# Substitutes EVERY occurrence of a placeholder in $tpl (which it mutates), the
+# same as the `${tpl//}` above — but without ever rescanning what it just put
+# there. The two payloads below are arbitrary prose: a ticket body, and a memory
+# file the developer wrote by hand. Either may legitimately contain a `{{...}}`
+# token — this very repo's tickets do — and a plain `${tpl//}` would then chew on
+# it, or substitute one payload into the other. Walking the template instead
+# means each payload lands exactly once, verbatim.
+#
+# An empty value also takes the blank line that follows its placeholder, so a
+# repo with no project memory renders byte-for-byte the prompt it rendered before
+# any of this existed.
+fill_prose() {
+  local ph="$1" val="$2" out="" rest="$tpl" blank=$'\n\n'
+  while [[ "$rest" == *"$ph"* ]]; do
+    out+="${rest%%"$ph"*}$val"
+    rest="${rest#*"$ph"}"
+    [[ -n "$val" ]] || rest="${rest#"$blank"}"
+  done
+  tpl="$out$rest"
+}
+
 # ---- render the prompt (outside the worktree, so it doesn't dirty git status) -------
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/ticket"; mkdir -p "$RUN_DIR"
 PROMPT_FILE="$RUN_DIR/${AGENT}.md"
@@ -235,7 +300,12 @@ tpl="${tpl//'{{WORKTREE}}'/"$WT"}"
 tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
 tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
 tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
-tpl="${tpl//'{{TICKET}}'/"$ticket"}"   # last, so we don't replace placeholders inside the ticket text
+# The two prose payloads go last, so the replacements above can't reach inside
+# them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
+# above the ticket in the template, so filling it first would let a `{{TICKET}}`
+# written inside the memory file win over the template's own.
+fill_prose '{{TICKET}}' "$ticket"
+fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
 printf '%s\n' "$tpl" > "$PROMPT_FILE"
 
 # ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
@@ -341,6 +411,7 @@ WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
+PROJECT_MEMORY=$MEMORY_STATUS
 PROMPT_FILE=$PROMPT_FILE
 SUMMARY
 }
