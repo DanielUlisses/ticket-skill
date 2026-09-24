@@ -47,12 +47,15 @@ ready to absorb yet).
 Three ways to override, from the launch question down to the quietest option:
 
 1. **The launch question.** All three skills (`/ticket`, `/small-ticket`, `/implement-tickets`) ask
-   which model should implement the ticket before the first launcher call, Opus shown first and
-   labelled the default — except a resumed `/implement-tickets` session with `in-progress` tickets
-   already on the board, which pre-selects the model recorded on the board instead (see that skill's
-   Phase 2). The answer is passed as the 4th positional argument to `launch.sh` and covers
-   implementation only — review and testing still follow the config file (except in `/ticket` and
-   `/implement-tickets`, see the asymmetry note below).
+   which model should implement the ticket — **once a session**, before its first launcher call,
+   together with the account and with the default named by `launch.sh defaults` rather than assumed
+   (`session-settings.md`). Every later launch in that session reuses the answer, waves included; a
+   resumed `/implement-tickets` session with `in-progress` tickets already on the board pre-selects
+   the model recorded there instead (see that skill's Phase 2). The answer is passed as the 4th
+   positional argument to `launch.sh` and covers implementation only — review and testing still
+   follow the config file (except in `/ticket` and `/implement-tickets`, see the asymmetry note
+   below). A model the developer names for one ticket goes to that launch alone and leaves the
+   session's setting standing.
 2. **The 4th positional argument directly**, if you're calling `launch.sh` by hand:
    `launch.sh <tab-label> <branch> <ticket-file> <model>`. It's a positional argument rather than an
    env-var prefix on purpose — the skills' `allowed-tools` entries are prefix patterns like
@@ -64,6 +67,11 @@ Three ways to override, from the launch question down to the quietest option:
 Resolution order, highest wins: **4th positional arg** → **exported env var** → **`config/models.env`**
 → **the in-script fallback** (`opus`/`opus`/`haiku`, matching the defaults above, in case the config
 file itself is missing).
+
+`launch.sh defaults` prints the answer that order would give for the implementation model, and says
+which of the three it came from — which is what the launch question states as its default. The
+source has to be read before the config file is sourced: `models.env` sets its values with `:=`, so
+an exported `TICKET_IMPL_MODEL` wins silently and afterwards the two are indistinguishable.
 
 `TICKET_PLAN_MODEL` no longer exists — `/small-ticket`'s plan-mode orchestrator and the
 `ticket-implementer` subagent it delegates to now share the single `TICKET_IMPL_MODEL` knob, since

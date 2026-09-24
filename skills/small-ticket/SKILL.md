@@ -34,9 +34,43 @@ If the ticket is empty, ask for the task description and stop.
 
 Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text into it with the Write tool, **exactly** as received (no summarizing or rewriting).
 
-## 4. Choose the model
+## 4. Settle the session's launch settings
 
-Ask once, with `AskUserQuestion`: "Which model should implement this ticket?" — options **Opus (default)**, **Sonnet**, **Haiku**, **Other…**, Opus listed first and labelled `(default)`. If the developer picks the default, still pass `opus` explicitly in the next step, so the summary and the rendered prompt agree with what actually launched.
+Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — a second `/small-ticket` here, and anything `/ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, which is why this comes after step 1 has found a ticket to launch.
+
+**Already settled** — this session answered, for an earlier ticket or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+
+**Not settled yet** — a fresh session, a single ad-hoc ticket included: read the defaults before you state them, rather than assuming them:
+
+```bash
+~/.claude/skills/small-ticket/scripts/launch.sh defaults
+```
+
+It changes nothing and prints one line per setting, plus the options for the account:
+
+```
+MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
+ACCOUNTS=default work
+```
+
+The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch the ticket somewhere else. Quote what the command printed.
+
+Then ask with **one** `AskUserQuestion` call, one question per setting:
+
+| Setting | Question | Options, in order | How it reaches the launcher |
+|---|---|---|---|
+| Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
+| Model | "Which model should implement this session's tickets?" | the `MODEL=` value first, labelled `(default)`, then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the rendered prompt agree with what launched |
+
+One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
+
+**Then hold them.** Every launch in this session passes both and names both in its report. Two overrides exist and they are different things:
+
+- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
+- **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
+
+Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
 
 ## 5. Run the launcher
 
@@ -44,12 +78,12 @@ Ask once, with `AskUserQuestion`: "Which model should implement this ticket?" �
 ~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-`--account` is optional and rarely wanted: leave it off and the ticket inherits whatever
-account the developer's own directory link resolves to, which is what every ticket has
-always done. Pass it only when the developer names an account — to spread work across
-subscriptions rather than exhaust one — and pass exactly what they said. The summary's
-`ACCOUNT=` line reports which account ran either way, verified in the pane; see
-`docs/agents/accounts.md`.
+Both values come from step 4. `--account <name>` is passed only where the session settled on
+a named account; where it inherits, the flag is left off entirely and the ticket resolves the
+developer's own directory link, which is what every ticket did before this knob existed. A
+per-ticket override the developer named for *this* ticket replaces one value here and leaves
+the session's settings alone. The summary's `ACCOUNT=` line reports which account ran either
+way, verified in the pane; see `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
 The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model also drives the `ticket-implementer` subagent (and this pane's plan-mode orchestrator); `ticket-reviewer` and `ticket-tester` follow `TICKET_REVIEW_MODEL` / `TICKET_TEST_MODEL` from `config/models.env` — see `docs/agents/models.md`.
 
@@ -63,7 +97,7 @@ Handle the exit code:
 
 ## 6. Report
 
-Reply in a few lines: workspace name, branch, worktree path, agent name, and that the plan will show up for approval in the workspace's `agent` tab. Don't wait around for the agent to finish.
+Reply in a few lines: workspace name, branch, worktree path, agent name, the account and model it launched on — the summary's `ACCOUNT=` line rather than what you asked for, since that one is verified in the pane — and that the plan will show up for approval in the workspace's `agent` tab. Don't wait around for the agent to finish.
 
 ## Manual fallback (only if the script fails due to a CLI change)
 

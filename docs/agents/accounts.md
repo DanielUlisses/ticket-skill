@@ -25,6 +25,10 @@ summary's `ACCOUNT=` line says it, and the launcher proves it rather than assumi
 launch.sh --account <name> "<label>" "<branch>" "<ticket-file>" [model]
 ```
 
+Which name goes there is settled **once a session**, with the model, in the one question the
+skills ask before their first launch — see [`session-settings.md`](session-settings.md). This
+section is the knob; that one is when it gets turned.
+
 `<name>` is an account as `claude-acc list` prints it, or `default` for the standard
 `~/.claude`. An exported `TICKET_ACCOUNT` does the same for a whole session and the flag
 beats it — the same order, and the same reason, as the model knob: the skills'
@@ -32,6 +36,14 @@ beats it — the same order, and the same reason, as the model knob: the skills'
 `Bash(~/.claude/skills/ticket/scripts/launch.sh *)`, which a `TICKET_ACCOUNT=x ~/.claude/…`
 prefix would no longer match. Both launchers take it, and `/implement-tickets` gets it
 free, since it runs `/ticket`'s launcher.
+
+`launch.sh defaults` is how a question states what inheriting would actually mean. It prints
+the account a **new worktree** would inherit — resolved at the directory the worktrees are cut
+in, the parent of the main checkout — which is not the same question as which account the
+asking session runs under. A session inside a worktree that overrode its own account would
+otherwise offer that account as the default and launch everything somewhere else, which is
+this feature's own failure mode turned around. Its `ACCOUNTS=` line lists the names to choose
+between, so no skill needs `claude-acc` in its `allowed-tools`.
 
 The name is checked **before** the worktree is created. A typo costs nothing; it would
 otherwise cost a worktree, a workspace and a branch to sweep. After the link is written the

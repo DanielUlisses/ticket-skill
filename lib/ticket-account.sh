@@ -105,6 +105,43 @@ account_exists() {
   [[ -d "$CLAUDE_SWITCH_DIR/accounts/$name" ]]
 }
 
+# Whether a string is a name a launch could be given. Here rather than inline in
+# the launcher because two callers now ask it: the launcher refuses a name that
+# fails this, and account_names must not *offer* one it would refuse — an option
+# nobody can launch is worse than a missing option. Two copies of the pattern
+# would drift the day one of them learns about a new character.
+account_name_valid() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+# Every account a ticket could be launched on, one name per line, `default`
+# first. Read from the same two places account_exists checks rather than parsed
+# out of `claude-acc list`, which prints for people — it renders the standard
+# root as `~/.claude/`, which is not the name `claude-acc link` would take for
+# it. One file owns that layout, or two files drift.
+#
+# It exists for the launch question the skills ask once a session: which account
+# a ticket runs on is the developer's to choose, but the list of accounts to
+# choose from is not theirs to remember, and no skill has claude-acc in its
+# allowed-tools. `launch.sh defaults` prints these for it.
+account_names() {
+  local d name
+  printf '%s\n' default
+  for d in "$CLAUDE_SWITCH_DIR"/accounts/*/; do
+    [[ -d "$d" ]] || continue
+    name="${d%/}"; name="${name##*/}"
+    # `default` is already printed, and it is claude-acc's name for the standard
+    # ~/.claude whatever a directory by that name holds — listing it twice would
+    # put the same option in the question twice.
+    [[ "$name" == default ]] && continue
+    # Anything --account would refuse is left out rather than offered: see
+    # account_name_valid. A name with a space would also split the ACCOUNTS=
+    # line the launch question reads.
+    account_name_valid "$name" || continue
+    printf '%s\n' "$name"
+  done
+}
+
 # The Claude config root an account name resolves to. An account is not just a
 # credential: it is a whole config root, and Claude Code reads *its* skills/ and
 # agents/, which is what install.sh takes a dest argument for.

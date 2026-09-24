@@ -8,8 +8,8 @@ on its own.
 | File | Holds | Sourced by |
 |---|---|---|
 | `lib/ticket-git-repo.sh` | `die`/`log`/`need`, `resolve_repo_root`, `resolve_base_branch`, `run_git_net` | all three scripts |
-| `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, reading the links file back for entries claude-acc can no longer reach, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
-| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory resolution, `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `launcher_main` | the two launchers |
+| `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, the account names to choose between, reading the links file back for entries claude-acc can no longer reach, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
+| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory resolution, `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `print_launch_defaults`, `launcher_main` | the two launchers |
 
 `ticket-account.sh` is shared three ways for the same reason the git half is: the launchers
 write the links and `/sweep-tickets` takes them away again, and both halves have to agree on
@@ -49,6 +49,21 @@ from the environment has to be resolved after the config file has been read.
 The account is a launch-time argument rather than one of those six parameters: it varies
 per ticket, not per skill, so `--account` (or `TICKET_ACCOUNT`) is parsed inside
 `launcher_main` and both skills get it from the one definition.
+
+## `launch.sh defaults` launches nothing
+
+`launcher_main` answers two subcommands. `prompt` re-sends a rendered prompt after a trust
+dialog, once the usual preconditions have been checked; `defaults` prints what a launch that
+named neither account nor model would use, and starts nothing.
+
+`defaults` is dispatched **ahead of every launch requirement** — before the `HERDR_ENV` check,
+before `need herdr`, before anything reads a ticket. The skills run it to state the defaults in
+the question they ask once a session, which happens before the developer has settled what to
+launch and sometimes before they have settled whether to; that question must not depend on this
+repo being ready to launch anything. It does still need `git` and a checkout, because the
+account it reports is resolved at the directory the worktrees are cut in and that directory is
+`dirname` of the main checkout — the same value `launcher_main` builds the worktree path from.
+[`session-settings.md`](session-settings.md) has the output and what each line means.
 
 ## The one place the tab sequence forks
 
