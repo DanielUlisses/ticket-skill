@@ -282,7 +282,7 @@ trust_worktree_mise() {
 # workspace to clean up after.
 check_ticket_account() {
   [[ -n "$ACCOUNT_REQUESTED" ]] || return 0
-  [[ "$ACCOUNT_REQUESTED" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+  account_name_valid "$ACCOUNT_REQUESTED" \
     || die "invalid account '$ACCOUNT_REQUESTED' — an account name as 'claude-acc list' prints it, or 'default' for the standard ~/.claude"
   need claude-acc
   account_exists "$ACCOUNT_REQUESTED" \
@@ -395,6 +395,12 @@ verify_ticket_account() {
 # resolved after this has run, which is the order both launchers have always had.
 load_ticket_models() {
   MODELS_CONF="${TICKET_MODELS_CONF:-$(dirname "$SKILL_DIR")/ticket-models.env}"
+  # Where the model would come from if the launch named none — read *before* the
+  # file is sourced, because the file sets its values with `:=` and an exported
+  # TICKET_IMPL_MODEL therefore wins silently: afterwards the two are
+  # indistinguishable. `launch.sh defaults` reports this, and a question that
+  # states its default has to be able to say where the default came from.
+  local exported="${TICKET_IMPL_MODEL:-}"
   if [[ -f "$MODELS_CONF" ]]; then
     # shellcheck source=/dev/null
     source "$MODELS_CONF" || die "failed to load model config: $MODELS_CONF"
@@ -402,10 +408,80 @@ load_ticket_models() {
   IMPL_MODEL="${TICKET_IMPL_MODEL:-opus}"
   REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
   TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
+  if [[ -n "$exported" ]]; then
+    IMPL_MODEL_SOURCE="exported TICKET_IMPL_MODEL"
+  elif [[ -n "${TICKET_IMPL_MODEL:-}" ]]; then
+    IMPL_MODEL_SOURCE="$MODELS_CONF"
+  elif [[ -f "$MODELS_CONF" ]]; then
+    IMPL_MODEL_SOURCE="the launcher's built-in fallback — nothing set it in $MODELS_CONF"
+  else
+    # Said apart from the case above, because the skills quote this line to the
+    # developer: "nothing set it in <path>" about a file that isn't there sends
+    # them to edit a file they'd have to create.
+    IMPL_MODEL_SOURCE="the launcher's built-in fallback — no $MODELS_CONF"
+  fi
+}
+
+# ---- what a launch would do if it were told nothing --------------------------
+# The two values the skills' once-a-session launch question has to state before
+# it asks: the model an unnamed launch would use, and the account an unnamed
+# launch would inherit. Prints them, changes nothing, and needs neither Herdr nor
+# a ticket — it runs before the developer has settled what to launch, sometimes
+# before they have settled whether to.
+#
+# Both are read rather than assumed, because both are easy to state wrongly from
+# inside a session. The model may come from a hand-edited ticket-models.env or an
+# exported variable, not from this repo's config. And the account a *new* worktree
+# inherits is not the account the asking session runs under: a ticket is cut as a
+# sibling of the main checkout, so what it inherits is whatever the directory
+# holding the checkout resolves to — which is the question asked here, and the
+# same one an unnamed launch answers by writing no link at all. A session running
+# in a worktree that overrode its own account would otherwise offer that account
+# as "the default", which is the invisibility this whole knob exists to end.
+#
+# ACCOUNTS= is the option list the question offers. No skill has claude-acc in its
+# allowed-tools, and none should need it.
+print_launch_defaults() {
+  need git
+  resolve_repo_root
+  local parent cfg
+  parent="$(dirname "$ROOT")"
+
+  echo "MODEL=$IMPL_MODEL (from $IMPL_MODEL_SOURCE)"
+
+  # Without the switcher there is nothing to choose between: no link can be
+  # written, so every ticket runs on the standard ~/.claude whatever
+  # ~/.claude-switch/accounts happens to hold.
+  if ! have_claude_acc; then
+    echo "ACCOUNT=default (claude-acc isn't installed — every ticket runs on the standard ~/.claude)"
+    echo "ACCOUNTS=default"
+    return 0
+  fi
+
+  if cfg="$(account_config_dir "$parent")"; then
+    # `${cfg:-~/.claude}` reads the same for a named account as for the standard
+    # root, and is the form the launch summary's own ACCOUNT= line uses.
+    echo "ACCOUNT=$(account_name_for "$cfg") (inherited by a new worktree in $parent — config root ${cfg:-~/.claude})"
+  else
+    # Neither a guess nor a `die`: the question can still be asked, it just has
+    # to ask rather than offer a default nothing could resolve.
+    echo "ACCOUNT=unknown (claude-acc activate failed in $parent — ask the developer, don't guess)"
+  fi
+  echo "ACCOUNTS=$(account_names | tr '\n' ' ' | sed 's/ $//')"
 }
 
 # ---- the launch ---------------------------------------------------------------
 launcher_main() {
+  # ---- subcommand: defaults -----------------------------------------------------
+  # Ahead of everything below, and deliberately: it reads two values and starts
+  # nothing, so a question asked before the first launch must not depend on a
+  # Herdr pane, on jq, or on this repo being ready to launch anything.
+  if [[ "${1:-}" == "defaults" ]]; then
+    [[ $# -eq 1 ]] || die "usage: launch.sh defaults"
+    print_launch_defaults
+    exit 0
+  fi
+
   AGENT_KIND="${TICKET_AGENT_KIND:-claude}"
   REMOTE="${TICKET_REMOTE:-origin}"
   REVIEWR_WAIT="${TICKET_REVIEWR_WAIT:-5}"
@@ -449,7 +525,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"

@@ -72,7 +72,7 @@ Either way, if the home resolves to no tickets at all — no issues on the label
 
 **This is not a startup step.** It is the top of **every** coordination round: the first one, every round in Phase 4, and the first round after a compaction or a restart. Run it in full each time and report from what it returns, never from what you remember of an earlier round. A long-running session's picture of the board drifts; a re-read doesn't — and a coordinator that re-reads is re-entrant by construction, because the round and the recovery are the same procedure.
 
-Read every ticket in the home. Whichever home it is, each one comes out as the same fields — **number**, **title**, **status** (`open`, `in-progress`, `resolved`), **blockers**, **branch**, **base**, **model**, and, once it's been launched, its **agent name** — and every phase after this works off those. The last four are absent on a fresh board and present once Phase 3 has recorded run state.
+Read every ticket in the home. Whichever home it is, each one comes out as the same fields — **number**, **title**, **status** (`open`, `in-progress`, `resolved`), **blockers**, **branch**, **base**, **model**, **account**, and, once it's been launched, its **agent name** — and every phase after this works off those. The last five are absent on a fresh board and present once Phase 3 has recorded run state.
 
 ### What a digest is, and what it isn't
 
@@ -103,7 +103,7 @@ One call, and only the six fields. Parse it per home:
 One call for the whole board, and it reads the header lines without pulling in the prose under them:
 
 ```bash
-grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Worktree|Agent|Blocked by):' <path> --include='*.md'
+grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Account|Worktree|Agent|Blocked by):' <path> --include='*.md'
 ```
 
 - **Number and title** from the `# <NN>: <Title>` heading (fall back to the filename).
@@ -112,7 +112,7 @@ grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Worktree|Agent|Blocked b
 - **Base** from a `**Base:**` line — the commit the branch was cut from. Read 3's empty-branch guard needs it, so a run state without it degrades that read; see there for the fallback.
 - **Agent** from the `**Agent:**` line, the name read 2 matches on.
 - **Blocked by** from the `**Blocked by:**` line.
-- **Model** from a `**Model:**` line, if a previous run recorded one — that's what that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once.
+- **Model** and **Account** from the `**Model:**` and `**Account:**` lines, if a previous run recorded them — the session settings that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once, and what Phase 2 pre-selects for a resumed session.
 
 #### From a GitHub board
 
@@ -138,7 +138,7 @@ Of `comments`, keep only the newest run-state block per ticket and drop the rest
   This is the same gate `docs/agents/issue-tracker.md` names as `issue_dependencies_summary.blocked_by`, reached through the CLI instead of the REST API: that field counts **open** blockers only, so a `select(.state == "OPEN")` count over `blockedBy.nodes` equals it, and `nodes | length` equals its `total_blocked_by`. Use the CLI form — `issueDependenciesSummary` is not a `gh --json` field, and `gh api` per issue would be one call per ticket instead of one for the board.
 
   Where an issue carries **no** dependencies at all, fall back to the `**Blocked by:**` line in its body — a board written before dependencies were available, or one whose repo refused the endpoint, has its edges only there.
-- **Branch**, **Base**, **Model** and the **agent name** from the newest run-state comment — the same lines a file board keeps in the file, so both homes feed reads 2 and 3 identically. A run state with no `**Base:**` degrades read 3's guard; see there.
+- **Branch**, **Base**, **Model**, **Account** and the **agent name** from the newest run-state comment — the same lines a file board keeps in the file, so both homes feed reads 2 and 3 identically. A run state with no `**Base:**` degrades read 3's guard; see there.
 
 #### Blockers are free text either way
 
@@ -250,7 +250,47 @@ Compute the **frontier** from the digest you just took: tickets that are `open` 
 
 Ask the developer which to start (AskUserQuestion, or plainly if the options don't fit): **all of the frontier**, **specific numbers**, or **none**. If they pick numbers that aren't on the frontier, hold those back and name the unmet blocker for each. If none, stop — nothing was changed.
 
-If anything will be launched, also ask once **per session** which model should implement it, with `AskUserQuestion`: "Which model should implement these tickets?" — options **Opus (default)**, **Sonnet**, **Haiku**, **Other…**, Opus listed first and labelled `(default)`. If the board already carries a `**Model:**` line from an `in-progress` ticket (Phase 1 parsed it), say so and offer that model as the pre-selected option instead of Opus, so a resumed session defaults to what's already running rather than silently drifting to a different one; if in-progress tickets disagree (e.g. one wave on Sonnet, another on Opus), list what each is running on and let the developer choose, pre-selecting the most recently launched. If the developer picks the default, still record it explicitly. Keep this answer for the rest of the session: Phase 3 reuses it for every later wave without re-asking, states which model is being used when it launches, and only re-asks if the developer says so.
+### The session's launch settings
+
+Only if something will be launched — a round that starts nothing asks nothing, and neither does a session that never reaches a wave.
+
+Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first wave of the session, and every later wave reuses the answer without re-asking — as does anything `/ticket` or `/small-ticket` launches later in the same session.
+
+**Already settled** — this session answered, for an earlier wave or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+
+**Not settled yet** — read the defaults before you state them, rather than assuming them:
+
+```bash
+~/.claude/skills/ticket/scripts/launch.sh defaults
+```
+
+It changes nothing and prints one line per setting, plus the options for the account:
+
+```
+MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
+ACCOUNTS=default work
+```
+
+The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch the whole wave somewhere else. Quote what the command printed.
+
+**A resumed board answers part of it for you.** Where an `in-progress` ticket carries a `**Model:**` or `**Account:**` line (Phase 1 parsed both), that is what this board is *already* running on — say so and pre-select it over the launcher's default, so a resumed session stays with its wave instead of silently drifting onto another model or another subscription. Where in-progress tickets disagree (one wave on Sonnet, another on Opus), list what each is running on and pre-select the most recently launched. Whatever the board says nothing about still comes from `defaults`.
+
+Then ask with **one** `AskUserQuestion` call, one question per setting:
+
+| Setting | Question | Options, in order | How it reaches the launcher |
+|---|---|---|---|
+| Account | "Which Claude account should this session's tickets run on?" | the pre-selected name first — the board's, else the `ACCOUNT=` one labelled `(default — inherited)` — then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
+| Model | "Which model should implement this session's tickets?" | the pre-selected value first — the board's, else the `MODEL=` one labelled `(default)` — then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the recorded run state agree with what launched |
+
+One call with one question per setting, not one question then another: a further setting is another row here, another field you carry, and another line in the run state Phase 3 records — not another round of questions.
+
+**Then hold them.** Every launch in this session passes both, records both in the ticket's run state, and names both in the round's report. Two overrides exist and they are different things:
+
+- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone, is recorded on that ticket, and leaves the session's settings standing for the rest of the wave.
+- **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it. Tickets already running keep what they launched on; the run state is what each is on, not what the session now says.
+
+Neither is a reason to re-ask on the next wave; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
 
 ## Phase 3 — Launch a wave
 
@@ -272,17 +312,20 @@ Now — and only now — read the **body** of each ticket in the wave, the prose
 
 Compose the **brief**: the ticket as the coordinator will receive it — the body with `# <NN>: <Title>` put back on top and a `**Tracker:** <owner>/<repo>#<issue> — report against it, don't close it` line under it, so the launcher and the agent prompt never know which home it came from. Keep **brief** and **issue body** apart: the brief is composed fresh for each launch and is never written back, and the issue body is what actually lives on the tracker. Editing the issue with a brief would duplicate the title as an H1 and plant a `**Tracker:**` self-reference that was never there.
 
-Save the brief to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical. State which model is being used (the session's answer from Phase 2) before launching:
+Save the brief to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical. State which account and model the wave is using (the session's settings from Phase 2) before launching:
 
 ```bash
 ~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-`--account` comes free with `/ticket`'s launcher and stays off unless the developer asks
-for it. A wave is exactly where it pays — rate limits meter per account, so spreading a
-wave across two subscriptions doubles the headroom — but which accounts exist is theirs to
-say, not yours to infer. Every summary's `ACCOUNT=` line records what each ticket ran on.
-See `docs/agents/accounts.md`.
+Both values come from Phase 2 and cover the whole wave. `--account <name>` is passed only
+where the session settled on a named account; where it inherits, the flag is left off
+entirely and each ticket resolves the developer's own directory link, as every ticket did
+before this knob existed. A wave is exactly where a named account pays — rate limits meter
+per account, so spreading a wave across two subscriptions doubles the headroom — and a
+per-ticket override the developer names for one ticket leaves the wave's setting standing.
+Every summary's `ACCOUNT=` line records what each ticket actually ran on, verified in its
+pane. See `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
 It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
 
@@ -295,9 +338,12 @@ Immediately after a successful launch, **write the run state into the ticket fil
 **Branch:** <branch>
 **Base:** <sha>
 **Model:** <model>
+**Account:** <account>
 **Worktree:** <worktree path>
 **Agent:** <herdr agent name>  **Tab:** <tab id>
 ```
+
+`Model` and `Account` are what this ticket actually launched on — the launcher's own `ACCOUNT=` line for the account, which is verified in the pane, rather than what was asked for. A later change to the session's settings doesn't rewrite them: they say what this ticket is running on.
 
 `Base` is the commit the branch was cut from — `git -C <worktree> rev-parse HEAD` straight after the launch, before anything is committed on it.
 
@@ -323,7 +369,7 @@ The digest fetches and never pulls, so the root's own `<base>` may lag behind `<
 
 **On a verified merge**, in this order:
 
-1. Edit the ticket file: `**Status:** resolved — merged into <base> as <short sha> on <YYYY-MM-DD>`, keep the `**Branch:**`, `**Base:**` and `**Model:**` lines — the latter is the historical record of what implemented it — drop the `**Agent:**`/`**Tab:**` line, and tick the acceptance-criteria checkboxes only if the developer confirms they're met — don't tick them on your own authority.
+1. Edit the ticket file: `**Status:** resolved — merged into <base> as <short sha> on <YYYY-MM-DD>`, keep the `**Branch:**`, `**Base:**`, `**Model:**` and `**Account:**` lines — the last two are the historical record of what implemented it and what paid for it — drop the `**Agent:**`/`**Tab:**` line, and tick the acceptance-criteria checkboxes only if the developer confirms they're met — don't tick them on your own authority.
 2. Recompute the frontier over the whole board, from this round's digest lines. Every ticket whose last open blocker just closed is now startable.
 3. If anything became startable, tell the developer what unblocked and run **Phase 3** again for it (precheck the root first — they've just been merging). Ask before launching if the wave is more than a couple of tickets or they asked to be consulted; otherwise launch it and report.
 4. Mention, don't do, the cleanup: the workspace, tabs, worktree at `<worktree>` and branch `<branch>` are now finished, and `/sweep-tickets` lists them with everything else the board has left behind and removes what the developer confirms. Removing a worktree isn't yours to decide — point at the sweep and leave it there. Don't run it, and don't describe the removal commands by hand: that skill's guards (never a dirty worktree, never a blanket delete) are the reason it exists.

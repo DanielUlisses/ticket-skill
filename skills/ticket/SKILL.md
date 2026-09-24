@@ -140,7 +140,47 @@ Ask the developer which to implement now: **all**, **none**, or **specific numbe
 
 Check every selected ticket's blocked-by edges against the rest of the *selection*: a ticket blocked by one that's neither landed nor also launching right now would build against code that doesn't exist yet. Hold those back and note which unmet blocker gates each one. Launch only the frontier of the selection.
 
-Once the selection is settled, ask once for the whole wave, with `AskUserQuestion`: "Which model should implement these tickets?" — options **Opus (default)**, **Sonnet**, **Haiku**, **Other…**, Opus listed first and labelled `(default)`. Every ticket launched in Phase 4 uses this answer; if the developer picks the default, still pass `opus` explicitly, so the summary agrees with what actually launched. Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model governs both — there is no separate review model here the way `/small-ticket` has one.
+Once the selection is settled, settle the session's launch settings below — unless this session already has, in which case they hold and nothing is asked.
+
+### The session's launch settings
+
+Two things govern every ticket a session launches: the **account** it bills to and the **model** that implements it. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — this skill's whole wave, and anything `/small-ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, so this comes after the selection above, never on load.
+
+**Already settled** — this session answered, in an earlier wave or because the developer named them up front: don't ask again. State which account and model are in force when you launch and move on.
+
+**Not settled yet** — read the defaults before you state them, rather than assuming them:
+
+```bash
+~/.claude/skills/ticket/scripts/launch.sh defaults
+```
+
+It changes nothing and prints one line per setting, plus the options for the account:
+
+```
+MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
+ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
+ACCOUNTS=default work
+```
+
+The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch every ticket somewhere else. Quote what the command printed.
+
+Then ask with **one** `AskUserQuestion` call, one question per setting:
+
+| Setting | Question | Options, in order | How it reaches the launcher |
+|---|---|---|---|
+| Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
+| Model | "Which model should implement this session's tickets?" | the `MODEL=` value first, labelled `(default)`, then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary agrees with what launched |
+
+One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
+
+**Then hold them.** Every launch in this session passes both and names both in its report. Two overrides exist and they are different things:
+
+- **For one ticket** — the developer names an account or a model for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
+- **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
+
+Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
+
+Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model governs both — there is no separate review model here the way `/small-ticket` has one.
 
 ## Phase 4 — Launch one coordinator per launched ticket
 
@@ -157,11 +197,13 @@ Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) 
 ~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-`--account` is optional and off by default: without it the ticket inherits the developer's
-own directory link, exactly as every ticket has. Pass it only when the developer names an
-account to spread a wave across subscriptions, and pass what they said — an unknown name
-stops the script before anything is created, and `claude-acc list` is the answer to show
-them. See `docs/agents/accounts.md`.
+Both values come from the session's launch settings above: `--account <name>` unless the
+session inherits, in which case the flag is left off entirely and the ticket resolves the
+developer's own directory link, exactly as every ticket did before this knob existed. A
+per-ticket override the developer named for *this* ticket replaces one value here and leaves
+the session's settings alone. An unknown account name stops the script before anything is
+created, and `claude-acc list` is the answer to show them. See `docs/agents/accounts.md` and
+`docs/agents/session-settings.md`.
 
 The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
@@ -169,7 +211,7 @@ Handle the exit code exactly as `small-ticket` does: **0** → move to the next 
 
 ## Phase 5 — Report
 
-List, per launched ticket: workspace, branch, worktree, agent. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
+List, per launched ticket: workspace, branch, worktree, agent, and the account and model it ran on — the launcher's `ACCOUNT=` line, not what you asked for, since that one is verified in the pane. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
 
 ## Manual fallback (only if the script fails due to a CLI change)
 

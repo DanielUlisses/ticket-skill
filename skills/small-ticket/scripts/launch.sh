@@ -9,6 +9,14 @@
 # Usage:
 #   launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
+#   launch.sh defaults
+#
+# `defaults` prints what a launch that named neither account nor model would use
+# — MODEL=, ACCOUNT= (the account a *new* worktree inherits, which is not
+# necessarily the one the asking session runs under) and ACCOUNTS=, the names to
+# choose between. It reads, starts nothing, and needs no Herdr pane: the skills
+# run it once a session to state the defaults in the question they ask before the
+# first launch. See docs/agents/session-settings.md.
 #
 # Model resolution, highest wins: the optional 4th positional arg above →
 # TICKET_IMPL_MODEL exported in the environment → config/models.env (installed
