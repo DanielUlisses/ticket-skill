@@ -10,7 +10,7 @@
 # ticket must land unstaged for review.
 #
 # Usage:
-#   launch.sh <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #
 # Model resolution, highest wins: the optional 4th positional arg above →
@@ -28,6 +28,9 @@
 #   TICKET_LIB_DIR         — the directory holding the shared ticket-*.sh libraries (default: <skills-dir>)
 #   TICKET_MEMORY_FILE     (default: docs/agents/project-memory.md, relative to the main repo root) — per-repo project memory folded into the prompt; absent means the launch is unchanged
 #   TICKET_REVIEWR_WAIT    (default: 5) — seconds to wait for the reviewr plugin's pane before opening 'review' as a plain shell tab
+#   TICKET_ACCOUNT         — the claude-acc account this ticket runs on; --account beats it. Unset means inherit whatever the worktree's parent directory is linked to, which writes no link at all. See docs/agents/accounts.md
+#   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
+#   TICKET_ACCOUNT_LOCK_WAIT (default: 10) — seconds to wait for the lock on ~/.claude-switch/links before refusing to write it
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 
@@ -49,7 +52,7 @@ else
     [[ -f "$d/ticket-git-repo.sh" ]] && { LIB_DIR="$d"; break; }
   done
 fi
-for lib in ticket-git-repo.sh ticket-launcher.sh; do
+for lib in ticket-git-repo.sh ticket-account.sh ticket-launcher.sh; do
   [[ -f "${LIB_DIR:-}/$lib" ]] \
     || { echo "ERROR: shared library $lib not found in ${LIB_DIR:-<no library directory found next to $SKILL_DIR>} — re-run install.sh, or set TICKET_LIB_DIR" >&2; exit 1; }
   # shellcheck source=/dev/null

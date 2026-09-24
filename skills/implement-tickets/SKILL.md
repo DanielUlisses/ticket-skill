@@ -275,8 +275,14 @@ Compose the **brief**: the ticket as the coordinator will receive it — the bod
 Save the brief to a temp file (`mktemp -t ticket.XXXXXX.md`) and run **`/ticket`'s launcher** — this skill deliberately doesn't ship its own, the mechanics and the agent prompt are identical. State which model is being used (the session's answer from Phase 2) before launching:
 
 ```bash
-~/.claude/skills/ticket/scripts/launch.sh "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/ticket/scripts/launch.sh [--account <name>] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
+
+`--account` comes free with `/ticket`'s launcher and stays off unless the developer asks
+for it. A wave is exactly where it pays — rate limits meter per account, so spreading a
+wave across two subscriptions doubles the headroom — but which accounts exist is theirs to
+say, not yours to infer. Every summary's `ACCOUNT=` line records what each ticket ran on.
+See `docs/agents/accounts.md`.
 
 It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent implements and reviews, then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
 

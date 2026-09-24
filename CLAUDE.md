@@ -16,6 +16,13 @@ Each repo may keep a `docs/agents/project-memory.md` — short, factual, hand-cu
 
 The worktree/tab/agent mechanics and the repo-root/base-branch resolution the skills' scripts share live in `lib/ticket-*.sh`, sourced — never executed — by both `launch.sh` scripts and by `/sweep-tickets`' `sweep.sh`. A skill installs as a self-contained directory, so `install.sh` puts these one level up, as `~/.claude/skills/ticket-*.sh`, the same place `config/models.env` lands. See `docs/agents/launcher.md`.
 
+### Agent accounts
+
+Which Claude subscription a ticket bills to is chosen per launch (`--account`, or
+`TICKET_ACCOUNT`), by linking the worktree directory with `claude-acc`. No account named
+means no link is written and the worktree inherits the developer's own — today's behaviour,
+now reported and verified rather than assumed. See `docs/agents/accounts.md`.
+
 ### Agent models
 
 Which Claude model each ticket role (implementation, review, testing) runs on is configured once, in `config/models.env`, not scattered per skill. See `docs/agents/models.md` for the defaults, the per-run override, and the checklist for bumping a model.

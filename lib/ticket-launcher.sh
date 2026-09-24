@@ -24,9 +24,10 @@
 # The caller sets PERMISSION_MODE after calling load_ticket_models, so a value in
 # ticket-models.env still reaches it — the order the launchers have always used.
 #
-# Requires ticket-git-repo.sh to have been sourced first (die/log/need,
-# resolve_repo_root, resolve_base_branch, run_git_net) and the caller to be
-# running under `set -euo pipefail`.
+# Requires ticket-git-repo.sh (die/log/need, resolve_repo_root,
+# resolve_base_branch, run_git_net) and ticket-account.sh (the claude-acc
+# helpers) to have been sourced first, and the caller to be running under
+# `set -euo pipefail`.
 #
 # Installed as ~/.claude/skills/ticket-launcher.sh, one level up from the skill
 # directories — see ticket-git-repo.sh for why it can't live inside one.
@@ -66,11 +67,15 @@ herdr_json() {
   printf '%s' "$out"
 }
 
-# Appends a tab to the worktree's workspace and sets CREATED_TAB to its id.
-# It sets a global instead of printing because a `die` inside a command
+# Appends a tab to the worktree's workspace and sets CREATED_TAB to its id and
+# CREATED_PANE to the pane that came with it.
+# It sets globals instead of printing because a `die` inside a command
 # substitution only exits that subshell: called as `t="$(create_tab x)"`, a
 # failed `herdr tab create` would report Herdr's message and then carry on to
 # report a second, empty-JSON error on top of it.
+#
+# CREATED_PANE may come back empty — only the account-override path needs it, and
+# that caller says so itself rather than failing the two tabs that don't.
 create_tab() {
   local label="$1" cmd json
   cmd=(tab create --workspace "$WORKSPACE_ID" --cwd "$WT" --label "$label")
@@ -78,6 +83,12 @@ create_tab() {
   json="$(herdr_json "herdr tab create ($label)" "${cmd[@]}")"
   CREATED_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$json")"
   [[ -n "$CREATED_TAB" ]] || die "couldn't read the '$label' tab from the response: $json"
+  CREATED_PANE="$(jq -r '
+    .result.root_pane.pane_id // .result.root_pane.id
+    // .result.pane.pane_id // .result.pane.id
+    // .result.tab.root_pane.pane_id // .result.tab.root_pane.id
+    // (.result.tab.panes[0] | (.pane_id // .id))
+    // empty' <<<"$json" 2>/dev/null || true)"
 }
 
 # Whether to wait for the reviewr plugin's pane at all — only to skip a wait
@@ -195,6 +206,124 @@ $memory"
   fi
 }
 
+# ---- the account this ticket runs on ----------------------------------------
+# Three steps, in this order: check the requested account before anything is
+# created, write the link once the worktree exists, and read back what the agent
+# actually started under. Sets ACCOUNT_NAME, ACCOUNT_CONFIG_DIR, ACCOUNT_ORIGIN
+# (`linked` or `inherited`) and ACCOUNT_STATUS, which together are the summary's
+# ACCOUNT= line. See docs/agents/accounts.md.
+
+# Called before the worktree exists, so a name nobody can link to costs nothing.
+# `claude-acc link` validates the name too, but by then there is a worktree and a
+# workspace to clean up after.
+check_ticket_account() {
+  [[ -n "$ACCOUNT_REQUESTED" ]] || return 0
+  [[ "$ACCOUNT_REQUESTED" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || die "invalid account '$ACCOUNT_REQUESTED' — an account name as 'claude-acc list' prints it, or 'default' for the standard ~/.claude"
+  need claude-acc
+  account_exists "$ACCOUNT_REQUESTED" \
+    || die "no Claude account named '$ACCOUNT_REQUESTED' — see: claude-acc list"
+
+  # An account is a whole Claude config root, and Claude Code reads *that* root's
+  # skills/ and agents/, not ~/.claude's. A ticket launched on an account this
+  # repo was never installed into starts an agent whose ticket-implementer,
+  # ticket-reviewer and ticket-tester subagents simply aren't there —
+  # /small-ticket's orchestrator delegates to all three. A warning rather than a
+  # refusal, because a /ticket run does its work in one session and needs none of
+  # them; install.sh takes the root as its argument, so name it.
+  ACCOUNT_ROOT="$(account_root_for "$ACCOUNT_REQUESTED")"
+  [[ -f "$ACCOUNT_ROOT/agents/ticket-implementer.md" ]] \
+    || log "warning: '$ACCOUNT_REQUESTED' has no agents/ticket-implementer.md under $ACCOUNT_ROOT — this repo was never installed into that account's config root, so a /small-ticket launched there loses its subagents. Fix with: ./install.sh $ACCOUNT_ROOT"
+}
+
+# Writes the link (only when one was asked for) and resolves what the worktree
+# now points at. Runs after the worktree exists and before the agent's pane is
+# created, because a pane resolves its account once, when its shell starts.
+link_ticket_account() {
+  ACCOUNT_ORIGIN="inherited"
+  ACCOUNT_CONFIG_DIR=""
+  ACCOUNT_NAME="unknown"
+  ACCOUNT_STATUS="unverified (claude-acc not installed)"
+
+  if ! have_claude_acc; then
+    # No switcher, no accounts, nothing to say — and nothing changed about the
+    # launch. A request for one was already refused by check_ticket_account.
+    log "account: claude-acc not installed — launching as before"
+    return 0
+  fi
+
+  local rc=0 swept="the worktree and its workspace were created; remove them with /sweep-tickets"
+  if [[ -n "$ACCOUNT_REQUESTED" ]]; then
+    log "linking $WT to the '$ACCOUNT_REQUESTED' account"
+    with_links_lock account_link "$WT" "$ACCOUNT_REQUESTED" || rc=$?
+    if [[ $rc -eq $ACCOUNT_LOCK_UNAVAILABLE ]]; then
+      die "couldn't take the lock on $ACCOUNT_LINKS_LOCK within ${ACCOUNT_LOCK_WAIT}s (or flock is missing) — refusing to write $ACCOUNT_LINKS_FILE unserialised, because concurrent writers lose entries, the developer's own among them. $swept"
+    elif [[ $rc -ne 0 ]]; then
+      die "claude-acc link '$ACCOUNT_REQUESTED' failed in $WT — $swept"
+    fi
+    ACCOUNT_ORIGIN="linked"
+  fi
+
+  ACCOUNT_CONFIG_DIR="$(account_config_dir "$WT")" \
+    || die "couldn't resolve the Claude account for $WT (claude-acc activate failed there)"
+  ACCOUNT_NAME="$(account_name_for "$ACCOUNT_CONFIG_DIR")"
+
+  # The link is written and read back through two different claude-acc commands,
+  # so this is the one place the answer can be checked against the question. The
+  # verification after start compares the pane against ACCOUNT_CONFIG_DIR, and
+  # both sides of that comparison come from here — so a link that landed
+  # somewhere other than where it was aimed would agree with itself all the way
+  # through and still be the wrong account.
+  [[ "$ACCOUNT_ORIGIN" != "linked" || "$ACCOUNT_NAME" == "$ACCOUNT_REQUESTED" ]] \
+    || die "asked for the '$ACCOUNT_REQUESTED' account, but $WT resolves to '$ACCOUNT_NAME' (${ACCOUNT_CONFIG_DIR:-the standard ~/.claude}) — the link didn't land where it was aimed. Check 'claude-acc links'. $swept"
+
+  ACCOUNT_STATUS="unverified"
+  log "account: $ACCOUNT_NAME ($ACCOUNT_ORIGIN, ${ACCOUNT_CONFIG_DIR:-~/.claude})"
+}
+
+# Reads back what the agent's process actually got, and refuses to hand it the
+# ticket unless that is the account the worktree resolves to.
+#
+# A mismatch is the dangerous failure this whole feature exists to prevent: the
+# agent runs, bills a subscription nobody chose, and nothing says so. It dies
+# here, before the prompt is sent, so the wrong account pays for a startup and
+# not for a ticket.
+#
+# Being unable to read the environment at all is treated differently on the two
+# paths, and deliberately: an overriding launch asked for a specific account, and
+# an unconfirmed answer is exactly the silence this guards against, so it dies.
+# An inheriting launch asked for nothing and wrote nothing — it is the launch
+# this repo has always done — so it says UNVERIFIED loudly in the summary and
+# carries on.
+verify_ticket_account() {
+  local actual rc
+  have_claude_acc || return 0
+
+  set +e
+  actual="$(account_pane_config_dir "$AGENT_PANE")"
+  rc=$?
+  set -e
+
+  if [[ $rc -ne 0 ]]; then
+    local why
+    case $rc in
+      1) why="no started process appeared in pane $AGENT_PANE within ${ACCOUNT_VERIFY_WAIT}s" ;;
+      *) why="can't read /proc/<pid>/environ for the process in pane $AGENT_PANE" ;;
+    esac
+    [[ "$ACCOUNT_ORIGIN" != "linked" ]] \
+      || die "started '$AGENT' but couldn't confirm it is on the '$ACCOUNT_REQUESTED' account — $why. Not sending the ticket: an unconfirmed override is what this check exists to catch. Remove the workspace with /sweep-tickets and try again."
+    ACCOUNT_STATUS="UNVERIFIED ($why)"
+    log "warning: account UNVERIFIED — $why. The agent may be on an account other than '$ACCOUNT_NAME'."
+    return 0
+  fi
+
+  if [[ "$actual" != "$ACCOUNT_CONFIG_DIR" ]]; then
+    die "account mismatch: $WT resolves to ${ACCOUNT_CONFIG_DIR:-<unset, the standard ~/.claude>} but '$AGENT' started under ${actual:-<unset, the standard ~/.claude>}. Not sending the ticket. The pane's shell didn't pick up the directory link (check 'claude-acc links' and that ~/.bashrc still evals 'claude-acc init bash'); remove the workspace with /sweep-tickets and try again."
+  fi
+  ACCOUNT_STATUS="verified in pane $AGENT_PANE"
+  log "account verified: '$AGENT' is running under ${actual:-the standard ~/.claude}"
+}
+
 # ---- shared model config (config/models.env, installed as ticket-models.env) ----
 # Called by the caller before it sets its own parameters, never from
 # launcher_main: the config file may set any TICKET_* variable, so anything
@@ -220,9 +349,33 @@ launcher_main() {
   # the arithmetic below.
   [[ "$REVIEWR_WAIT" =~ ^(0|[1-9][0-9]*)$ ]] \
     || die "invalid TICKET_REVIEWR_WAIT '$REVIEWR_WAIT' — whole seconds, no leading zeros (0 skips the wait)"
+  # Again here, not only where ticket-account.sh is sourced: the config file is
+  # read between the two, and it may set either of these.
+  resolve_account_env
 
   [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1)"
   need herdr; need git; need jq
+
+  # ---- flags, ahead of the positionals -----------------------------------------
+  # --account is a flag rather than a fifth positional because it is the rare
+  # case: a ticket that names no account inherits the developer's own, and the
+  # call site stays the three or four words it has always been. An exported
+  # TICKET_ACCOUNT does the same job for a whole session, and the flag wins over
+  # it — the same order the model knob uses, and for the same reason: the skills'
+  # allowed-tools entries are prefix patterns, which a `TICKET_ACCOUNT=x ...`
+  # prefix would no longer match.
+  ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
+  local -a ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --account)   [[ $# -ge 2 ]] || die "--account needs an account name"
+                   ACCOUNT_REQUESTED="$2"; shift 2 ;;
+      --account=*) ACCOUNT_REQUESTED="${1#--account=}"; shift ;;
+      -*)          die "unknown flag: $1" ;;
+      *)           ARGS+=("$1"); shift ;;
+    esac
+  done
+  set -- ${ARGS[@]+"${ARGS[@]}"}
 
   # ---- subcommand: prompt -------------------------------------------------------
   if [[ "${1:-}" == "prompt" ]]; then
@@ -232,7 +385,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh <tab-label> <branch> <ticket-file> [model]"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] <tab-label> <branch> <ticket-file> [model]"
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
@@ -242,6 +395,7 @@ launcher_main() {
     || die "invalid branch '$BRANCH' — use kebab-case without '/' or '--', up to 40 chars (e.g. fix-webhook-retry)"
   git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
   [[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
+  check_ticket_account
 
   # ---- main repo (--path keeps the worktree at ../<repo>--<branch>, so `gd` still works) ----
   resolve_repo_root
@@ -313,14 +467,14 @@ launcher_main() {
   WT_JSON="$(herdr_json "herdr worktree create" "${create[@]}")"
 
   # `--label` above labels the WORKSPACE; the tab that comes with it is labelled
-  # by number ("1"), and section 2 renames it. All three ids are load-bearing
-  # from here on, so read each one and say which was missing.
+  # by number ("1"), and section 2 either renames it or replaces it. All three
+  # ids are load-bearing from here on, so read each one and say which was missing.
   WORKSPACE_ID="$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' <<<"$WT_JSON")"
-  AGENT_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$WT_JSON")"
-  AGENT_PANE="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$WT_JSON")"
+  ROOT_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$WT_JSON")"
+  ROOT_PANE="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$WT_JSON")"
   [[ -n "$WORKSPACE_ID" ]] || die "couldn't read the worktree's workspace from the response: $WT_JSON"
-  [[ -n "$AGENT_TAB" ]] || die "couldn't read the worktree's tab from the response: $WT_JSON"
-  [[ -n "$AGENT_PANE" ]] || die "couldn't read the worktree's root pane from the response: $WT_JSON"
+  [[ -n "$ROOT_TAB" ]] || die "couldn't read the worktree's tab from the response: $WT_JSON"
+  [[ -n "$ROOT_PANE" ]] || die "couldn't read the worktree's root pane from the response: $WT_JSON"
   WT_PATH="$(jq -r '.result.worktree.path // empty' <<<"$WT_JSON")"
   [[ "$WT_PATH" == "$WT" ]] \
     || die "herdr created the worktree at '${WT_PATH:-?}', not at the expected $WT"
@@ -334,12 +488,35 @@ launcher_main() {
   [[ "$WT_COMMIT" == "$BASE_COMMIT" ]] \
     || die "worktree was created at $WT_COMMIT, but the updated '$BASE_BRANCH' is at $BASE_COMMIT"
 
+  # ---- 1b. the account this ticket runs on ------------------------------------
+  # Between the worktree and the agent's pane, because the link is keyed by
+  # directory (so the worktree must exist) and a pane resolves its account once,
+  # when its shell starts (so no pane the agent will use may exist yet).
+  link_ticket_account
+
   # ---- 2. the workspace's tabs: agent, review, shell --------------------------
-  # The worktree's own tab is renamed rather than replaced: that keeps the agent
-  # on the root pane, which already has the worktree as its cwd. The other two are
-  # appended, so the workspace's bar reads agent | review | shell.
-  log "renaming the worktree's tab to 'agent'"
-  herdr_json "herdr tab rename" tab rename "$AGENT_TAB" agent >/dev/null
+  # Inheriting the account — the default, and every launch before this existed —
+  # the worktree's own tab is renamed rather than replaced: that keeps the agent
+  # on the root pane, which already has the worktree as its cwd, and nothing was
+  # written for its shell to have missed. The other two are appended, so the
+  # workspace's bar reads agent | review | shell.
+  #
+  # Overriding it, that root pane's shell resolved the *inherited* account before
+  # the link was written, and the PROMPT_COMMAND hook claude-acc installs only
+  # re-resolves when $PWD changes — so it will carry the wrong account for as
+  # long as it lives. The agent gets a tab of its own, created after the link,
+  # and the stale pane is closed at the end of this section once the review tab
+  # has taken whatever it needed from it.
+  if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
+    log "creating a fresh 'agent' tab (the worktree's root pane predates the account link)"
+    create_tab agent; AGENT_TAB="$CREATED_TAB"; AGENT_PANE="$CREATED_PANE"
+    [[ -n "$AGENT_PANE" ]] \
+      || die "couldn't read the new 'agent' tab's pane from Herdr's response — the account override needs a pane created after the link"
+  else
+    AGENT_TAB="$ROOT_TAB"; AGENT_PANE="$ROOT_PANE"
+    log "renaming the worktree's tab to 'agent'"
+    herdr_json "herdr tab rename" tab rename "$AGENT_TAB" agent >/dev/null
+  fi
 
   # The review pane is the persiyanov.reviewr plugin's, not ours. It auto-opens on
   # Herdr's `worktree.created` event and places itself from its own config file
@@ -386,6 +563,27 @@ launcher_main() {
   log "creating the 'shell' tab"
   create_tab shell; SHELL_TAB="$CREATED_TAB"
 
+  # The worktree's original tab, now that the review tab has taken the reviewr
+  # pane out of it. It holds one shell resolved to the account this ticket is
+  # overriding, and leaving it is the invisible wrong-account state this feature
+  # exists to end — so it goes. Only when it holds nothing but the pane Herdr
+  # created with it, though: a reviewr pane that turned up after the wait gave
+  # up is worth more than a tidy bar, and so is anything the developer split off
+  # in the seconds this takes.
+  if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
+    # herdr_json, not a swallowed listing: if this call fails quietly the answer
+    # is an empty list, which reads as "other panes are in there" and leaves the
+    # wrong-account shell standing — the one thing closing the tab is for.
+    ROOT_TAB_PANES="$(herdr_json "herdr pane list" pane list --workspace "$WORKSPACE_ID" \
+      | jq -r --arg t "$ROOT_TAB" '[.result.panes[]? | select(.tab_id == $t) | .pane_id] | @tsv')"
+    if [[ "$ROOT_TAB_PANES" == "$ROOT_PANE" ]]; then
+      log "closing the worktree's original tab $ROOT_TAB (its shell predates the account link)"
+      herdr_json "herdr tab close" tab close "$ROOT_TAB" >/dev/null
+    else
+      log "warning: leaving the worktree's original tab $ROOT_TAB open — it holds panes this launch didn't create (${ROOT_TAB_PANES:-none listed}). Its shell is on the inherited account, not '$ACCOUNT_NAME'."
+    fi
+  fi
+
   # ---- 3. start Claude Code in the 'agent' tab -------------------------------
   # PERMISSION_MODE and DISALLOWED_TOOLS are where the two launchers part company
   # and must not be flattened: /small-ticket starts in plan mode with only
@@ -408,10 +606,18 @@ WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
+ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
 PROMPT_FILE=$PROMPT_FILE
 SUMMARY
   }
+
+  # Before the exit-3 branch as well as the happy path: an agent stopped at the
+  # folder-trust dialog is a started process with an environment to read, and the
+  # account it will run under once the dialog is answered is decided already.
+  if [[ $START_RC -eq 0 ]] || grep -q 'agent_not_ready' <<<"$START_OUT"; then
+    verify_ticket_account
+  fi
 
   if [[ $START_RC -ne 0 ]]; then
     if grep -q 'agent_not_ready' <<<"$START_OUT"; then
