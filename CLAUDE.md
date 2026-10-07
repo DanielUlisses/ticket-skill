@@ -34,3 +34,10 @@ by whichever launching skill gets there first, and hold for every launch after i
 that launches nothing asks nothing. `launch.sh defaults` is what names the defaults in that
 question, including the account a *new* worktree would inherit, which is not the one the
 asking session runs under. See `docs/agents/session-settings.md`.
+
+### Jira parent
+
+`/ticket` takes a Jira id as the first word of its task (`/ticket itm-9909 add the export button`),
+lowercased and stripped before the interview. It names the board — `.scratch/<id>/` or label
+`ticket:<id>` — in place of the feature slug, and every ticket carries `**Parent:** <id>`. A second
+run on the same id appends to that board. No id, no change. See `docs/agents/jira-parent.md`.
