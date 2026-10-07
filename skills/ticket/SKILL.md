@@ -1,7 +1,7 @@
 ---
 name: ticket
 description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
-argument-hint: "<task description>"
+argument-hint: "[jira-id] <task description>"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
 ---
@@ -16,7 +16,19 @@ $ARGUMENTS
 
 This command runs two very different modes in sequence. Phases 1–3 are an interview: you sharpen and break down the task with the developer, right here, in this session. Phase 4 is a hand-off: for each ticket they choose, you start a Herdr coordinator that implements and reviews it, unattended, in its own worktree — mirroring `small-ticket`'s environment setup, but without a plan-mode gate, since by then the plan is already agreed.
 
-If the task is empty, ask for a description and stop.
+### A Jira id as the first word
+
+Before anything else, look at the task's **first word**. It is a Jira id when it matches `^[A-Za-z][A-Za-z0-9]+-[0-9]+$` — `ITM-9909`, `itm-9909`, `PROJ2-14`. When it does:
+
+- **Normalize** it to lowercase (`ITM-9909` → `itm-9909`); that lowercase form is the only one written anywhere below.
+- **Strip** it from the task text. What remains is the task Phase 1 interviews — the id names where the tickets go, not what they are about.
+- **Say so** in one line before the interview starts: "Jira id `itm-9909` — the board is `itm-9909` and every ticket's parent."
+
+The id then does two things in Phase 2, and nothing else: it is the **board's name** (in place of the feature slug) and every ticket's **parent** (a `**Parent:**` line in its body). Branch names, the coordinator's brief and `/small-ticket` are untouched, and nothing calls Jira — the id is a name, not a link.
+
+Only the first word counts. A key-shaped token anywhere later in the text is just text, and a first word that doesn't match the pattern means there is no id: the feature slug names the board and no ticket carries a parent, exactly as before this existed. See `docs/agents/jira-parent.md`.
+
+If the task is empty — including a task that was only an id — ask for a description and stop.
 
 ## Phase 1 — Grill the idea
 
@@ -32,7 +44,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Phase 4's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
 - Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — Phase 3's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs.
-- Number tickets `01`, `02`, … in dependency order (blockers first).
+- Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
 Present the breakdown as a numbered list — title, blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
@@ -65,6 +77,8 @@ Issues being *enabled* is GitHub's default and proves nothing on its own, which 
 
 **What to build:** <end-to-end behaviour, from the user's perspective>
 
+**Parent:** <jira-id — this line only when the task opened with one>
+
 **Blocked by:** <blockers, or "None (can start immediately)">
 
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
@@ -77,23 +91,40 @@ Issues being *enabled* is GitHub's default and proves nothing on its own, which 
 
 The two homes differ in only two places: the GitHub home carries the heading as the issue **title** rather than as a `# ` line, and writes `**Blocked by:**` as issue references (`#12, #13`) where the file home writes ticket numbers (`01, 02`).
 
+`**Parent:**` is written only when the task opened with a Jira id, and then identically in **both** homes: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
+
 `**Suggested effort:**` is written the same way in **both** homes — a body line like the two above it, in the file under `.scratch/` and in the issue body alike. It is what Phase 3's launch question pre-selects, and what `/implement-tickets` reads back off a board later; a ticket written before this line existed simply carries none, and the launcher's own `medium` stands.
+
+### Naming the board
+
+The board's name is the **Jira id** when the task opened with one, and a **feature slug** — a short kebab-case name for the settled plan — otherwise. It is `<board>` below, in the label and in the folder alike.
+
+A fresh feature slug names a fresh board, numbered from `01`, exactly as before. A Jira id may not: a second `/ticket` run on the same id lands on the board the first one wrote, and **appends** to it rather than starting over — that is the point of naming the board after the parent. Each home below says how to tell and where numbering resumes; those checks run **only with a Jira id**. Run them **before you present the breakdown**, not when you come to write it — so with an id, detect the home (below) first, then check it for the board. When it is an existing board, announce it before writing anything, naming the numbers you're about to add — "appending 04–05 to the existing itm-9909 board" — and present the Phase 2 breakdown numbered that way from the start, so the developer approves the numbers that will actually be written. New tickets may name existing ones as blockers, by the same number (file home) or issue reference (GitHub home) those already carry.
 
 ### Writing to a GitHub tracker
 
 Create the issues **in ticket-number order** — blockers first, which is the order they're already numbered in — so every ticket's blockers have issue numbers by the time you write its body.
 
 - **Title**: `<NN>: <Title>`. The `NN:` prefix is what carries ticket order onto a tracker that numbers issues its own way; `/implement-tickets` reads the board back through it.
-- **Label**: `ticket:<feature-slug>`, the tracker's equivalent of the feature directory, and how `/implement-tickets` finds this board again. Create it once up front — `--label` fails on a label that doesn't exist:
+- **Label**: `ticket:<board>`, the tracker's equivalent of the feature directory, and how `/implement-tickets` finds this board again. With a Jira id, first check whether it already exists, and if it does, read the numbers its issues already hold — open and closed both, since a closed `03` still owns `03`:
 
   ```bash
-  gh label create "ticket:<feature-slug>" --description "Tickets for <feature>" 2>/dev/null || true
+  gh label list --search "ticket:<board>" --limit 1000 --json name --jq '.[].name' | grep -qx "ticket:<board>" \
+    && gh issue list --label "ticket:<board>" --state all --limit 1000 --json number,title \
+         --jq '.[] | select(.title | test("^[0-9]+:")) | "\(.title | capture("^(?<nn>[0-9]+):").nn) #\(.number)"' \
+    | sort -n
+  ```
+
+  An existing label is an existing board: numbering continues from the highest `NN:` it prints — the last line (`03` → the first new ticket is `04`), and the `#number` beside each is what a new ticket's `**Blocked by:**` names when it depends on one. No label — or no Jira id — means a fresh board, numbered from `01` — create it once up front, since `--label` fails on a label that doesn't exist:
+
+  ```bash
+  gh label create "ticket:<board>" --description "Tickets for <board>" 2>/dev/null || true
   ```
 
 - **Body**: the ticket body above, minus the heading. Write it to a file — `--body-file` where `docs/agents/issue-tracker.md` writes `--body "..."` with a heredoc, since a ticket body is multi-line Markdown and a file avoids quoting it twice — and keep the issue number `gh` prints back — the dependency edges below need it, and so does the next ticket's `**Blocked by:**` line:
 
   ```bash
-  url=$(gh issue create --title "<NN>: <Title>" --label "ticket:<feature-slug>" --body-file <body-file>)
+  url=$(gh issue create --title "<NN>: <Title>" --label "ticket:<board>" --body-file <body-file>)
   number=${url##*/}
   ```
 
@@ -137,7 +168,15 @@ Resolve it the way `resolve_base_branch` does, so the branch you name is the one
 
 #### Then write the tickets
 
-Write one file per ticket to `.scratch/<feature-slug>/issues/<NN>-<slug>.md` at the project root — find it with `git worktree list --porcelain` if you're not sure you're there already — with the heading in place and `**Blocked by:**` holding ticket numbers.
+Write one file per ticket to `.scratch/<board>/issues/<NN>-<slug>.md` at the project root — find it with `git worktree list --porcelain` if you're not sure you're there already — with the heading in place and `**Blocked by:**` holding ticket numbers.
+
+With a Jira id, check for that folder first. If `.scratch/<board>/issues/` already holds tickets, it is an existing board: numbering continues from the highest `NN` among its file names, and a new ticket blocked by an existing one names it by that number:
+
+```bash
+ls <root>/.scratch/<board>/issues/ 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)-.*\.md$/\1/p' | sort -n | tail -1
+```
+
+Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a file that is already there — appending adds files, nothing else.
 
 ## Phase 3 — Pick tickets to implement
 
