@@ -1,14 +1,14 @@
 ---
 name: implement-tickets
 description: Implements tickets that are already written. Reads the board from wherever the repo keeps tickets — GitHub issues where it has a tracker, files under `.scratch` where it doesn't — asks which to start, launches one unattended Herdr coordinator per frontier ticket, then stays on as the ticket coordinator — opening each round by re-reading the board, the live agents and git, verifying each merge against that, marking the ticket resolved in its home, and launching whatever the merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
-argument-hint: "[tickets directory, or a ticket label / feature slug]"
+argument-hint: "[tickets directory, a ticket label / feature slug, or a Jira id like ITM-9909]"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Bash(ls *), Bash(cat *), Bash(find *), Bash(grep *), Bash(awk *), Bash(jq *), Bash(diff *), Bash(mv *), Read, Write, Edit, Glob, Grep, AskUserQuestion, ToolSearch, Monitor
 ---
 
 # /implement-tickets
 
-Board received — a tickets directory, a ticket label, or a feature slug (may be empty):
+Board received — a tickets directory, a ticket label, a feature slug, or a Jira id (may be empty):
 
 <board>
 $ARGUMENTS
@@ -35,6 +35,14 @@ git worktree list --porcelain | awk 'NR==1 && /^worktree /{ sub(/^worktree /, ""
 
 Then read the argument:
 
+- **A Jira id** — a bare argument matching `^[A-Za-z][A-Za-z0-9]+-[0-9]+$` (the pattern `/ticket` uses), such as `itm-9909` or `ITM-9909`, tested before the two readings below. Lowercase it: `/ticket` names a Jira-keyed board by the lowercase id, as the `.scratch/<id>/` folder or the `ticket:<id>` label. Look for both, with the lowercased id written out literally:
+
+  ```bash
+  ls -d <root>/.scratch/<id>/                                                            # a file board
+  gh label list --search "ticket:<id>" --json name --jq '.[].name | select(. == "ticket:<id>")'  # a GitHub board
+  ```
+
+  A non-zero exit or empty output means that one isn't there — a failing `gh` included. **One** exists → that's the board: a file board at `<root>/.scratch/<id>/`, or a GitHub board on the `ticket:<id>` label, which skips the label scoping below. **Both** → ask the developer which (AskUserQuestion). **Neither** → it may be a feature slug that only looks like an id (`phase-2`), so read it as the argument below; if that finds no board either, say you looked for `<root>/.scratch/<id>/` and the `ticket:<id>` label as well, and stop.
 - **A path** — it contains a `/`, ends in `.md`, or names an existing directory. A **file board** there, relative to the main repo root unless it's absolute.
 - **A label or feature slug** — `ticket:<slug>`, or a bare `<slug>` that matches one of the tracker's `ticket:*` labels. A **GitHub board** scoped to that label.
 - **Empty** — detect the home, the same two tests `/ticket` phase 2 uses. A **GitHub board** when both hold, a **file board** at `<root>/.scratch` otherwise:
@@ -103,7 +111,7 @@ One call, and only the six fields. Parse it per home:
 One call for the whole board, and it reads the header lines without pulling in the prose under them:
 
 ```bash
-grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent|Blocked by|Suggested effort):' <path> --include='*.md'
+grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent|Blocked by|Suggested effort|Parent):' <path> --include='*.md'
 ```
 
 - **Number and title** from the `# <NN>: <Title>` heading (fall back to the filename).
@@ -114,6 +122,7 @@ grep -rHn -E '^# [0-9]+:|^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|
 - **Blocked by** from the `**Blocked by:**` line.
 - **Model**, **Effort** and **Account** from the `**Model:**`, `**Effort:**` and `**Account:**` lines, if a previous run recorded them — the session settings that ticket's coordinator is (or was) running on. Absent on a fresh board; present once Phase 3 has launched it at least once, and what Phase 2 pre-selects for a resumed session.
 - **Suggested effort** from the `**Suggested effort:**` line `/ticket` wrote into the body. Unlike the three above, it is the ticket author's recommendation rather than a record of a run, and it is what Phase 2 pre-selects on a board nothing has launched yet. Tickets written before that line existed carry none.
+- **Parent** from a `**Parent:**` line — the Jira id the whole board hangs off (see *The board's parent*).
 
 #### From a GitHub board
 
@@ -139,7 +148,17 @@ Of `comments`, keep only the newest run-state block per ticket and drop the rest
   This is the same gate `docs/agents/issue-tracker.md` names as `issue_dependencies_summary.blocked_by`, reached through the CLI instead of the REST API: that field counts **open** blockers only, so a `select(.state == "OPEN")` count over `blockedBy.nodes` equals it, and `nodes | length` equals its `total_blocked_by`. Use the CLI form — `issueDependenciesSummary` is not a `gh --json` field, and `gh api` per issue would be one call per ticket instead of one for the board.
 
   Where an issue carries **no** dependencies at all, fall back to the `**Blocked by:**` line in its body — a board written before dependencies were available, or one whose repo refused the endpoint, has its edges only there.
+- **Parent** lives in the issue bodies, which the call above leaves out. On the first digest of a session — the only one that reports it — make one more call that keeps nothing of the bodies but that line (drop `--label` on an unlabelled board, as above):
+
+  ```bash
+  gh issue list --label "ticket:<slug>" --state all --limit 200 --json body \
+    --jq '[.[].body | capture("(?m)^\\*\\*Parent:\\*\\* *(?<p>[^\\s]+)") | .p | ascii_downcase] | unique | .[]'
+  ```
 - **Branch**, **Base**, **Model**, **Account** and the **agent name** from the newest run-state comment — the same lines a file board keeps in the file, so both homes feed reads 2 and 3 identically. A run state with no `**Base:**` degrades read 3's guard; see there.
+
+#### The board's parent
+
+A board `/ticket` wrote from a Jira id carries a `**Parent:** <id>` line in every ticket. It belongs to the board, not to a ticket: report it **once**, lowercased like the id it is, as a header line — `Board itm-9909` — above the first digest's table, never as a field in a ticket's line or its row. Where the tickets name more than one parent, list each in that header and say they disagree. A board with no `**Parent:**` line has no header and reads exactly as before.
 
 #### Blockers are free text either way
 
@@ -226,7 +245,7 @@ This isn't startup-only repair. It's what the digest does every round, which is 
 
 ### Confirm the graph — first digest only
 
-On the **first** digest of a session, print the board as a table — number, title, status, blockers, branch, and the issue number too on a GitHub board — followed by the parsed dependency graph (`03 ← 01, 02`), and ask the developer to confirm the graph reads right before anything launches. A silently mis-parsed blocker launches work against code that doesn't exist yet; this one cheap question turns that into a visible error.
+On the **first** digest of a session, print the board's parent header if it has one (*The board's parent*), then the board as a table — number, title, status, blockers, branch, and the issue number too on a GitHub board — followed by the parsed dependency graph (`03 ← 01, 02`), and ask the developer to confirm the graph reads right before anything launches. A silently mis-parsed blocker launches work against code that doesn't exist yet; this one cheap question turns that into a visible error.
 
 Later rounds neither re-ask nor reprint the table: the parse hasn't changed, and the diff already says what has. Re-ask only when a digest shows the edges themselves changed.
 
