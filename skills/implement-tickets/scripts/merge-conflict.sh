@@ -28,6 +28,7 @@ source "$SKILL_DIR/scripts/board-lib.sh"
 verb="${1:-}"; board="${2:-}"; nn="${3:-}"
 [[ "$verb" =~ ^(start|status|finish|abort)$ && -n "$nn" ]] || { sed -n '2,15p' "$0"; exit 1; }
 board_init "$board"
+(( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — no PR to unblock; merge the branch locally"
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
 WT="$(jq -r .worktree <<<"$t")"

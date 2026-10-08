@@ -28,8 +28,9 @@ source "$SKILL_DIR/scripts/board-lib.sh"
 verb="${1:-}"; board="${2:-}"; nn="${3:-}"
 [[ "$verb" =~ ^(check|open)$ && -n "$nn" ]] || { sed -n '2,13p' "$0"; exit 1; }
 shift 3
-need gh
 board_init "$board"
+(( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push or open a PR; the developer commits and merges locally"
+need gh
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
 WT="$(jq -r .worktree <<<"$t")"
@@ -70,7 +71,6 @@ case "$verb" in
     echo "CHANGED"; sed 's/^/  /' <<<"${files:-  (none — only the commits above)}"
     r="$(risky <<<"$files")"; [[ -z "$r" ]] || { echo "RISKY — never include these:"; sed 's/^/  /' <<<"$r"; }
     echo "TICKET $(jq -r '.file // .ref' <<<"$t")"
-    [[ "$BOARD_KIND" == github ]] && echo "ISSUE #$(jq -r .issue <<<"$t") — write 'Refs #$(jq -r .issue <<<"$t")', not 'Closes': the board resolves it on merge"
     p="$(jq -r .parent <<<"$t")"; [[ -n "$p" ]] && echo "PARENT ${p^^}"
     rep="$(board_state_dir)/reports/$BRANCH.md"
     if [[ -s "$rep" ]]; then echo "REPORT $rep"; else echo "REPORT none"; fi

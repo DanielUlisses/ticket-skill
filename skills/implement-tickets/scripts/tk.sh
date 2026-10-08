@@ -3,7 +3,7 @@
 # code, so the model driving the board (Haiku, by default) only reads results
 # and decides. See docs/adr/0004-haiku-board-session.md.
 #
-# Usage (<board> is a Jira id, a slug, ticket:<slug>, a .scratch path, or "" for auto):
+# Usage (<board> is a Jira id or slug under .scratch/, a path, or "" for the only one there):
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each
@@ -38,7 +38,9 @@ LAUNCHER="${TICKET_LAUNCHER:-$(dirname "$SKILL_DIR")/ticket/scripts/launch.sh}"
 cmd_digest() {
   board_init "${1:-}"; shift || true
   local full=0; [[ "${1:-}" == --full ]] && full=1
-  run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || echo "WARN fetch of $REMOTE/$BASE_BRANCH failed — landed answers use the last fetch"
+  if (( HAS_REMOTE )); then
+    run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || echo "WARN fetch of $REMOTE/$BASE_BRANCH failed — landed answers use the last fetch"
+  fi
   local agents facts="" t nn status branch base agent st tab l
   local herdr_ok=1
   agents="$(agent_states)" || { herdr_ok=0; echo "WARN Herdr didn't answer — agent states unknown"; }
@@ -64,14 +66,14 @@ cmd_digest() {
   local out
   out="$(jq -n --argjson board "$BOARD_JSON" --argjson prev "$prev" --argjson full "$full" \
            --slurpfile facts <(printf '%s' "$facts") \
-           --arg id "$BOARD_ID" --arg kind "$BOARD_KIND" --arg base "$REMOTE/$BASE_BRANCH" '
+           --arg id "$BOARD_ID" --arg base "$BASE_REF" '
     ($facts | map({key: .nn, value: .}) | from_entries) as $f |
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
     [ $board[] | . as $t | $f[$t.nn] as $x |
       ($t.blockers | map(select($st[.] != "resolved"))) as $open |
       $t + {landed: $x.landed, state: $x.state, tab: $x.tab, open_blockers: $open,
-            line: ([ $t.nn, $t.status, ($t.ref | if startswith("#") then . else (split("/") | last) end),
+            line: ([ $t.nn, $t.status, $t.ref,
                      ($t.branch | dash),
                      (if $t.agent != "" then "agent:\($x.state)" else "-" end),
                      "landed:\($x.landed)",
@@ -82,7 +84,7 @@ cmd_digest() {
     ($prev.lines // {}) as $was |
     [ $rows[] | select($was[.nn] != .line) | .nn ] as $changed |
     { lines: $now,
-      text: ([ "BOARD \($id) (\($kind)) base \($base)" +
+      text: ([ "BOARD \($id) base \($base)" +
                  (([$board[].parent | select(. != "")] | unique) as $p |
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
              + [ $rows[] | select($full == 1 or ($prev.lines == null) or ($was[.nn] != .line)) | .line ]
@@ -116,25 +118,17 @@ slugify() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9]+/-/g; s/^-+
 
 # Writes the run-state block into the ticket's home.
 record_run_state() {
-  local t="$1" block="$2"
-  if [[ "$BOARD_KIND" == file ]]; then
-    local f tmp; f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
-    # Old run-state lines go wherever they were; the new block goes under the
-    # heading. Blank lines are squeezed only above the body, never inside it.
-    awk -v block="$block" '
-      /^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent):\*\*/ { next }
-      /^\*\*What to build:\*\*/ { body = 1 }
-      !body && /^[[:space:]]*$/ && blank { next }
-      { blank = /^[[:space:]]*$/; print }
-      /^# [0-9]+:/ && !done { print ""; print block; blank = 0; done = 1 }' "$f" >"$tmp"
-    mv "$tmp" "$f"
-  else
-    local n bf; n="$(jq -r .issue <<<"$t")"; bf="$(mktemp)"
-    printf '%s\n' "$block" >"$bf"
-    gh issue comment "$n" --body-file "$bf" >/dev/null
-    gh issue edit "$n" --add-assignee @me >/dev/null || log "warning: couldn't assign #$n"
-    rm -f "$bf"
-  fi
+  local t="$1" block="$2" f tmp
+  f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+  # Old run-state lines go wherever they were; the new block goes under the
+  # heading. Blank lines are squeezed only above the body, never inside it.
+  awk -v block="$block" '
+    /^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent):\*\*/ { next }
+    /^\*\*What to build:\*\*/ { body = 1 }
+    !body && /^[[:space:]]*$/ && blank { next }
+    { blank = /^[[:space:]]*$/; print }
+    /^# [0-9]+:/ && !done { print ""; print block; blank = 0; done = 1 }' "$f" >"$tmp"
+  mv "$tmp" "$f"
 }
 
 cmd_launch() {
@@ -165,16 +159,9 @@ cmd_launch() {
   label="$(slugify "$title" | cut -d- -f1-3 | tr '-' ' ')"; label="${label:0:20}"; label="${label% }"
   [[ -n "$label" ]] || label="ticket $nn2"
 
-  # The brief: heading, a Tracker line on a GitHub board, the body, the wave's research.
+  # The brief: the ticket file as written, then the wave's research.
   local brief; brief="$(mktemp -t ticket.XXXXXX.md)"
-  if [[ "$BOARD_KIND" == file ]]; then
-    cat "$(jq -r .file <<<"$t")" >"$brief"
-  else
-    local n repo; n="$(jq -r .issue <<<"$t")"
-    repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-    { echo "# $nn2: $title"; echo; echo "**Tracker:** $repo#$n — report against it, don't close it"; echo
-      gh issue view "$n" --json body --jq .body; } >"$brief"
-  fi
+  cat "$(jq -r .file <<<"$t")" >"$brief"
   if [[ -n "$research" ]]; then
     [[ -s "$research" ]] || die "research file is empty or missing: $research"
     { echo; echo "## Research for this wave"; echo
@@ -240,13 +227,20 @@ run_gates() {
   (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
 }
 
+# PRs need a remote. Without one there is nothing to gate: the developer merges
+# the branch locally and the next digest sees it by ancestry.
+need_pr_remote() {
+  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — no PRs here; merge the branch locally and the next digest resolves it"
+  need gh
+}
+
 cmd_gates() {
   board_init "${1:-}"; local t; t="$(ticket_json "${2:?usage: tk.sh gates <board> <NN>}")"
-  need gh; run_gates "$t"
+  need_pr_remote; run_gates "$t"
 }
 
 cmd_ready() {
-  board_init "${1:-}"; need gh
+  board_init "${1:-}"; need_pr_remote
   local t nn any=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"
@@ -256,7 +250,7 @@ cmd_ready() {
 }
 
 cmd_merge() {
-  board_init "${1:-}"; need gh
+  board_init "${1:-}"; need_pr_remote
   local nn="${2:?usage: tk.sh merge <board> <NN>}" t rc method
   t="$(ticket_json "$nn")"
   set +e; run_gates "$t"; rc=$?; set -e
@@ -274,7 +268,7 @@ cmd_merge() {
 resolve_ticket() {
   local t="$1" nn branch l sha line
   nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
-  run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true
+  (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
   l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
   [[ "$l" == yes:* ]] || die "ticket $nn hasn't landed ($l) — not resolving it"
   if [[ "$l" == yes:pr#* ]]; then
@@ -283,13 +277,9 @@ resolve_ticket() {
     sha="$(git -C "$ROOT" rev-parse --short "$branch")"
   fi
   line="**Status:** resolved — merged into $BASE_BRANCH as ${sha:-?} on $(date +%F)"
-  if [[ "$BOARD_KIND" == file ]]; then
-    local f tmp; f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
-    awk -v line="$line" '/^\*\*Status:\*\*/ { print line; next } /^\*\*Agent:\*\*/ { next } { print }' "$f" >"$tmp"
-    mv "$tmp" "$f"
-  else
-    gh issue close "$(jq -r .issue <<<"$t")" --comment "$line" >/dev/null
-  fi
+  local f tmp; f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+  awk -v line="$line" '/^\*\*Status:\*\*/ { print line; next } /^\*\*Agent:\*\*/ { next } { print }' "$f" >"$tmp"
+  mv "$tmp" "$f"
   echo "RESOLVED $nn ($l) — /sweep-tickets lists its worktree and branch for cleanup"
 }
 
@@ -336,11 +326,7 @@ cmd_helpers() {
   local nn t line
   for nn in "$@"; do
     t="$(ticket_json "$nn")"
-    if [[ "$BOARD_KIND" == file ]]; then
-      line="$(sed -n 's/^\*\*Suggested helpers:\*\* *//p' "$(jq -r .file <<<"$t")" | head -1)"
-    else
-      line="$(gh issue view "$(jq -r .issue <<<"$t")" --json body --jq .body | sed -n 's/^\*\*Suggested helpers:\*\* *//p' | head -1)"
-    fi
+    line="$(sed -n 's/^\*\*Suggested helpers:\*\* *//p' "$(jq -r .file <<<"$t")" | head -1)"
     echo "$(jq -r .nn <<<"$t") ${line:--}"
   done
 }

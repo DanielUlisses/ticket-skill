@@ -129,9 +129,8 @@ GH_REPO="$(git -C "$ROOT" config --get "remote.$REMOTE.url" 2>/dev/null \
   | sed -E 's#^git@[^:]+:#https://host/#; s#\.git$##; s#^.*[/:]([^/]+/[^/]+)$#\1#')"
 [[ "$GH_REPO" == */* ]] || { GH_REPO=""; HAVE_GH=0; }
 
-# The digests /implement-tickets writes, narrowed to this repo: its slug is
-# `<owner>-<repo>` (plus the label) for a GitHub board and the board path for a
-# file board, so both carry the repo name. `*.txt` alone would also pick up the
+# The digests the board session's `tk.sh digest` writes, narrowed to this repo:
+# they are named implement-tickets-digest-<repo>-<board>.txt. `*.txt` alone would also pick up the
 # `.new.txt` that skill writes and `mv`s mid-round, and a round killed between
 # the two leaves one behind.
 DIGEST_GLOB="${TICKET_DIGEST_GLOB:-/tmp/implement-tickets-digest-*${REPO_NAME}*.txt}"

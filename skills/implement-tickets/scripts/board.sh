@@ -10,7 +10,7 @@
 # agents it dispatches, and auto-compaction before the price step.
 # See docs/adr/0004-haiku-board-session.md.
 #
-# Usage: board.sh [<board>]     (a Jira id, a slug, ticket:<slug>, a .scratch path; empty = auto)
+# Usage: board.sh [<board>]     (a Jira id or slug under .scratch/, a path; empty = the only one there)
 #        board.sh --print [<board>]   print the claude command instead of running it
 #
 # Optional variables:
@@ -78,7 +78,7 @@ cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
 cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
 cmd+=("Run the board ${BOARD_ID}: start with the first turn.")
 
-log "board $BOARD_ID ($BOARD_KIND) on $BOARD_MODEL @ $BOARD_EFFORT — subagents: $SESSION_AGENTS_STATUS"
+log "board $BOARD_ID on $BOARD_MODEL @ $BOARD_EFFORT — subagents: $SESSION_AGENTS_STATUS"
 if (( print )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
 cd "$ROOT"
 exec "${cmd[@]}"

@@ -20,9 +20,8 @@ without force.
      the skill's content into the template's headings. Neither: summary, how it was verified,
      merge risk. Take the verification from the ticket's `REPORT` — the checks it ran and what they
      printed — and never claim a check that isn't in it.
-   - Name the tracker as `PR_SKILL`'s output allows: `Refs #<issue>` where `check` printed an
-     `ISSUE` line — never `Closes`, the board resolves the ticket on merge — and the `PARENT` Jira
-     id where there is one.
+   - Name the `PARENT` Jira id where `check` printed one, and the ticket number. The board
+     resolves the ticket itself on merge, so nothing in the body needs to close anything.
 3. **The files.** List every changed path that belongs to the ticket, one per line, in a paths
    file. Leave out build output, logs, editor files and anything `check` marked `RISKY` — and say
    which you left out and why.

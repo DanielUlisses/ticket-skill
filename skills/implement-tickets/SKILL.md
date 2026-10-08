@@ -1,7 +1,7 @@
 ---
 name: implement-tickets
-description: Runs a board of already-written tickets — GitHub issues or files under `.scratch` — in a dedicated Haiku board session started by scripts/board.sh, never inside a planning session. The board session launches waves, merges PRs on the developer's word behind scripted gates (sending a Sonnet merger on a conflict), relays messages to ticket agents, resolves what landed and launches what each merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
-argument-hint: "[tickets directory, a ticket label / feature slug, or a Jira id like ITM-9909]"
+description: Runs a board of already-written tickets — files under `.scratch/<board>/` — in a dedicated Haiku board session started by scripts/board.sh, never inside a planning session. The board session launches waves, merges PRs on the developer's word behind scripted gates (sending a Sonnet merger on a conflict), relays messages to ticket agents, resolves what landed and launches what each merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
+argument-hint: "[a Jira id like ITM-9909, a feature slug under .scratch/, or a path]"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/implement-tickets/scripts/board.sh *)
 ---
