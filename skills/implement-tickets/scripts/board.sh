@@ -24,6 +24,9 @@
 #                             right / down: a pane split off the board session (Herdr splits only
 #                             right or down, so a split always sits beside or below it)
 #   TICKET_BOARD_VIEW_RATIO   (optional) — passed to `herdr pane split --ratio` for the split
+#   TICKET_VIEW_THEME         (default: tokyonight) — the board's palette: tokyonight, catppuccin,
+#                             gruvbox, nord; ansi forces 16 colours, mono none. 24-bit colour is
+#                             used where the terminal sets COLORTERM=truecolor
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -142,3 +142,11 @@ first (`reviewing r2`), shown as `reviewing · R2` and `[tests] [3/4] [rev 2!]`,
 and an **action hint** on cards waiting on the developer, phrased as what to type into the board
 session (`→ open a PR for 04`, `→ merge 05`, `→ start 07`, `→ answer its dialog`). The header gains a
 live dot (red when anything needs the developer) and the active and needs-you counts.
+
+It runs as a proper full-screen TUI: the alternate screen (the scrollback comes back on exit), no
+cursor, redrawn in place rather than cleared (no flicker), `q` to quit, `r` to refresh now, and an
+immediate redraw on resize. Colour is by role, so a theme is a palette — Tokyo Night by default,
+Catppuccin, Gruvbox or Nord (`TICKET_VIEW_THEME`) — in 24-bit colour where the terminal sets
+`COLORTERM=truecolor`, mapped onto the 16 ANSI colours otherwise, and none under `NO_COLOR`. A filled
+header bar carries the status dot, the board, the base and the active / needs-you / done counts; each
+column has an icon; chips are dark text on the role's colour.

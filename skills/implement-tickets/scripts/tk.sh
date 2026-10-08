@@ -12,7 +12,8 @@
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
-#   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved
+#   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
+#                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #
@@ -419,24 +420,51 @@ cmd_view() {
     # shellcheck source=/dev/null
     [[ -f "$conf" ]] && source "$conf" 2>/dev/null
     echo "${TICKET_IMPL_MODEL:-opus} ${TICKET_IMPL_EFFORT:-medium}")
-  render() {
-    local cols color=false
-    # Fit the pane it's in — often half a screen, beside the board session.
-    cols="$(tput cols 2>/dev/null || echo "${COLUMNS:-120}")"; [[ "$cols" =~ ^[0-9]+$ ]] || cols=120
-    [[ -n "${COLUMNS:-}" && "$COLUMNS" =~ ^[0-9]+$ ]] && cols="$COLUMNS"
-    [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=true
-    [[ "${TICKET_VIEW_COLOR:-}" == 1 ]] && color=true
-    board_rows | jq -r --argjson W "$cols" --argjson color "$color" --arg dm "$dm" --arg de "$de" \
-      --arg head "$BOARD_ID · base $BASE_REF · $(date +%H:%M:%S) · ~ = suggested model/effort" \
-      -f "$SKILL_DIR/scripts/board-view.jq"
+  # The colour mode is settled here, while stdout is still the terminal — each
+  # frame is rendered into a variable, where it no longer is. 24-bit where the
+  # terminal says so (COLORTERM), 16 colours otherwise, none under NO_COLOR or
+  # when not a terminal. TICKET_VIEW_THEME picks the palette: tokyonight
+  # (default), catppuccin, gruvbox, nord — or ansi / mono to force a mode.
+  local theme="${TICKET_VIEW_THEME:-tokyonight}" mode=none
+  if [[ -z "${NO_COLOR:-}" ]] && { [[ -t 1 ]] || [[ "${TICKET_VIEW_COLOR:-}" == 1 ]]; }; then
+    case "${COLORTERM:-}" in truecolor|24bit) mode=true ;; *) mode=ansi ;; esac
+  fi
+  case "$theme" in ansi) [[ "$mode" == none ]] || mode=ansi ;; mono) mode=none ;; esac
+  frame() {
+    local cols
+    # Fit the pane it's in.
+    cols="${COLUMNS:-}"; [[ "$cols" =~ ^[0-9]+$ ]] || cols="$(tput cols 2>/dev/null || echo 120)"
+    board_rows | jq -r --argjson W "$cols" --arg mode "$mode" --arg theme "$theme" \
+      --arg board "$BOARD_ID" --arg base "$BASE_REF" --arg clock "$(date +%H:%M:%S)" \
+      --arg dm "$dm" --arg de "$de" -f "$SKILL_DIR/scripts/board-view.jq"
   }
-  if (( ! watch )); then render; return; fi
+  if (( ! watch )); then frame; return; fi
+
+  # A full-screen app, like htop: the alternate screen (the scrollback comes back
+  # on exit), no cursor, a redraw in place instead of a clear (no flicker), keys
+  # read between refreshes — q quits, r refreshes now — and an immediate redraw
+  # when the pane is resized.
+  local dim="" off=""
+  [[ "$mode" != none ]] && { dim=$'\e[2m'; off=$'\e[0m'; }
+  printf '\e[?1049h\e[?25l'
+  trap 'printf "\e[?25h\e[?1049l"' EXIT
+  trap 'exit 0' INT TERM
+  trap ':' WINCH   # interrupts the read below, so a resize redraws at once
+  local next=0 out key
   while :; do
-    (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
-    load_board
-    local frame; frame="$(render)"
-    printf '\e[H\e[2J%s\n(refreshes every %ss · ctrl-c to stop)\n' "$frame" "$every"
-    sleep "$every"
+    if (( SECONDS >= next )); then
+      (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
+      load_board
+      next=$(( SECONDS + every ))
+    fi
+    out="$(frame)"
+    # Home, every line with its tail cleared, then everything below cleared.
+    printf '\e[H%s\n%s q quit · r refresh · ~ suggested model/effort · every %ss%s\e[K\e[J' \
+      "$(sed $'s/$/\e[K/' <<<"$out")" "$dim" "$every" "$off"
+    key=""
+    if [[ -t 0 ]]; then read -rsn1 -t "$(( next - SECONDS > 0 ? next - SECONDS : 1 ))" key || true
+    else sleep "$every"; fi
+    case "$key" in q|Q) break ;; r|R) next=0 ;; esac
   done
 }
 
