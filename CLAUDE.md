@@ -27,6 +27,10 @@ now reported and verified rather than assumed. See `docs/agents/accounts.md`.
 
 Seven roles, configured once in `config/models.env`: the **implementer**, whose model and effort vary per ticket (its `**Suggested model:**` / `**Suggested effort:**` lines, the launch question, `--effort`); and six fixed ones — the `/ticket` **coordinator** (`opus @ low`), the **reviewer** (`opus @ medium`), and the Haiku swarm of **testers**, **scouts**, **researchers** and **criteria checkers**. Every launch redefines the `ticket-*` subagents through `claude --agents` with those values, so the `agents/*.md` frontmatter is only a fallback kept in step. See `docs/agents/models.md` for the roster and the checklist for bumping a model, and `docs/adr/0002-model-tiers-and-agent-roster.md` for why each role sits where it does.
 
+### Planner and board sessions
+
+A feature runs in two sessions, not one. `/ticket` is the **planner** — grilling and breakdown, on the model that judgement needs — and ends by printing the command that starts the **board** session: `/implement-tickets` on `TICKET_BOARD_MODEL`/`EFFORT` (`sonnet @ low`), which launches waves, merges PRs on the developer's word behind five gates, relays messages to ticket agents, and sends design questions back to `/ticket`. See `docs/adr/0003-planner-and-board-sessions.md`.
+
 ### Session launch settings
 
 The account, the implementer's model and its effort a session's tickets run on are asked **once**, at its first launch,

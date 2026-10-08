@@ -1,6 +1,6 @@
 ---
 name: implement-tickets
-description: Implements tickets that are already written. Reads the board from wherever the repo keeps tickets — GitHub issues where it has a tracker, files under `.scratch` where it doesn't — asks which to start, launches one unattended Herdr coordinator per frontier ticket, then stays on as the ticket coordinator — opening each round by re-reading the board, the live agents and git, verifying each merge against that, marking the ticket resolved in its home, and launching whatever the merge unblocks. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
+description: Implements tickets that are already written. Reads the board from wherever the repo keeps tickets — GitHub issues where it has a tracker, files under `.scratch` where it doesn't — asks which to start, launches one unattended Herdr coordinator per frontier ticket, then stays on as the board session — opening each round by re-reading the board, the live agents and git; merging a ticket's PR when the developer says so; relaying the developer's messages to ticket agents; verifying each merge, marking the ticket resolved in its home, and launching whatever the merge unblocks. Built to run on a cheap model; design questions go back to /ticket. For a rough idea that still needs grilling and splitting, use /ticket; for a single ad-hoc ticket, use /small-ticket.
 argument-hint: "[tickets directory, a ticket label / feature slug, or a Jira id like ITM-9909]"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Bash(ls *), Bash(cat *), Bash(find *), Bash(grep *), Bash(awk *), Bash(jq *), Bash(diff *), Bash(mv *), Read, Write, Edit, Glob, Grep, AskUserQuestion, ToolSearch, Monitor
@@ -19,7 +19,9 @@ The tickets already exist. Skip grilling and breakdown entirely — `/ticket` ph
 Two jobs, in order:
 
 1. **Launch** an unattended Herdr coordinator per frontier ticket, exactly as `/ticket` phase 4 does.
-2. **Coordinate**: when the developer tells you a ticket has merged, verify it against the base branch, mark it resolved in its home, and launch whatever that unblocks — until the board is done or the developer stops you.
+2. **Coordinate**: when the developer tells you a ticket has merged — or tells you to merge it — verify it against the base branch, mark it resolved in its home, and launch whatever that unblocks; and carry the developer's messages to ticket agents — until the board is done or the developer stops you.
+
+**This is bookkeeping, not design.** The session is meant to run on the cheap model `config/models.env` names as `TICKET_BOARD_*` (`/ticket`'s hand-off prints the command), and nothing here needs more: every decision below is a check against the digest, a gate, or the developer's own words. When a request *does* need design judgement — re-scope a ticket, split one, write a new one, decide how an agent should solve something — say so in one line and point at `/ticket <jira-id or slug> …` in a session on the planning model, which appends to this same board. Don't improvise it here.
 
 Both jobs run off the same **digest** (Phase 1): one cheap re-read of the board, the live agents and git, taken at the top of every round. Nothing in this skill is reported from memory of an earlier round.
 
@@ -359,7 +361,7 @@ per-ticket override the developer names for one ticket leaves the wave's setting
 Every summary's `ACCOUNT=`, `MODEL=` and `EFFORT=` lines record what each ticket actually ran
 on; the account is verified in its pane. See `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
-It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent coordinates — scouts, the implementer on this ticket's model and effort, fanned-out testers and criteria checkers, the configured reviewer — then **stops with everything unstaged** — the developer reviews, commits, and merges. That boundary doesn't move; you are not here to commit for them.
+It discovers the repo root, fast-forwards the base branch, creates the worktree with one synchronous `herdr worktree create` (still at `../<repo>--<branch>`, the path convention `/sweep-tickets` reports against), splits the root pane it returns, starts Claude Code unattended (no plan mode, `git add`/`commit`/`push`/`stash`/`reset`/`rebase`/`checkout`/`switch` blocked at the tool level) and sends `ticket/templates/ticket-agent-prompt.md` — folding in the repo's `docs/agents/project-memory.md` where the main checkout keeps one, so every ticket in every wave starts with the same project knowledge (`docs/agents/memory.md`). You do nothing to arrange that: it's the launcher's, and a repo without memory launches unchanged. The launched agent coordinates — scouts, the implementer on this ticket's model and effort, fanned-out testers and criteria checkers, the configured reviewer — then **stops with everything unstaged** — the developer reviews, commits, pushes and opens the PR. That boundary doesn't move; you are not here to commit for them. Merging is theirs too, or yours on their word (*Merging on request*, Phase 4).
 
 Exit codes, exactly as `/ticket` handles them: **0** → next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (a failed creation carries Herdr's own message, not a timeout), don't delete branches or worktrees, try the next ticket. Launch one ticket at a time and keep each summary block.
 
@@ -384,9 +386,9 @@ Put these lines right under the `# <NN>: <Title>` heading, above `**What to buil
 
 This block is what the next round's digest joins on: `**Branch:**` is what read 3 sweeps, `**Base:**` is what keeps read 3 from mistaking a branch with no commits for a landed one, and `**Agent:**` is what read 2 matches by name. A launch you don't write back is a launch the next digest can't see — and the next digest is all the coordinator will have.
 
-## Phase 4 — Coordinate (attended: the developer reports merges)
+## Phase 4 — Coordinate (attended: the developer reports merges, asks for them, or talks to tickets)
 
-Coordination is **attended**: the developer tells you when they've merged something, and that message is what starts a round. Don't poll on a timer and don't try to wait out a merge inside one turn — a merge is a human action that lands hours later. List the wave (tab, branch, worktree, agent), say plainly that you're waiting to be told about merges, and end the turn.
+Coordination is **attended**: the developer tells you when they've merged something, asks you to merge it, or sends a ticket a message — and that message is what starts a round. Don't poll on a timer and don't try to wait out a merge inside one turn — a merge is a human action that lands hours later. List the wave (tab, branch, worktree, agent), say plainly that you're waiting to be told about merges, and end the turn.
 
 **Every round opens with the digest.** Run **Phase 1** in full — board, agents, git — before saying anything about the board, and work from its diff. A round is triggered by the developer, or by anything else worth a check; nothing is triggered by memory, and nothing skips the digest because "nothing can have changed since last round".
 
@@ -400,7 +402,51 @@ The digest has already answered the two questions this phase used to ask ticket 
 
 The digest fetches and never pulls, so the root's own `<base>` may lag behind `<remote>/<base>`. Moving it up is `git -C <root> pull --ff-only <remote> <base>` with the root clean and on the base branch — Phase 3's precheck, before a launch, not a step in every round. Never checkout, stash, reset, or merge in the root to make a pull work.
 
-**On a verified merge**, in this order:
+### Merging on request
+
+The developer may merge PRs themselves, or tell you to: "merge 03", "merge everything that's ready". Their naming a ticket **is** the instruction — you never merge on your own initiative, and never a PR that isn't a ticket's branch on this board. Before merging, run this round's digest (as always), then check the PR:
+
+```bash
+gh pr list --head <branch> --state open --json number --jq '.[0].number'
+gh pr view <n> --json number,url,state,isDraft,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
+```
+
+Merge only when **every** gate holds, and otherwise stop and say which one failed — never route around it:
+
+| Gate | Holds when | Otherwise |
+|---|---|---|
+| PR exists | an open PR on the ticket's `**Branch:**` | the developer hasn't pushed or opened one yet — say so |
+| Ready | `isDraft` false, `baseRefName` is the board's base | name the draft, or the wrong base |
+| Mergeable | `mergeable` is `MERGEABLE` (re-query once on `UNKNOWN` — GitHub computes it lazily) | `CONFLICTING`: the branch needs the base merged in; that's the developer's or the ticket agent's to do |
+| Checks | every `statusCheckRollup` entry is done and green — `conclusion` `SUCCESS`/`SKIPPED`/`NEUTRAL` for a check run, `state` `SUCCESS` for a commit status | pending: say what's still running and stop — a merge isn't waited out inside a turn; failed: name the check |
+| Review | `reviewDecision` is `APPROVED`, or empty (the repo requires none) | `CHANGES_REQUESTED` / `REVIEW_REQUIRED`: name it |
+
+Merge with the repo's own method, never with `--admin`, and without `--delete-branch` — the branch is still checked out in the ticket's worktree, and `/sweep-tickets` owns that cleanup:
+
+```bash
+gh repo view --json viewerDefaultMergeMethod --jq .viewerDefaultMergeMethod   # MERGE | SQUASH | REBASE
+gh pr merge <n> --<squash|merge|rebase>
+```
+
+Then go straight into the round below — the digest's merged-PR leg is what verifies it, exactly as for a merge the developer made by hand.
+
+**"Merge everything that's ready"** — list every in-progress ticket whose PR passes all five gates, ask once with that list (AskUserQuestion), then merge in ticket-number order, one at a time, re-checking `mergeable` before each: one merge can put the next in conflict. Stop at the first failure and report where you stopped.
+
+### Relaying to a ticket agent
+
+The developer may talk to a running ticket through you: "tell 03 to use the v2 client", "ask 05 why it stubbed the queue", "show me what 02 is doing". The agent is the ticket's `**Agent:**` name from run state; its state is this round's read 2.
+
+- **Send** — `herdr agent prompt <agent> "<message>"`, with the developer's words **verbatim** under one line of provenance: `Message from the developer, via the board session:`. Don't paraphrase, expand, or add instructions of your own — if they ask you to work out *what* to tell it, that's design (above); draft it, show it, and send only what they approve.
+  - `idle` / `done` — sent; the agent picks it up now.
+  - `working` — sent; Claude Code queues it until the agent's current step ends. Say so.
+  - `blocked` — don't send: it's at a dialog, and a prompt typed there can answer it. Name the tab.
+  - gone — say so; there is nothing to send to (the round's reconcile already flagged it).
+- **Several at once** ("tell every in-progress ticket the base moved") — the same, one send per agent, and report each.
+- **Show** — only on request, and outside the digest: `herdr agent read <agent> --source recent-unwrapped --lines 60`, and report what it's doing or asking in a few lines. Never on your own initiative, and never as part of a round.
+
+### On a verified merge
+
+In this order:
 
 1. Edit the ticket file: `**Status:** resolved — merged into <base> as <short sha> on <YYYY-MM-DD>`, keep the `**Branch:**`, `**Base:**`, `**Model:**` and `**Account:**` lines — the last two are the historical record of what implemented it and what paid for it — drop the `**Agent:**`/`**Tab:**` line, and tick the acceptance-criteria checkboxes only if the developer confirms they're met — don't tick them on your own authority.
 2. Recompute the frontier over the whole board, from this round's digest lines. Every ticket whose last open blocker just closed is now startable.

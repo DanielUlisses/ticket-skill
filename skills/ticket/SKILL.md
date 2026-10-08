@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then launches an unattended Herdr coordinator per chosen ticket to implement and review it, leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
+description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a cheaper /implement-tickets session — or launches an unattended Herdr coordinator per chosen ticket itself — leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
 argument-hint: "[jira-id] <task description>"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
@@ -186,7 +186,35 @@ Empty output — or no Jira id, which skips the check — means a fresh board, n
 
 ## Phase 3 — Pick tickets to implement
 
-Ask the developer which to implement now: **all**, **none**, or **specific numbers** (AskUserQuestion, or plainly if the options don't fit). If the answer is none, stop here — the tickets are saved, and `/implement-tickets` picks them up later without re-running phases 1–3.
+Ask the developer how the board should run from here (AskUserQuestion):
+
+- **Hand off to a board session (recommended)** — this session's job ends with the tickets. Running the board is bookkeeping: launching waves, merging on request, passing messages to ticket agents, launching what each merge unblocks. That belongs to `/implement-tickets` in a session of its own, on the cheaper model `config/models.env` names for it, rather than in this one, which is on the model a grilling needs and carries the whole interview in its context. Go to *The hand-off*, below.
+- **Launch here** — **all**, or **specific numbers**, and this session launches them itself (the rest of this phase, then Phase 4). For a one-off, or a developer who wants to stay where they are.
+- **None** — stop. The tickets are saved, and `/implement-tickets` picks them up later without re-running phases 1–3.
+
+### The hand-off
+
+Nothing is lost by leaving: `/implement-tickets` rebuilds its whole picture each round from the board, the live agents and git, never from this conversation. Read what it should run on:
+
+```bash
+~/.claude/skills/ticket/scripts/launch.sh defaults
+```
+
+and print, from its `BOARD=<model> @ <effort>` line and the board's name (the Jira id, the `ticket:<board>` label's slug, or the `.scratch/<board>` path):
+
+```
+Board <board> is ready. In a new Herdr tab at <root>:
+
+  claude --model <model> --effort <effort> "/implement-tickets <board>"
+
+It asks which tickets to start and how to run them, then stays on to merge on your word, relay
+messages to ticket agents, and launch what each merge unblocks. Come back here — or start a new
+`/ticket <jira-id> …` — when the plan itself needs to change.
+```
+
+Then stop: don't launch, and don't ask the launch settings — the board session asks them once, for itself. Where the tickets went to `.scratch/`, the path is the main checkout's, not this session's working directory, since the board session may start elsewhere.
+
+### Launching here
 
 Check every selected ticket's blocked-by edges against the rest of the *selection*: a ticket blocked by one that's neither landed nor also launching right now would build against code that doesn't exist yet. Hold those back and note which unmet blocker gates each one. Launch only the frontier of the selection.
 
@@ -266,7 +294,7 @@ alone. An unknown account name stops the script before anything is
 created, and `claude-acc list` is the answer to show them. See `docs/agents/accounts.md` and
 `docs/agents/session-settings.md`.
 
-The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — on the coordinator's own model and effort, with every `ticket-*` subagent redefined through `--agents` so the implementer carries this ticket's model and effort and the rest carry `config/models.env`'s — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
+The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — on the coordinator's own model and effort, with every `ticket-*` subagent redefined through `--agents` so the implementer carries this ticket's model and effort and the rest carry `config/models.env`'s — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to run the ticket — scouts, then `ticket-implementer` (mattpocock's `implement` process, TDD at the named seams), then testers, criteria checkers and `ticket-reviewer` — all restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
 Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `MODEL=`, `EFFORT=` and `ACCOUNT=` lines name what that ticket's implementer and account actually started on, `COORDINATOR=` what the session itself runs on, and `SUBAGENTS=` every role's model and effort.
 

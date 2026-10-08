@@ -422,7 +422,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD REVIEW TEST SCOUT RESEARCH CHECK; do
+  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK; do
     # Under COORDINATOR=impl the coordinator's own setting is never used.
     [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
@@ -476,6 +476,7 @@ load_ticket_models() {
   RESEARCH_MODEL="${TICKET_RESEARCH_MODEL:-haiku}"; RESEARCH_EFFORT="${TICKET_RESEARCH_EFFORT:-medium}"
   CHECK_MODEL="${TICKET_CHECK_MODEL:-haiku}";      CHECK_EFFORT="${TICKET_CHECK_EFFORT:-low}"
   REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
+  BOARD_MODEL="${TICKET_BOARD_MODEL:-sonnet}";     BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
   TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
 
@@ -532,6 +533,8 @@ print_launch_defaults() {
   # Only where the session coordinates on its own setting (/ticket): there MODEL=
   # and EFFORT= reach the implementer alone, and the question should know it.
   [[ "${COORDINATOR:-impl}" == config ]] && echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
+  # What /ticket's hand-off prints the board session's start command with.
+  [[ "${COORDINATOR:-impl}" == config ]] && echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the /implement-tickets session the developer starts)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
