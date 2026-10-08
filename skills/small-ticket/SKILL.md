@@ -36,6 +36,10 @@ A ticket is a **document** ticket when its deliverable is the document itself �
 
 A document ticket launches with `--doc`: the orchestrator scopes the document with the developer (grilling where the scope is open), outlines it as the plan, and its subagents draft, review (`ticket-doc-reviewer`: commitments, accuracy, numbers, coverage) and render it — no seams, no test suite. Its branch type is `docs`.
 
+## 2c. Which repo?
+
+The launcher makes the worktree, branch and PR in the repo it runs in, so it must run in the repo whose code the ticket changes. When the ticket names another repo, or the files it describes aren't in this one, find that repo's local checkout (ask where it isn't a sibling of this root; confirm with `git -C <path> rev-parse --show-toplevel`) and run step 5 there: `cd <that root> && ~/.claude/skills/small-ticket/scripts/launch.sh …`. A ticket that changes two repos is two tickets — say so and launch the first. Say which repo you decided, in one line.
+
 ## 3. Save the ticket to a file
 
 Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text into it with the Write tool, **exactly** as received (no summarizing or rewriting).

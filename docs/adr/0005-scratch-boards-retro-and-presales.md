@@ -200,3 +200,23 @@ again since still matches (`merge-tree --write-tree` on git 2.38+, a file compar
 forge is the last resort, for a branch whose content changed after its last fetch and was deleted on
 merge; when it can't be asked, the digest prints one `WARN` with the forge's own error. Resolving a
 squash records the squash commit. `tk.sh why <board> <NN>` (`tkw`) prints every step.
+
+## 8. A ticket lives on the board of the repo it changes
+
+A ticket's worktree, branch and PR are made in the repo its board is in. A ticket planned in one
+repo for code in another was launched in the wrong place: its agent worked outside its own branch,
+the PR was opened in the other repo, and the board could never see it land — it had to be forced
+resolved. So:
+
+- `/ticket` gives every ticket a `**Repo:** <name> — <path>` line, splits a slice touching two repos
+  into one ticket per repo, and writes each ticket to **that repo's** `.scratch/<board>/` — one board
+  per repo under the same name, numbered as one sequence, with a `.scratch/<board>/repos` file
+  (`<name> <path>` per line) in each. Phase 3 prints one board command per repo.
+- A blocker on another repo's board is written `<repo>:<NN>`. `load_board` reads its status from that
+  repo's board of the same name (the `repos` path, else a sibling directory) and holds the ticket
+  until it is resolved there; one it can't find counts as open, with a `WARN`.
+- `tk.sh launch` and `pr-open.sh` refuse a ticket whose `**Repo:**` isn't the board's own repo, the
+  digest warns about it and keeps it off the frontier, and the status board shows it under NEEDS YOU
+  ("belongs on api's board"). A ticket without a `**Repo:**` line is taken as this repo's, as before.
+- `/small-ticket` runs its launcher from the root of the repo the ticket changes.
+

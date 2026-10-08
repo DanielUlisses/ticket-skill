@@ -52,4 +52,7 @@ asking session runs under. See `docs/agents/session-settings.md`.
 `/ticket` takes a Jira id as the first word of its task (`/ticket itm-9909 add the export button`),
 lowercased and stripped before the interview. It names the board — `.scratch/<id>/` — in place of the
 feature slug, and every ticket carries `**Parent:** <id>`. A second
-run on the same id appends to that board. No id, no change. See `docs/agents/jira-parent.md`.
+run on the same id appends to that board. No id, no change. A plan that changes several repos gets
+one board per repo under the same name: each ticket (`**Repo:**`) lives on the board of the repo it
+changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch another repo's ticket
+(ADR 0005 §8). See `docs/agents/jira-parent.md`.

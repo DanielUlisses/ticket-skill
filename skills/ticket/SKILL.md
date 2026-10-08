@@ -40,6 +40,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 
 - Each ticket is a vertical slice through every layer it touches (schema, API, UI, tests) — demoable or verifiable on its own, sized to fit a single fresh context window.
 - **Wide refactor exception**: one mechanical change with a codebase-wide blast radius (rename a column, retype a shared symbol) doesn't fit a vertical slice. Sequence it instead as expand (add the new form beside the old) → migrate in blast-radius-sized batches, each its own ticket, CI green batch to batch → contract (delete the old form once nothing calls it).
+- Give each ticket its **repo**: the repository whose code it changes — this one unless the plan says otherwise. A ticket's worktree, branch and PR are made in the repo its board is in, so a ticket that changes another repo **must be written to that repo's board**, never this one (a ticket launched here for code that lives elsewhere does its work outside its own branch, and its PR can never be seen to land). One ticket changes one repo: a slice that needs both is split into one ticket per repo, the second blocked by the first. Where the plan touches another repo, ask the developer for its local checkout (`AskUserQuestion`, offering sibling directories of this root that are git repos) and confirm it with `git -C <path> rev-parse --show-toplevel`.
 - Give each ticket its **blocked-by** edges: the other tickets that must land first. No blockers means it's on the **frontier** — startable immediately.
 - Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Each ticket's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
 - Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — the board session's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
@@ -48,7 +49,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs. Infrastructure that only runs live (Terraform, Terragrunt, Helm) is `None` too — `None — offline checks only (terragrunt hclfmt, validate); verified by the developer's plan` — never a command that touches a real environment. A `None` there also raises that ticket's review to `TICKET_REVIEW_EFFORT_UNTESTED` (`high`), and the reviewer returns the plan it expects.
 - Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
-Present the breakdown as a numbered list — title, blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
+Present the breakdown as a numbered list — title, repo (when the plan spans more than one), blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
 Once approved, write the tickets as files under `.scratch/<board>/issues/` at the project root (*Writing to `.scratch/`*, below). That folder is the board: the durable record the board session reads, and what it composes each ticket's brief from at launch. Boards live nowhere else — not on a GitHub tracker, even where the repo has one (ADR 0005).
 
@@ -60,6 +61,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 **What to build:** <end-to-end behaviour, from the user's perspective>
 
 **Parent:** <jira-id — this line only when the task opened with one>
+
+**Repo:** <the repo root's directory name> — <its absolute path>
 
 **Blocked by:** <blockers, or "None (can start immediately)">
 
@@ -75,7 +78,9 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 - [ ] <Acceptance criterion>
 ```
 
-`**Blocked by:**` names ticket numbers (`01, 02`).
+`**Blocked by:**` names ticket numbers (`01, 02`). A blocker on another repo's board is `<repo>:<NN>` (`api:02`), with `<repo>` that repo's directory name — the board looks it up on that repo's board of the same name and holds the ticket until it is resolved there.
+
+`**Repo:**` is written on every ticket: the directory name of the root of the repo the ticket changes, then its absolute path. The board refuses to launch, or open a PR for, a ticket whose repo isn't its own, so a ticket written to the wrong board is caught at launch rather than after its merge.
 
 `**Parent:**` is written only when the task opened with a Jira id: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
 
@@ -116,7 +121,9 @@ Resolve it the way `resolve_base_branch` does, so the branch you name is the one
 
 #### Then write the tickets
 
-Write one file per ticket to `.scratch/<board>/issues/<NN>-<slug>.md` at the project root — find it with `git worktree list --porcelain` if you're not sure you're there already — with the heading in place and `**Blocked by:**` holding ticket numbers.
+Write one file per ticket to `.scratch/<board>/issues/<NN>-<slug>.md` at the root **of the ticket's repo** — this project's root for its own tickets (find it with `git worktree list --porcelain` if you're not sure you're there already), the other repo's root for each of its tickets — with the heading in place and `**Blocked by:**` holding ticket numbers.
+
+**A plan spanning repos** gets one board per repo, all under the same board name, numbered as one sequence — `01`–`03` in `api`, `04`–`05` in `web` — so a number names one ticket wherever it is written, and a cross-repo blocker reads `api:02`. Run the `.gitignore` check above in each repo before writing there. In each of those boards, also write `.scratch/<board>/repos`: one line per repo of the plan, `<name> <absolute path>`, which is how each board finds the others' tickets. With a Jira id, the existing-board check below runs in every repo of the plan, and numbering continues from the highest number across all of them.
 
 With a Jira id, check for that folder first. If `.scratch/<board>/issues/` already holds tickets, it is an existing board: numbering continues from the highest `NN` among its file names, and a new ticket blocked by an existing one names it by that number:
 
@@ -130,7 +137,7 @@ Empty output — or no Jira id, which skips the check — means a fresh board, n
 
 This session's job ends with the tickets. It runs on the model a grilling needs and carries the whole interview in its context; running the board — launching waves, merging on the developer's word, relaying messages, launching what each merge unblocks — is bookkeeping, and it belongs to a session of its own on the cheap model `config/models.env` names for it (`TICKET_BOARD_MODEL`, Haiku). **Never launch tickets from this session.** Nothing is lost by leaving: the board session rebuilds its whole picture from the board, the live agents and git, never from this conversation.
 
-Print, with the board's name — the Jira id or the feature slug, i.e. the folder under `.scratch/`:
+Print, with the board's name — the Jira id or the feature slug, i.e. the folder under `.scratch/` — and, for a plan spanning repos, one such block per repo, each with its own root, frontier and command (each repo runs its own board session; a cross-repo blocker clears when the other board resolves it):
 
 ```
 Board <board> is ready: <NN> tickets, frontier <the tickets with no blockers>.

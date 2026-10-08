@@ -39,6 +39,8 @@ g() { git -C "$WT" "$@"; }
 
 # Every refusal is a reason the developer can act on, printed rather than worked around.
 preflight() {
+  local foreign; foreign="$(foreign_repo "$t")"
+  [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its PR belongs on that repo's board"
   [[ "$(jq -r .status <<<"$t")" == in-progress ]] || die "ticket $nn is $(jq -r .status <<<"$t"), not in-progress"
   [[ -n "$BRANCH" && -d "$WT" ]] || die "ticket $nn has no worktree at ${WT:-?}"
   [[ "$(g rev-parse --abbrev-ref HEAD)" == "$BRANCH" ]] || die "$WT is not on $BRANCH"

@@ -81,7 +81,7 @@ cmd_digest() {
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
     [ $board[] | . as $t | $f[$t.nn] as $x |
-      ($t.blockers | map(select($st[.] != "resolved"))) as $open |
+      (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
       $t + {landed: $x.landed, state: $x.state, tab: $x.tab, open_blockers: $open,
             line: ([ $t.nn, $t.status, $t.ref,
                      ($t.branch | dash),
@@ -98,7 +98,7 @@ cmd_digest() {
                  (([$board[].parent | select(. != "")] | unique) as $p |
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
              + [ $rows[] | select($full == 1 or ($prev.lines == null) or ($was[.nn] != .line)) | .line ]
-             + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0) | .nn ] | join(" ") | dash) ]
+             + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.foreign // "") == "") | .nn ] | join(" ") | dash) ]
              + [ $rows[] | select(.status == "in-progress") |
                  if (.landed | startswith("yes")) then "ACTION resolve \(.nn) — landed (\(.landed | ltrimstr("yes:")))"
                  elif (.landed | startswith("unknown")) then "ACTION check \(.nn) — landed unknown (\(.landed | ltrimstr("unknown:"))); leave it, tell the developer"
@@ -107,6 +107,8 @@ cmd_digest() {
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: open PR)"
                  else empty end ]
              + [ $rows[] | select((.unknown_refs // []) | length > 0) | "WARN \(.nn) blocked-by names nothing on the board: \(.unknown_refs | join(","))" ]
+             + [ $rows[] | select((.xblockers_open // []) | any(endswith("(not found)"))) | "WARN \(.nn) blocked by a ticket on another repo'"'"'s board that can'"'"'t be found: \(.xblockers_open | map(select(endswith("(not found)"))) | join(", ")) — counted as open" ]
+             + [ $rows[] | select(.foreign != "") | "WARN \(.nn) changes \(.foreign), not this repo — it can'"'"'t launch here; move its file to that repo'"'"'s .scratch/\($id)/issues/ and run the board there" ]
              + [ "CHANGED " + (if $prev.lines == null then "all (first digest)" else ($changed | join(" ") | dash) end) ]
             ) | join("\n") }')"
   jq -r .text <<<"$out"
@@ -159,7 +161,9 @@ cmd_launch() {
   t="$(ticket_json "$nn")"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == open ]] || die "ticket $nn is $status, not open"
-  open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] | join(",")' <<<"$t")"
+  local foreign; foreign="$(foreign_repo "$t")"
+  [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its worktree, branch and PR belong there. Move its file to that repo's .scratch/$BOARD_ID/issues/ and launch it from the board there (board.sh $BOARD_ID, run in that repo)"
+  open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] + (.xblockers_open // []) | join(",")' <<<"$t")"
   [[ -z "$open" ]] || die "ticket $nn is blocked by $open — not on the frontier"
   # Run state is written under the `# NN: Title` heading; a file without one
   # would launch and then stay `open` on the board, and launch again.
@@ -406,9 +410,10 @@ board_rows() {
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s '
     (map({key: .nn, value: .status}) | from_entries) as $st |
-    map(. as $t | ($t.blockers | map(select($st[.] != "resolved"))) as $open |
+    map(. as $t | (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
       $t + {open_blockers: $open} +
       (if $t.status == "resolved" then {col: "done", note: ""}
+       elif ($t.foreign // "") != "" and $t.status == "open" then {col: "needs", note: "belongs on \($t.foreign | split(" ")[0])'"'"'s board"}
        elif $t.status == "open" then
          (if ($open | length) > 0 then {col: "blocked", note: "waiting on \($open | join(", "))"}
           else {col: "backlog", note: "ready to launch"} end)
@@ -437,6 +442,7 @@ board_rows() {
         elif .col == "pr" and (.note | test("conflict")) then "merge \(.nn) — sends the merger"
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
+        elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
 }

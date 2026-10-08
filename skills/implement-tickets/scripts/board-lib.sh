@@ -74,16 +74,18 @@ parse_ticket_file() {
     /^\*\*Suggested model:\*\*/   { smodel = first(val($0)) }
     /^\*\*Suggested effort:\*\*/  { seffort = first(val($0)) }
     /^\*\*Parent:\*\*/            { parent = tolower(first(val($0))) }
+    /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath
     }' "$f" \
   | jq -R --arg file "$f" 'split("\u001f") as $v | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
       status: (if $v[2] == "" then "open" else $v[2] end),
       branch: $v[3], base: $v[4], model: $v[5], effort: $v[6], account: $v[7], agent: $v[8],
-      blocked_raw: $v[9], smodel: $v[10], seffort: $v[11], parent: $v[12], worktree: $v[13] }'
+      blocked_raw: $v[9], smodel: $v[10], seffort: $v[11], parent: $v[12], worktree: $v[13],
+      repo: $v[14], repo_path: $v[15] }'
 }
 
 load_file_board() {
@@ -96,6 +98,15 @@ load_file_board() {
 
 # Sets BOARD_JSON: the parsed board with blockers resolved to ticket numbers and
 # `unknown_refs` listing anything in a Blocked-by line that matched nothing.
+#
+# A feature spanning repos has one board per repo, under the same name — each
+# ticket lives on the board of the repo it changes (its **Repo:** line), because
+# that is where its worktree, branch and PR have to be. A blocker in another repo
+# is written <repo>:<NN>; it is looked up on that repo's board of the same name
+# (the path from .scratch/<board>/repos — "<name> <path>" per line, written by
+# /ticket — else a sibling directory of this repo) and listed in `xblockers_open`
+# until it is resolved there. One that can't be found counts as open: launching
+# past a blocker nobody could check is the worse mistake.
 load_board() {
   local raw; raw="$(load_file_board)"
   BOARD_JSON="$(jq '
@@ -103,15 +114,42 @@ load_board() {
     (map({key: (.nn | norm), value: .nn}) | from_entries) as $by_num |
     map(
       . as $t |
-      (if ($t.blocked_raw | test("[0-9]") | not)   # "None (can start immediately)", empty
+      ($t.blocked_raw | gsub("\\([^)]*\\)"; "")) as $b |
+      [ $b | scan("([A-Za-z0-9._-]*[A-Za-z][A-Za-z0-9._-]*):#?([0-9]+)") | {repo: .[0], nn: .[1]} ] as $x |
+      ($b | gsub("[A-Za-z0-9._-]*[A-Za-z][A-Za-z0-9._-]*:#?[0-9]+"; "")) as $local |
+      (if ($local | test("[0-9]") | not)   # "None (can start immediately)", empty
        then []
-       else [ $t.blocked_raw | gsub("\\([^)]*\\)"; "") | scan("[0-9]+") | {ref: ., nn: $by_num[norm]} ]
+       else [ $local | scan("[0-9]+") | {ref: ., nn: $by_num[norm]} ]
        end) as $refs |
       . + { blockers: [ $refs[] | select(.nn) | .nn ] | unique,
+            xrefs: $x,
             unknown_refs: [ $refs[] | select(.nn | not) | .ref ] }
     ) | sort_by(.nn | tonumber)
   ' <<<"$raw")"
+  local xs="{}" r n path f st
+  while IFS=$'\t' read -r r n; do
+    [[ -n "$r" ]] || continue
+    path=""
+    [[ -f "$BOARD_PATH/repos" ]] && path="$(awk -v r="$r" '$1 == r { $1 = ""; sub(/^ +/, ""); print; exit }' "$BOARD_PATH/repos")"
+    [[ -n "$path" ]] || path="$(dirname "$ROOT")/$r"
+    st="missing"
+    f="$(find "$path/.scratch/$BOARD_ID/issues" -maxdepth 1 -name '*.md' 2>/dev/null \
+         | awk -F/ -v n="$n" '{ b = $NF; if (match(b, /^[0-9]+/) && substr(b, 1, RLENGTH) + 0 == n + 0) { print; exit } }')"
+    [[ -n "$f" ]] && st="$(parse_ticket_file "$f" | jq -r .status)"
+    xs="$(jq -c --arg k "$r:$n" --arg v "$st" '. + {($k): $v}' <<<"$xs")"
+  done < <(jq -r '.[].xrefs[] | "\(.repo)\t\(.nn | sub("^0+"; ""))"' <<<"$BOARD_JSON" | sort -u)
+  # foreign: the repo a ticket changes when that isn't this one — it can't run here.
+  BOARD_JSON="$(jq --argjson xs "$xs" --arg name "$REPO_NAME" --arg root "$ROOT" '
+    map(. + { foreign: (if .repo == "" then ""
+                        elif .repo_path != "" then (if (.repo_path | rtrimstr("/")) != $root then "\(.repo) (\(.repo_path))" else "" end)
+                        elif .repo != $name then .repo else "" end),
+              xblockers_open: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
+                                | select($xs[$k] != "resolved")
+                                | "\(.repo):\(.nn)" + (if $xs[$k] == "missing" then " (not found)" else "" end) ] })' <<<"$BOARD_JSON")"
 }
+
+# Is ticket JSON <t> for another repo than this one? Prints that repo, or nothing.
+foreign_repo() { jq -r '.foreign // ""' <<<"$1"; }
 
 # The ticket object for one number, or die.
 ticket_json() {
