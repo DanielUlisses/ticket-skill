@@ -64,3 +64,27 @@ no remote — whose output is a Markdown file or a PDF. Two things stopped `/sma
 
 The summary's new `KIND=` line says which brief launched. `/small-ticket` decides between code and
 document from the ticket's deliverable and says so in one line; it asks only when it can't tell.
+
+## 4. Untested changes get a harder review and an expected plan
+
+Some repos have nothing that can run a change before it reaches a real environment — Terragrunt
+and Terraform stacks, Helm charts, pipelines. There the code review is the last check, and `opus @
+medium` is the wrong depth for it.
+
+- **The effort rises automatically.** A ticket whose `**Seams under test:**` line says `None` — the
+  line `/ticket` already writes for exactly this case — launches its reviewer at
+  `TICKET_REVIEW_EFFORT_UNTESTED` (`high`), through the same `--agents` definition. `/small-ticket`
+  passes `--review-effort` when the repo has no suite or the change only runs live; the flag beats
+  both. The summary's `REVIEWER=` line names the level and why.
+- **The reviewer traces instead of skims.** `ticket-reviewer` gained a *When nothing runs the change*
+  checklist: every input to its use, resource addresses (rename / `for_each` key / module version →
+  replace unless `moved`), force-new attributes, blast radius through shared modules and
+  `dependency` blocks, backend and state keys, what runs at plan time, and what the offline checks
+  (`hclfmt`, `validate`, `tflint`) don't prove.
+- **It ends with an Expected plan** — per stack, the addresses to add, change, replace and destroy,
+  "nothing to destroy" said out loud — which the coordinator puts in the hand-off. The developer
+  runs the live plan and compares: anything outside the expectation is the finding no test could
+  have caught.
+
+Agents still never run a plan or anything else against a real environment; the plan is the
+developer's.

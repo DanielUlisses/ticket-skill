@@ -433,6 +433,8 @@ require_valid_effort() {
     effort_valid "${!var}" \
       || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
   done
+  effort_valid "$REVIEW_EFFORT_UNTESTED" \
+    || die "invalid effort '$REVIEW_EFFORT_UNTESTED' for TICKET_REVIEW_EFFORT_UNTESTED — one of: $EFFORT_LEVELS"
 }
 
 # Says where a resolved value came from, for `launch.sh defaults` to quote.
@@ -480,6 +482,7 @@ load_ticket_models() {
   RESEARCH_MODEL="${TICKET_RESEARCH_MODEL:-haiku}"; RESEARCH_EFFORT="${TICKET_RESEARCH_EFFORT:-medium}"
   CHECK_MODEL="${TICKET_CHECK_MODEL:-haiku}";      CHECK_EFFORT="${TICKET_CHECK_EFFORT:-low}"
   REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
+  REVIEW_EFFORT_UNTESTED="${TICKET_REVIEW_EFFORT_UNTESTED:-high}"
   BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
   MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
   RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
@@ -674,6 +677,7 @@ launcher_main() {
   # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
   DOC=0   # only the --doc flag sets it; never inherited from the environment
+  REVIEW_EFFORT_FLAG=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -684,6 +688,9 @@ launcher_main() {
                    IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
       --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
       --doc)       DOC=1; shift ;;
+      --review-effort) [[ $# -ge 2 ]] || die "--review-effort needs a level — one of: $EFFORT_LEVELS"
+                   REVIEW_EFFORT_FLAG="$2"; shift 2 ;;
+      --review-effort=*) REVIEW_EFFORT_FLAG="${1#--review-effort=}"; shift ;;
       -*)          die "unknown flag: $1" ;;
       *)           ARGS+=("$1"); shift ;;
     esac
@@ -704,7 +711,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--review-effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   if (( ${DOC:-0} )); then
     [[ -n "${DOC_TEMPLATE:-}" ]] || die "--doc: this launcher has no document mode — use /small-ticket"
     TEMPLATE="$DOC_TEMPLATE"
@@ -712,6 +719,18 @@ launcher_main() {
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
+  # How hard the reviewer thinks. A ticket nothing can test — its Seams line says
+  # None: no suite, or infra that only runs live — is reviewed at
+  # TICKET_REVIEW_EFFORT_UNTESTED, since that review is the last check before a
+  # real environment. --review-effort (the /small-ticket skill passes it when the
+  # plan-to-be has no suite) beats both.
+  REVIEW_EFFORT_WHY="config"
+  if [[ -n "$REVIEW_EFFORT_FLAG" ]]; then
+    effort_valid "$REVIEW_EFFORT_FLAG" || die "invalid --review-effort '$REVIEW_EFFORT_FLAG' — one of: $EFFORT_LEVELS"
+    REVIEW_EFFORT="$REVIEW_EFFORT_FLAG"; REVIEW_EFFORT_WHY="the --review-effort flag"
+  elif grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
+    REVIEW_EFFORT="$REVIEW_EFFORT_UNTESTED"; REVIEW_EFFORT_WHY="untested: the ticket's Seams line says None"
+  fi
   [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
 
   [[ "$BRANCH" =~ ^[a-z][a-z0-9-]{2,39}$ && "$BRANCH" != *--* && "$BRANCH" != *- ]] \
@@ -982,6 +1001,7 @@ AGENT=$AGENT (pane ${AGENT_PANE:-?})
 MODEL=$IMPL_MODEL
 EFFORT=$IMPL_EFFORT
 COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
+REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS

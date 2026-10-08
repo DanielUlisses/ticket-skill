@@ -13,7 +13,7 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
 | Retro | `ticket-retro`, dispatched by the board when it closes | `sonnet` @ `medium` | no — `TICKET_RETRO_*` |
 | Opening PRs | `ticket-pr-creator`, dispatched by the board | `sonnet` @ `low` | no — `TICKET_PR_*` |
-| Review | `ticket-reviewer` | `opus` @ `medium` | no — `TICKET_REVIEW_*` |
+| Review | `ticket-reviewer` | `opus` @ `medium` — `high` when nothing can test the ticket | effort only: `TICKET_REVIEW_EFFORT_UNTESTED` for a ticket whose **Seams under test** says `None`, or `--review-effort` |
 | Document review | `ticket-doc-reviewer`, `/small-ticket --doc` only | `opus` @ `medium` | no — `TICKET_DOC_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |
 | Repo discovery | `ticket-scout`, one per question | `haiku` @ `low` | no — `TICKET_SCOUT_*` |

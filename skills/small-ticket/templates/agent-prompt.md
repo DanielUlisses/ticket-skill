@@ -34,7 +34,7 @@ After the plan is approved, **do not implement it yourself**. Delegate to the `t
 
 ### Phase 3 — Code review (separate subagent)
 
-Delegate to the `ticket-reviewer` subagent, passing the approved plan, the change summary and the base commit `{{BASE_COMMIT}}`. Call the Agent tool with `model: {{REVIEW_MODEL}}` explicitly. It reviews the diff without editing and classifies findings as **blocking** or **suggestion**. If there are blocking findings, send them to `ticket-implementer` for fixes and ask `ticket-reviewer` to review only the delta. Max 2 cycles; if blocking findings remain, stop and bring it to the developer.
+Delegate to the `ticket-reviewer` subagent, passing the approved plan, the change summary and the base commit `{{BASE_COMMIT}}`. Where the plan found **no test suite**, or the change only runs live (Terraform, Terragrunt, Helm, pipelines), say so: the reviewer then works through its *When nothing runs the change* checklist and returns an **Expected plan** — include it as it stands in the Phase 5 hand-off, for the developer to compare against the live plan. Call the Agent tool with `model: {{REVIEW_MODEL}}` explicitly. It reviews the diff without editing and classifies findings as **blocking** or **suggestion**. If there are blocking findings, send them to `ticket-implementer` for fixes and ask `ticket-reviewer` to review only the delta. Max 2 cycles; if blocking findings remain, stop and bring it to the developer.
 
 ### Phase 4 — Testing (`{{TEST_MODEL}}` subagent)
 

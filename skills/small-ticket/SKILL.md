@@ -88,7 +88,7 @@ Neither is a reason to re-ask on the next ticket; re-ask only when the developer
 ## 5. Run the launcher
 
 ```bash
-~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" [--doc] "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" [--review-effort "<level>"] [--doc] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
 All three values come from step 4. `--account <name>` is passed only where the session settled on
@@ -100,6 +100,8 @@ warn and then run at its own default. A per-ticket override the developer named 
 ticket replaces one value here and leaves the session's settings alone. The summary's `ACCOUNT=` line reports which account ran either
 way, verified in the pane, and its `MODEL=` and `EFFORT=` lines what it started on; see
 `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
+
+`--review-effort "<level>"` when nothing can test this change: look for a test suite first (a configured runner with tests already running under it), and where there is none — or the change only runs live, like Terraform/Terragrunt, Helm or a pipeline — pass the `TICKET_REVIEW_EFFORT_UNTESTED` level (`high` by default; it's in `ticket-models.env`) and say so in one line. The review is then the last check before a real environment, and the reviewer also returns an **Expected plan** to compare against the live one. A `/ticket` ticket needs no flag: the launcher reads `**Seams under test:** None` off it. The summary's `REVIEWER=` line says which applied.
 
 `--doc` only for a document ticket (step 2b): it sends `templates/doc-prompt.md` instead of `templates/agent-prompt.md`, and puts `ticket-doc-reviewer` in place of `ticket-reviewer`. The summary's `KIND=` line says which launched.
 
