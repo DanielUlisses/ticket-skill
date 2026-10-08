@@ -33,9 +33,10 @@ Then stop. Don't launch, merge or digest from here.
 ## What the board session does
 
 - **Launches** frontier tickets in waves — the account, the implementer's model and effort asked once a session, `As each ticket suggests` when the tickets disagree, `fable` offered for `xhigh`/`max` tickets; research a wave shares asked once and folded into every brief.
+- **Opens PRs on request** ("open a PR for 03"): `ticket-pr-creator` (Sonnet) commits exactly the ticket's files through `pr-open.sh`, pushes the branch and opens the PR, its body shaped by the mattpocock `pr` skill.
 - **Merges on request** ("merge 03", "merge everything ready") behind five scripted gates — open PR, ready, mergeable, checks green, review approved. A conflict sends `ticket-merger` (Sonnet), which resolves it in the ticket's worktree and commits and pushes that one merge only after the developer approves.
 - **Relays** the developer's words to a ticket's agent verbatim, never into a dialog.
 - **Resolves** what landed (ancestry or a merged PR, behind the empty-branch guard) and launches what it unblocks.
 - **Curates memory** when the board is done: `ticket-memory-curator` proposes a diff to `docs/agents/project-memory.md` from the tickets' `## Remember` sections. The developer writes it.
 
-Its prompt is `templates/board-prompt.md`; its hands are `scripts/tk.sh` and `scripts/merge-conflict.sh`.
+Its prompt is `templates/board-prompt.md`; its hands are `scripts/tk.sh`, and its two agents that write to git go through `scripts/merge-conflict.sh` and `scripts/pr-open.sh`.

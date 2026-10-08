@@ -2,7 +2,7 @@
 
 ## Roles and defaults
 
-Ten roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
+Eleven roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
 placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 
 | Role | Agent | Default | Varies per ticket? |
@@ -12,6 +12,7 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 | Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
 | Memory curation | `ticket-memory-curator`, dispatched by the board | `haiku` @ `medium` | no — `TICKET_CURATE_*` |
+| Opening PRs | `ticket-pr-creator`, dispatched by the board | `sonnet` @ `low` | no — `TICKET_PR_*` |
 | Review | `ticket-reviewer` | `opus` @ `medium` | no — `TICKET_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |
 | Repo discovery | `ticket-scout`, one per question | `haiku` @ `low` | no — `TICKET_SCOUT_*` |

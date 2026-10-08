@@ -52,13 +52,27 @@ Two facts make Haiku worth the work of moving that prose into code:
    suggest `xhigh`/`max` (and `/ticket` may suggest it); a research topic two or more tickets in a
    wave share gets one researcher, folded into every brief under *Research for this wave*.
 
+6. **PRs on request: `ticket-pr-creator` (Sonnet @ low)** — a second change, on the same
+   pattern as the merger. Only when the developer names a ticket ("open a PR for 03") does the
+   board dispatch it. It goes through `pr-open.sh`: `check` refuses while the ticket's agent is
+   working or at a dialog, when a PR is already open, or when nothing changed, and prints the
+   changed files, any `RISKY` ones (`.env`, keys, credentials), the ticket's report and the
+   installed mattpocock `pr` skill's path. The agent Reads that skill — it can't call it, since the
+   board runs with skills disabled — writes the body to it (`Refs #<issue>`, never `Closes`: the
+   board resolves on merge), and names the files to commit. `open` refuses any path the ticket
+   didn't change and any risky one, commits exactly those, pushes without force, opens the PR and
+   reports what it left uncommitted. So exactly two agents ever commit or push — the merger and
+   the PR creator — each only through its own script.
+
 ## Consequences
 
 - The board's correctness no longer depends on the model executing prose faithfully; it depends on
   `board-lib.sh` and `tk.sh`, which can be tested — and were, in a sandbox with a real git remote
   and stubbed `herdr`/`gh`/launcher: frontier, unknown-blocker warnings, the empty-branch guard,
   ancestry and merged-PR landing, resolve, all five gates and their exit codes, the merger's
-  refusals (working agent, leftover markers) and its push, `say` refusing a dialog.
+  refusals (working agent, leftover markers) and its push, `say` refusing a dialog, and
+  `pr-open.sh` refusing a working agent, an unchanged path, a `.env` and an already-open PR,
+  then committing exactly the named file and leaving the rest reported.
 - `tk.sh digest` keeps writing the old text digest under `/tmp`, so `/sweep-tickets`' cross-check
   is unchanged.
 - A board session can't run `/ticket` inline — design questions go to a planning session by

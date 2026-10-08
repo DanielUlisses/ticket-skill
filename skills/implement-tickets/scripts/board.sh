@@ -6,7 +6,7 @@
 # the model only reads results and decides — which is what lets it run on Haiku.
 # Haiku is cheap only while the prompt stays small (it reprices above 100K
 # tokens), so this starts Claude Code with exactly what the board needs: a short
-# appended prompt, the tools it and its agents use, no MCP servers, no skill listing, the three
+# appended prompt, the tools it and its agents use, no MCP servers, no skill listing, the four
 # agents it dispatches, and auto-compaction before the price step.
 # See docs/adr/0004-haiku-board-session.md.
 #
@@ -58,10 +58,11 @@ tpl="$(cat "$SKILL_DIR/templates/board-prompt.md")"
 tpl="${tpl//'{{BOARD}}'/"$BOARD_ID"}"
 tpl="${tpl//'{{TK}}'/"$SCRIPTS/tk.sh"}"
 tpl="${tpl//'{{MERGER}}'/"$SCRIPTS/merge-conflict.sh"}"
+tpl="${tpl//'{{PR}}'/"$SCRIPTS/pr-open.sh"}"
 tpl="${tpl//'{{LAUNCHER}}'/"$LAUNCHER_PATH"}"
 printf '%s\n' "$tpl" >"$PROMPT"
 
-build_session_agents ticket-merger ticket-memory-curator ticket-researcher
+build_session_agents ticket-merger ticket-pr-creator ticket-memory-curator ticket-researcher
 
 cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
      # The board itself uses Bash, Read, Write, Agent and AskUserQuestion; the rest
@@ -74,7 +75,7 @@ cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
 [[ "${TICKET_BOARD_SKILLS:-0}" == 1 ]] || cmd+=(--disable-slash-commands)
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # The board's own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
 cmd+=("Run the board ${BOARD_ID}: start with the first turn.")
 
 log "board $BOARD_ID ($BOARD_KIND) on $BOARD_MODEL @ $BOARD_EFFORT — subagents: $SESSION_AGENTS_STATUS"
