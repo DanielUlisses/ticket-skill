@@ -422,7 +422,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK; do
+  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE CURATE PR; do
     # Under COORDINATOR=impl the coordinator's own setting is never used.
     [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
@@ -476,7 +476,10 @@ load_ticket_models() {
   RESEARCH_MODEL="${TICKET_RESEARCH_MODEL:-haiku}"; RESEARCH_EFFORT="${TICKET_RESEARCH_EFFORT:-medium}"
   CHECK_MODEL="${TICKET_CHECK_MODEL:-haiku}";      CHECK_EFFORT="${TICKET_CHECK_EFFORT:-low}"
   REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
-  BOARD_MODEL="${TICKET_BOARD_MODEL:-sonnet}";     BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
+  BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
+  MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
+  CURATE_MODEL="${TICKET_CURATE_MODEL:-haiku}";    CURATE_EFFORT="${TICKET_CURATE_EFFORT:-medium}"
+  PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
   TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
 
@@ -533,8 +536,8 @@ print_launch_defaults() {
   # Only where the session coordinates on its own setting (/ticket): there MODEL=
   # and EFFORT= reach the implementer alone, and the question should know it.
   [[ "${COORDINATOR:-impl}" == config ]] && echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
-  # What /ticket's hand-off prints the board session's start command with.
-  [[ "${COORDINATOR:-impl}" == config ]] && echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the /implement-tickets session the developer starts)"
+  # What board.sh starts the board session on.
+  [[ "${COORDINATOR:-impl}" == config ]] && echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -577,12 +580,18 @@ role_of_agent() {
     ticket-scout)            echo SCOUT ;;
     ticket-researcher)       echo RESEARCH ;;
     ticket-criteria-checker) echo CHECK ;;
+    ticket-merger)           echo MERGE ;;
+    ticket-memory-curator)   echo CURATE ;;
+    ticket-pr-creator)       echo PR ;;
     *)                       return 1 ;;
   esac
 }
 
 # Sets SESSION_AGENTS_JSON (empty when skipped) and SESSION_AGENTS_STATUS.
+# With names, only those agents are defined — every definition is prompt the
+# session pays for, so a session gets the roster it uses and no more.
 build_session_agents() {
+  local only=" $* "
   SESSION_AGENTS_JSON=""
   if [[ "${TICKET_SESSION_AGENTS:-1}" == 0 ]]; then
     SESSION_AGENTS_STATUS="off (TICKET_SESSION_AGENTS=0 — subagents run on their frontmatter)"
@@ -598,6 +607,7 @@ build_session_agents() {
     # everything after the second, verbatim.
     name="$(awk '/^---$/{n++; next} n==1 && /^name:/{sub(/^name:[ ]*/,""); print; exit}' "$file")"
     role="$(role_of_agent "$name")" || continue
+    [[ "$only" == "  " || "$only" == *" $name "* ]] || continue
     desc="$(awk '/^---$/{n++; next} n==1 && /^description:/{sub(/^description:[ ]*/,""); print; exit}' "$file")"
     tools="$(awk '/^---$/{n++; next} n==1 && /^tools:/{sub(/^tools:[ ]*/,""); print; exit}' "$file")"
     body="$(awk 'n>=2{print; next} /^---$/{n++}' "$file")"
@@ -762,6 +772,11 @@ launcher_main() {
   tpl="${tpl//'{{SCOUT_MODEL}}'/"$SCOUT_MODEL"}"
   tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
   tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
+  # The one file outside the worktree a ticket writes: its final report, kept
+  # where it outlives the worktree for ticket-memory-curator to read.
+  REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
+  mkdir -p "$(dirname "$REPORT_FILE")"
+  tpl="${tpl//'{{REPORT_FILE}}'/"$REPORT_FILE"}"
   # The two prose payloads go last, so the replacements above can't reach inside
   # them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
   # above the ticket in the template, so filling it first would let a `{{TICKET}}`
@@ -910,7 +925,9 @@ launcher_main() {
   # and must not be flattened: /small-ticket starts in plan mode with only
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
-  build_session_agents
+  # A ticket's session uses the ticket-side roster; the merger, the curator and
+  # the PR creator belong to the board session (scripts/board.sh).
+  build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
   local -a agents_arg=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
@@ -940,6 +957,7 @@ COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
+REPORT_FILE=${REPORT_FILE:-?}
 PROMPT_FILE=$PROMPT_FILE
 SUMMARY
   }

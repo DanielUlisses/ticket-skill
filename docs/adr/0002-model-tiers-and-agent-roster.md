@@ -120,9 +120,9 @@ Phase 3  report    + `## Remember` merged from every subagent's
 - **Opus at `low` as coordinator** may under-dispatch (skip scouts, accept a thin review). Watch
   the first few reports; `TICKET_COORD_EFFORT=medium` is the dial.
 
-## Further suggestions, not done here
+## Further suggestions
 
-Each is a candidate ticket of its own.
+Taken up in [0004](0004-haiku-board-session.md): 1, 2 (as scripts rather than an agent), 5 and 6. Dropped: 3 and 4.
 
 1. **`ticket-memory-curator` (Haiku or Sonnet @ low).** Gather the `## Remember` sections of a
    board's resolved tickets, dedupe them against `docs/agents/project-memory.md`, and propose a

@@ -1,9 +1,9 @@
 ---
 name: ticket
-description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a cheaper /implement-tickets session — or launches an unattended Herdr coordinator per chosen ticket itself — leaving everything uncommitted. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
+description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a Haiku board session (/implement-tickets) that launches, merges and coordinates them. It never launches tickets itself. For an already-defined ticket, use /small-ticket instead; for tickets already written to the repo's tracker or `.scratch/`, use /implement-tickets.
 argument-hint: "[jira-id] <task description>"
 disable-model-invocation: true
-allowed-tools: Bash(~/.claude/skills/ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(gh *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
+allowed-tools: Bash(git *), Bash(gh *), Bash(mktemp *), Read, Write, Skill, Agent, AskUserQuestion
 ---
 
 # /ticket
@@ -14,7 +14,7 @@ Task received:
 $ARGUMENTS
 </task>
 
-This command runs two very different modes in sequence. Phases 1–3 are an interview: you sharpen and break down the task with the developer, right here, in this session. Phase 4 is a hand-off: for each ticket they choose, you start a Herdr coordinator that implements and reviews it, unattended, in its own worktree — mirroring `small-ticket`'s environment setup, but without a plan-mode gate, since by then the plan is already agreed.
+This command is the **planning session**: Phases 1–2 are an interview — you sharpen and break down the task with the developer, right here — and Phase 3 hands the written board to a separate, cheap board session that launches and coordinates the tickets. Nothing is launched from here.
 
 ### A Jira id as the first word
 
@@ -41,16 +41,16 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Each ticket is a vertical slice through every layer it touches (schema, API, UI, tests) — demoable or verifiable on its own, sized to fit a single fresh context window.
 - **Wide refactor exception**: one mechanical change with a codebase-wide blast radius (rename a column, retype a shared symbol) doesn't fit a vertical slice. Sequence it instead as expand (add the new form beside the old) → migrate in blast-radius-sized batches, each its own ticket, CI green batch to batch → contract (delete the old form once nothing calls it).
 - Give each ticket its **blocked-by** edges: the other tickets that must land first. No blockers means it's on the **frontier** — startable immediately.
-- Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Phase 4's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
-- Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — Phase 3's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
-- Give each ticket a **suggested model** for its implementer — `opus` or `sonnet` — with one clause saying why. **Opus** where the ticket still holds design judgement: a new abstraction, a cross-cutting change, a subtle bug, a seam nobody has tested before. **Sonnet** where the ticket is well specified and follows a pattern the repo already has: another endpoint like the five beside it, a migration batch in a wide refactor, wiring a settled interface through. Model and effort are two knobs — `sonnet` at `high` and `opus` at `low` are both sensible answers. `opus` is the default and needs no defending; `haiku` is not an implementer here, it is what the helpers run on.
+- Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Each ticket's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
+- Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — the board session's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
+- Give each ticket a **suggested model** for its implementer — `opus` or `sonnet` — with one clause saying why. **Opus** where the ticket still holds design judgement: a new abstraction, a cross-cutting change, a subtle bug, a seam nobody has tested before. **Sonnet** where the ticket is well specified and follows a pattern the repo already has: another endpoint like the five beside it, a migration batch in a wide refactor, wiring a settled interface through. Model and effort are two knobs — `sonnet` at `high` and `opus` at `low` are both sensible answers. `opus` is the default and needs no defending; `haiku` is not an implementer here, it is what the helpers run on. A ticket that earns `xhigh` or `max` effort may suggest **`fable`** instead — the model built for the hardest, longest-horizon work — and say why more Opus effort isn't enough.
 - Give each ticket a **suggested helpers** line where it would help: what the launched coordinator should fan out to its cheap subagents before and after implementation — the repo questions worth a scout each, the external API worth a researcher, checks worth splitting across testers (`scouts: callers of PaymentService, how retries are done elsewhere · research: Stripe webhook signature, API 2025-09 · tests: split by package`). Leave it out when the ticket is small enough that the coordinator's own judgement covers it.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs.
 - Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
 Present the breakdown as a numbered list — title, blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
-Once approved, write the tickets to the repo's **ticket home** — the tracker where the repo keeps one, files under `.scratch/` where it doesn't. Either way the home is the durable record, not what the coordinator reads from (see Phase 4). Detect which home you're in before writing anything, and never split one feature across both.
+Once approved, write the tickets to the repo's **ticket home** — the tracker where the repo keeps one, files under `.scratch/` where it doesn't. Either way the home is the durable record, not what a ticket's coordinator reads from — the board session composes each brief at launch. Detect which home you're in before writing anything, and never split one feature across both.
 
 ### Detecting the ticket home
 
@@ -85,7 +85,7 @@ Issues being *enabled* is GitHub's default and proves nothing on its own, which 
 
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
-**Suggested model:** <opus|sonnet> — <one clause: why this ticket needs that model>
+**Suggested model:** <opus|sonnet|fable> — <one clause: why this ticket needs that model>
 
 **Suggested effort:** <low|medium|high|xhigh|max> — <one clause: why this ticket needs that much thinking, or that little>
 
@@ -99,7 +99,7 @@ The two homes differ in only two places: the GitHub home carries the heading as 
 
 `**Parent:**` is written only when the task opened with a Jira id, and then identically in **both** homes: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
 
-`**Suggested model:**`, `**Suggested effort:**` and `**Suggested helpers:**` are written the same way in **both** homes — body lines like the two above them, in the file under `.scratch/` and in the issue body alike. The first two are what Phase 3's launch question pre-selects, and what `/implement-tickets` reads back off a board later; the third reaches the coordinator inside the ticket body it is sent. A ticket written before these lines existed simply carries none, and the launcher's own defaults stand.
+`**Suggested model:**`, `**Suggested effort:**` and `**Suggested helpers:**` are written the same way in **both** homes — body lines like the two above them, in the file under `.scratch/` and in the issue body alike. The first two are what the board session's launch question pre-selects; the third reaches the coordinator inside the ticket body it is sent. A ticket written before these lines existed simply carries none, and the launcher's own defaults stand.
 
 ### Naming the board
 
@@ -134,7 +134,7 @@ Create the issues **in ticket-number order** — blockers first, which is the or
   number=${url##*/}
   ```
 
-  Nothing in the stored body names the issue itself: the number doesn't exist until the issue does. The coordinator learns it in Phase 4 instead, which puts a `**Tracker:** <owner>/<repo>#<number> — report against it, don't close it` line at the top of the brief it composes, so an unattended agent knows what it's reporting against without being able to resolve its own ticket.
+  Nothing in the stored body names the issue itself: the number doesn't exist until the issue does. The coordinator learns it at launch instead: the board session's `tk.sh launch` puts a `**Tracker:** <owner>/<repo>#<number> — report against it, don't close it` line at the top of the brief it composes, so an unattended agent knows what it's reporting against without being able to resolve its own ticket.
 
 Then add each blocked-by edge as a **native issue dependency** — the canonical, UI-visible form, per `docs/agents/issue-tracker.md`. The endpoint wants the blocker's numeric **database id**, not its `#number`:
 
@@ -157,7 +157,7 @@ git -C <root> check-ignore .scratch/
 
 Exit 0 means ignored: say nothing further and write the tickets. Exit 1 means not ignored. Any other exit (128 — not a repo, bad root) is an error rather than an answer: report it and edit nothing.
 
-The trailing slash is what makes that answer right *before* the directory exists. The conventional entry is `.scratch/`, a directory-only pattern, and git won't match it against a `.scratch` that isn't on disk yet — so the bare path reports a repo that already ignores the board as one that doesn't, and the developer gets asked to add an entry that's already there. (`/implement-tickets` Phase 0 checks the bare path and is right to: by the time it reads a board, the directory exists.)
+The trailing slash is what makes that answer right *before* the directory exists. The conventional entry is `.scratch/`, a directory-only pattern, and git won't match it against a `.scratch` that isn't on disk yet — so the bare path reports a repo that already ignores the board as one that doesn't, and the developer gets asked to add an entry that's already there. (The board session reads a board that already exists, so a bare path is right there.)
 
 Not ignored means every `git status` in the root shows `?? .scratch/` from here on, and any `git add -A` sweeps the board into a commit. The board lives in the root checkout alone — each ticket's worktree branches off the base before the board is there, so it never travels — which makes the branch the root is on, normally the **default branch**, the one the entry belongs on. Name it rather than assuming:
 
@@ -184,137 +184,21 @@ ls <root>/.scratch/<board>/issues/ 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)-.*\.
 
 Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a file that is already there — appending adds files, nothing else.
 
-## Phase 3 — Pick tickets to implement
+## Phase 3 — Hand the board off
 
-Ask the developer how the board should run from here (AskUserQuestion):
+This session's job ends with the tickets. It runs on the model a grilling needs and carries the whole interview in its context; running the board — launching waves, merging on the developer's word, relaying messages, launching what each merge unblocks — is bookkeeping, and it belongs to a session of its own on the cheap model `config/models.env` names for it (`TICKET_BOARD_MODEL`, Haiku). **Never launch tickets from this session.** Nothing is lost by leaving: the board session rebuilds its whole picture from the board, the live agents and git, never from this conversation.
 
-- **Hand off to a board session (recommended)** — this session's job ends with the tickets. Running the board is bookkeeping: launching waves, merging on request, passing messages to ticket agents, launching what each merge unblocks. That belongs to `/implement-tickets` in a session of its own, on the cheaper model `config/models.env` names for it, rather than in this one, which is on the model a grilling needs and carries the whole interview in its context. Go to *The hand-off*, below.
-- **Launch here** — **all**, or **specific numbers**, and this session launches them itself (the rest of this phase, then Phase 4). For a one-off, or a developer who wants to stay where they are.
-- **None** — stop. The tickets are saved, and `/implement-tickets` picks them up later without re-running phases 1–3.
-
-### The hand-off
-
-Nothing is lost by leaving: `/implement-tickets` rebuilds its whole picture each round from the board, the live agents and git, never from this conversation. Read what it should run on:
-
-```bash
-~/.claude/skills/ticket/scripts/launch.sh defaults
-```
-
-and print, from its `BOARD=<model> @ <effort>` line and the board's name (the Jira id, the `ticket:<board>` label's slug, or the `.scratch/<board>` path):
+Print, with the board's name — the Jira id, the `ticket:<board>` label's slug, or the `.scratch/<board>` path (the main checkout's, since the board session may start elsewhere):
 
 ```
-Board <board> is ready. In a new Herdr tab at <root>:
+Board <board> is ready: <NN> tickets, frontier <the tickets with no blockers>.
+In a new Herdr tab at <root>:
 
-  claude --model <model> --effort <effort> "/implement-tickets <board>"
+  ~/.claude/skills/implement-tickets/scripts/board.sh <board>
 
-It asks which tickets to start and how to run them, then stays on to merge on your word, relay
-messages to ticket agents, and launch what each merge unblocks. Come back here — or start a new
-`/ticket <jira-id> …` — when the plan itself needs to change.
+It asks which tickets to start and how to run them, then stays on to merge on your word,
+relay messages to ticket agents, and launch what each merge unblocks. Come back to a planning
+session — `/ticket <jira-id> …` appends to this board — when the plan itself needs to change.
 ```
 
-Then stop: don't launch, and don't ask the launch settings — the board session asks them once, for itself. Where the tickets went to `.scratch/`, the path is the main checkout's, not this session's working directory, since the board session may start elsewhere.
-
-### Launching here
-
-Check every selected ticket's blocked-by edges against the rest of the *selection*: a ticket blocked by one that's neither landed nor also launching right now would build against code that doesn't exist yet. Hold those back and note which unmet blocker gates each one. Launch only the frontier of the selection.
-
-Once the selection is settled, settle the session's launch settings below — unless this session already has, in which case they hold and nothing is asked.
-
-### The session's launch settings
-
-Three things govern every ticket a session launches: the **account** it bills to, the **model** that implements it, and the **effort** — how hard that model thinks — it runs at. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — this skill's whole wave, and anything `/small-ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, so this comes after the selection above, never on load.
-
-**Already settled** — this session answered, in an earlier wave or because the developer named them up front: don't ask again. State which account, model and effort are in force when you launch and move on.
-
-**Not settled yet** — read the defaults before you state them, rather than assuming them:
-
-```bash
-~/.claude/skills/ticket/scripts/launch.sh defaults
-```
-
-It changes nothing and prints one line per setting, plus the options for the account and for the effort:
-
-```
-MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
-EFFORT=medium (from /home/you/.claude/skills/ticket-models.env)
-EFFORTS=low medium high xhigh max
-ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root ~/.claude)
-ACCOUNTS=default work
-```
-
-The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch every ticket somewhere else. Quote what the command printed.
-
-`EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
-
-**The tickets suggest the model and the effort.** Every ticket Phase 2 wrote carries a `**Suggested model:**` and a `**Suggested effort:**` line — read the *selection's*. Where they all agree, pre-select that value over the launcher's default. Where they disagree, pre-select **`As each ticket suggests`** — a policy rather than a value: every launch then passes that ticket's own suggestion, and the session holds the policy the way it would hold a value. Name the spread either way (`02, 03 sonnet/medium · 04 opus/high`). Where none of them carries the lines — a board written before they existed — `MODEL=` and `EFFORT=` stand.
-
-Then ask with **one** `AskUserQuestion` call, one question per setting:
-
-| Setting | Question | Options, in order | How it reaches the launcher |
-|---|---|---|---|
-| Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
-| Model | "Which model should implement this session's tickets?" | the pre-selection above first — `As each ticket suggests`, the tickets' shared suggestion labelled `(suggested by the tickets)`, or the `MODEL=` value labelled `(default)` — then the rest of Opus / Sonnet / `As each ticket suggests`, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary agrees with what launched — under the policy, that ticket's suggestion (`MODEL=` for a ticket that carries none) |
-| Effort | "How hard should the implementer think on this session's tickets?" | the same, for effort: `As each ticket suggests`, the shared suggestion, or the `EFFORT=` value labelled `(default)` — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly — under the policy, that ticket's suggestion (`EFFORT=` for a ticket that carries none) |
-
-One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
-
-**Then hold them.** Every launch in this session passes all three and names all three in its report. Two overrides exist and they are different things:
-
-- **For one ticket** — the developer names an account, a model or an effort for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
-- **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
-
-Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
-
-The model and effort chosen here reach the **implementer** only. The launched session is a coordinator that writes no code, and runs on its own setting — the `COORDINATOR=` line `defaults` prints, `opus @ low` out of the box — while review, testing, scouting and acceptance checks run on the fixed roles in `config/models.env`. So trading the implementer down to Sonnet no longer trades the review down with it. See `docs/agents/models.md`.
-
-## Phase 4 — Launch one coordinator per launched ticket
-
-Follow `herdr` skill's rules (check `HERDR_ENV=1`, read IDs from the JSON, don't close anything you didn't create, don't answer blocked dialogs without the developer).
-
-For each ticket to launch, derive names the same way `small-ticket` does:
-
-- **Tab label**: 2–3 words, lowercase, up to 20 characters.
-- **Branch**: `<type>-<NN>-<slug>`, kebab-case, up to 40 characters, no `/` or `--` (`type` ∈ `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`).
-
-Save that ticket's full file body to a temp file (`mktemp -t ticket.XXXXXX.md`) and run:
-
-```bash
-~/.claude/skills/ticket/scripts/launch.sh [--account <name>] --effort "<level>" "<label>" "<branch>" "<ticket-file>" "<model>"
-```
-
-All three values come from the session's launch settings above: `--account <name>` unless the
-session inherits, in which case the flag is left off entirely and the ticket resolves the
-developer's own directory link, exactly as every ticket did before this knob existed;
-`--effort <level>` always, since unlike the account there is no "inherit" for it and an
-explicit flag is what makes the launch and its summary agree. A level the launcher doesn't
-know stops it before anything is created — Claude Code itself would only warn and run at its
-own default, so a typo would otherwise look like it worked. A per-ticket override the
-developer named for *this* ticket replaces one value here and leaves the session's settings
-alone. An unknown account name stops the script before anything is
-created, and `claude-acc list` is the answer to show them. See `docs/agents/accounts.md` and
-`docs/agents/session-settings.md`.
-
-The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — on the coordinator's own model and effort, with every `ticket-*` subagent redefined through `--agents` so the implementer carries this ticket's model and effort and the rest carry `config/models.env`'s — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to run the ticket — scouts, then `ticket-implementer` (mattpocock's `implement` process, TDD at the named seams), then testers, criteria checkers and `ticket-reviewer` — all restricted to leave everything unstaged; see that file for the exact rules passed to it.
-
-Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `MODEL=`, `EFFORT=` and `ACCOUNT=` lines name what that ticket's implementer and account actually started on, `COORDINATOR=` what the session itself runs on, and `SUBAGENTS=` every role's model and effort.
-
-## Phase 5 — Report
-
-List, per launched ticket: workspace, branch, worktree, agent, and the account, model and effort it ran on — the launcher's own `ACCOUNT=`, `MODEL=` and `EFFORT=` lines, not what you asked for; the account one in particular is verified in the pane. List held-back tickets with their unmet blockers, and unselected tickets, so the developer can run `/implement-tickets <tickets-dir>` once blockers land — that skill starts at this phase and stays resident to mark tickets resolved and launch what each merge unblocks. Don't wait for any coordinator to finish.
-
-## Manual fallback (only if the script fails due to a CLI change)
-
-Steps 0–2 and 4 are `small-ticket`'s **Manual fallback**, unchanged: update the base branch, `herdr worktree create`, lay the workspace out as the three tabs `agent` | `review` | `shell` (rename the worktree's numeric tab to `agent`; move the reviewr plugin's pane into a `review` tab, or create an empty one; append `shell`), then render and send the prompt. Read that section for the exact calls and for why `review` is built by moving a pane.
-
-Only step 3, starting the agent, differs — `/ticket` runs unattended, so it does **not** use plan mode and blocks eight git verbs rather than two:
-
-```bash
-herdr agent start tk-<branch> --kind claude --pane <root-pane> -- \
-  --model <TICKET_COORD_MODEL> --effort <TICKET_COORD_EFFORT> --permission-mode bypassPermissions \
-  --agents '<the ticket-* definitions, implementer on the chosen model and effort>' \
-  --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" \
-    "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)" \
-    "Bash(git checkout:*)" "Bash(git switch:*)"
-```
-
-Step 4 sends `templates/ticket-agent-prompt.md`, not `small-ticket`'s `templates/agent-prompt.md`. Its placeholders are the same set, `{{PROJECT_MEMORY}}` included.
+Then stop. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.

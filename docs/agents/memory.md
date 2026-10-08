@@ -86,7 +86,7 @@ substitutes nothing, and takes the placeholder's own blank line with it.
 |---|---|---|
 | `/small-ticket` | `skills/small-ticket/templates/agent-prompt.md` | its own `launch.sh` |
 | `/ticket` | `skills/ticket/templates/ticket-agent-prompt.md` | its own `launch.sh` |
-| `/implement-tickets` | the same as `/ticket` | it reuses `/ticket`'s `launch.sh` |
+| `/implement-tickets` (the board session) | the same as `/ticket` | `tk.sh launch` runs `/ticket`'s `launch.sh` |
 
 The template is the only part of this each `launch.sh` still decides for itself; the
 resolution and the wrapping are the shared library's.
@@ -97,7 +97,7 @@ The preamble tells the agent three things the memory file itself shouldn't have 
 repeat: that it is starting knowledge rather than orders, that the code in front of it
 wins wherever the two disagree, and that it must not edit the file.
 
-**Memory is read once per launch, not once per round.** `/implement-tickets` runs a
+**Memory is read once per launch, not once per round.** The board session runs a
 digest at the top of every coordination round, and memory is emphatically not part of it
 — that digest is six fields per ticket and must stay cheap enough to run every round.
 Memory is prose, it is read once, by the launcher, at the moment a worktree is created.

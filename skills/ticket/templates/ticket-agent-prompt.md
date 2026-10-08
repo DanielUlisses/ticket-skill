@@ -83,6 +83,11 @@ a padded list is worse than an empty one, because someone has to read it.
 You do **not** write any of this into the memory file yourself. Reporting is
 yours; deciding what the repo remembers is the developer's.
 
+**Then save the whole report** — everything above, `## Remember` included — to
+`{{REPORT_FILE}}` with the Write tool. It is the one file outside the worktree you
+write: it outlives the worktree, and it is what `ticket-memory-curator` reads when
+the board is done.
+
 ## Inviolable rules
 
 Never `git add`, `git commit`, `git push`, `git stash`, `git reset`, `git rebase`, or switch branches — these are also blocked at the tool level, but don't route around them. Pass these rules on to every subagent you start. If the `ticket-*` subagents don't exist, use the Agent tool with `general-purpose`, setting `model` to the one named for that role above and passing these rules in the prompt. Work only inside `{{WORKTREE}}`. No command that changes real infrastructure or environments (`terraform apply`, `kubectl apply`/`delete`, `helm upgrade`, deploys, or a write-capable `az`/`aws`/`gcloud` call).

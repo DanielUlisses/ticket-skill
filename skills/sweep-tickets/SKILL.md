@@ -180,7 +180,7 @@ Per item: removed (with what went — workspace, tabs, worktree, branch) or skip
 
 ## What this skill does not do
 
-- **It doesn't touch the ticket home.** A closed issue stays closed, an open one stays open. Marking a ticket resolved is `/implement-tickets` Phase 4's job, off a verified merge; this skill only reads the digest that skill leaves behind. Where the two disagree, say so (Phase 2) and let the developer decide — don't write to the tracker to make the disagreement go away.
+- **It doesn't touch the ticket home.** A closed issue stays closed, an open one stays open. Marking a ticket resolved is the board session's job (`tk.sh resolve`, off a verified merge); this skill only reads the digest that skill leaves behind. Where the two disagree, say so (Phase 2) and let the developer decide — don't write to the tracker to make the disagreement go away.
 - **It doesn't merge, push, or commit anything.** The commit boundary is unchanged: agents hand work back unstaged, the developer merges.
 - **It doesn't remove the main checkout or the worktree it's running in.** Both are refused by the script before any guard runs, and so is the Herdr workspace this session is sitting in — by id as well as by path, since an orphan row is emitted precisely when git has lost track of a checkout.
 - **It never touches the developer's own account links.** `~/.claude-switch/links` is hand-managed and holds the entries every worktree here inherits from. Only a line whose path matches this repo's `<parent>/<repo>--<branch>` convention is ever listed or removed, and only when nothing else still holds it.

@@ -1,6 +1,6 @@
 # 0003 — Split the developer's session: an Opus planner, a cheap board session
 
-- **Status:** Accepted
+- **Status:** Accepted; the board's model, its start command and the "Launch here" path are superseded by [0004](0004-haiku-board-session.md)
 - **Date:** 2026-10-08
 - **Deciders:** Daniel Ulisses
 - **Builds on:** [0002](0002-model-tiers-and-agent-roster.md), which tiered the *launched* sessions; this tiers the one the developer sits in

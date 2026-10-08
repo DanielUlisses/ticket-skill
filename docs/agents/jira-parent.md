@@ -44,4 +44,4 @@ New tickets may name existing ones as blockers. Existing tickets are never rewri
 renumbered. Before writing, `/ticket` announces it — "appending 04–05 to the existing itm-9909
 board" — so the developer approves the numbers that will actually be written.
 
-`/implement-tickets` reads an appended board like any other: it is one folder, or one label.
+The board session (`board.sh itm-9909`) reads an appended board like any other: it is one folder, or one label.

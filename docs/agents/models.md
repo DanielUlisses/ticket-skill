@@ -2,13 +2,16 @@
 
 ## Roles and defaults
 
-Seven roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
+Ten roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
 placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 
 | Role | Agent | Default | Varies per ticket? |
 |---|---|---|---|
 | Implementation | `ticket-implementer` (and `/small-ticket`'s plan-mode orchestrator) | `opus` @ `medium` | **yes** — the ticket's `**Suggested model:**`/`**Suggested effort:**`, the launch question, the 4th positional and `--effort` |
-| Coordination | the session a `/ticket` / `/implement-tickets` launch starts | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
+| Coordination | the session each launched ticket runs | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
+| Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
+| Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
+| Memory curation | `ticket-memory-curator`, dispatched by the board | `haiku` @ `medium` | no — `TICKET_CURATE_*` |
 | Review | `ticket-reviewer` | `opus` @ `medium` | no — `TICKET_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |
 | Repo discovery | `ticket-scout`, one per question | `haiku` @ `low` | no — `TICKET_SCOUT_*` |

@@ -52,15 +52,16 @@ whole launched session; now that it reaches only the implementer
 ([`../adr/0002-model-tiers-and-agent-roster.md`](../adr/0002-model-tiers-and-agent-roster.md)),
 a one-line ticket has no reason to pay for its neighbour's `high`.
 
-What the session settles is the **implementer's** model and effort. The coordinator a `/ticket`
-or `/implement-tickets` launch starts, and every helper role, run on `config/models.env`, and
+What the session settles is the **implementer's** model and effort. The coordinator each launched
+ticket runs on, and every helper role, come from `config/models.env`, and
 `launch.sh defaults` names the coordinator's in a `COORDINATOR=` line so the question can say so.
 
 Three rules follow from "settled once":
 
 - **A session that launches nothing asks nothing.** The question goes immediately before the
-  first launch, never on load: `/ticket` asks after the developer has picked tickets, and a
-  `/implement-tickets` round that starts nothing asks nothing.
+  first launch, never on load: the board session asks after the developer has picked a wave,
+  `/small-ticket` after it has a ticket, and a round that starts nothing asks nothing. `/ticket`
+  never asks: since ADR 0004 it launches nothing — the board session does.
 - **One launch can override without disturbing the session.** A value the developer names for
   a single ticket goes to that launch alone; the next ticket uses the session's settings again.
 - **The session's setting changes only on request**, and then applies to every launch after it.
@@ -110,7 +111,7 @@ developer rather than to guess.
 
 ## Where a wave records what it chose
 
-`/implement-tickets` writes `**Model:**`, `**Effort:**` and `**Account:**` into each ticket's run
+The board session (`tk.sh launch`) writes `**Model:**`, `**Effort:**` and `**Account:**` into each ticket's run
 state at launch, from the launcher's own lines rather than from what was asked for — the
 `ACCOUNT=` one in particular being verified in the pane. Those summary lines are bare values
 (`MODEL=opus`, `EFFORT=high`) — they say what launched, where the same-named lines from

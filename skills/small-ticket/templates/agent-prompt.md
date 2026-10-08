@@ -77,6 +77,11 @@ a padded list is worse than an empty one, because someone has to read it.
 You do **not** write any of this into the memory file yourself. Reporting is
 yours; deciding what the repo remembers is the developer's.
 
+**Then save the whole report** — everything above, `## Remember` included — to
+`{{REPORT_FILE}}` with the Write tool. It is the one file outside the worktree you
+write: it outlives the worktree, and it is what `ticket-memory-curator` reads when
+the board is done.
+
 ## Inviolable rules (pass on to every subagent)
 
 - **Never** run `git commit`, `git push`, `git add`, `git stash`, `git reset`, `git rebase`, or `git checkout`/`git switch` to another branch. Changes stay uncommitted in the worktree.
