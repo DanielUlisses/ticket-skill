@@ -341,6 +341,15 @@ cmd_why() {
   [[ -s "$errs" ]] && echo "  $(forge_name) said: $(grep -v '^[[:space:]]*$' "$errs" | tail -1)"
   rm -f "$errs"
   echo "LANDED $l"
+  # The open PR, as the status board reads it — or why it can't.
+  if forge_ok && [[ -n "$branch" ]]; then
+    local pr perr; perr="$(mktemp)"
+    if pr="$(forge_pr_open "$branch" 2>"$perr")"; then
+      if [[ -n "$pr" ]]; then echo "OPEN PR $(jq -c '{number, base, isDraft, mergeable, review, checks: [.checks[] | "\(.n)=\(.s)"]}' <<<"$pr")"
+      else echo "OPEN PR none — $(forge_name) lists no active PR from $branch"; fi
+    else echo "OPEN PR unknown — $(forge_name) said: $(grep -v '^[[:space:]]*$' "$perr" | tail -1)"; fi
+    rm -f "$perr"
+  else echo "OPEN PR not asked — $(forge_name) CLI unavailable"; fi
 }
 
 cmd_resolve() {
@@ -423,8 +432,10 @@ board_rows_() {
         phase="${phase:--}"
       fi
       if forge_ok && [[ -n "$branch" ]]; then
-        pr="$(forge_pr_open "$branch" 2>/dev/null || true)"
-        [[ -n "$pr" ]] || pr="null"
+        # A failed lookup leaves the card where git and Herdr put it, so the
+        # forge's own error goes to the view's footer instead of nowhere.
+        pr="$(forge_pr_open "$branch" 2>>"${VIEW_ERRS:-/dev/null}" || true)"
+        jq -e 'type == "object"' <<<"${pr:-null}" >/dev/null 2>&1 || pr="null"
       fi
     fi
     rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" \
@@ -495,9 +506,13 @@ cmd_view() {
     local cols
     # Fit the pane it's in.
     cols="${COLUMNS:-}"; [[ "$cols" =~ ^[0-9]+$ ]] || cols="$(tput cols 2>/dev/null || echo 120)"
-    board_rows | jq -r --argjson W "$cols" --arg mode "$mode" --arg theme "$theme" \
+    local errs; errs="$(mktemp)"
+    VIEW_ERRS="$errs" board_rows | jq -r --argjson W "$cols" --arg mode "$mode" --arg theme "$theme" \
       --arg board "$BOARD_ID" --arg base "$BASE_REF" --arg clock "$(date +%H:%M:%S)" \
-      --arg dm "$dm" --arg de "$de" -f "$SKILL_DIR/scripts/board-view.jq"
+      --arg dm "$dm" --arg de "$de" --arg forge "$(case $FORGE in azure) echo azure ;; github) echo github ;; *) echo local ;; esac)" -f "$SKILL_DIR/scripts/board-view.jq"
+    # The forge's last error, once, so a PR that never reaches the PR column says why.
+    [[ -s "$errs" ]] && printf '%s(%s: %s)%s\n' "${dim:-}" "$(forge_name)" "$(grep -v '^[[:space:]]*$' "$errs" | sort -u | tail -1 | cut -c1-$(( cols > 20 ? cols - 20 : 60 )))" "${off:-}"
+    rm -f "$errs"
   }
   if (( ! watch )); then frame; return; fi
 

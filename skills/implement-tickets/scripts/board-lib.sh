@@ -418,19 +418,22 @@ az_norm() {
   local pr="$1" pol="$2"
   jq -cn --argjson p "$pr" --argjson pol "$pol" --arg web "$AZ_ORG/$(jq -rn --arg s "$AZ_PROJECT" '$s|@uri')/_git/$(jq -rn --arg s "$AZ_REPO" '$s|@uri')" '
     def ok_st: . == "approved" or . == "notApplicable";
-    def reviewer_policy: (.configuration.type.displayName // "") | test("reviewers"; "i");
-    ($pol | map(select(.configuration.isBlocking != false and .configuration.isEnabled != false))) as $blocking |
+    def reviewer_policy: ((.configuration.type.displayName // "") | tostring) | test("reviewers"; "i");
+    # Tolerant of shape: policy evaluations as an array or wrapped in {value: [...]},
+    # and any field that may be missing or null on a fresh PR.
+    ($pol | if type == "array" then . elif type == "object" then (.value // []) else [] end
+          | map(select(.configuration.isBlocking != false and .configuration.isEnabled != false))) as $blocking |
     ($p.reviewers // []) as $rv |
     {number: $p.pullRequestId, url: "\($web)/pullrequest/\($p.pullRequestId)",
-     isDraft: ($p.isDraft // false), base: ($p.targetRefName | sub("^refs/heads/"; "")),
+     isDraft: ($p.isDraft // false), base: (($p.targetRefName // "") | sub("^refs/heads/"; "")),
      mergeable: (if $p.mergeStatus == "succeeded" then "MERGEABLE" elif $p.mergeStatus == "conflicts" then "CONFLICTING" else "UNKNOWN" end),
      review: (if any($rv[]; (.vote // 0) <= -5) then "CHANGES_REQUESTED"
-              elif any($blocking[] | select(reviewer_policy); .status | ok_st | not) then "REVIEW_REQUIRED"
+              elif any($blocking[] | select(reviewer_policy); (.status // "") | ok_st | not) then "REVIEW_REQUIRED"
               elif any($rv[]; .isRequired == true and (.vote // 0) < 5) then "REVIEW_REQUIRED"
               elif any($rv[]; (.vote // 0) >= 5) then "APPROVED" else "" end),
      checks: [$blocking[] | select(reviewer_policy | not) |
        {n: (.configuration.settings.displayName // .configuration.type.displayName // "policy"),
-        s: (if (.status | ok_st) then "ok" elif .status == "running" or .status == "queued" then "pending" else "bad" end)}]}'
+        s: ((.status // "") as $s | if ($s | ok_st) then "ok" elif $s == "running" or $s == "queued" then "pending" else "bad" end)}]}'
 }
 
 az_pr_full() {

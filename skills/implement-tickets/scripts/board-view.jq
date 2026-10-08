@@ -84,7 +84,7 @@ def COLUMNS: [
   {c: "working", t: "In progress",  i: "◐", who: "agent",    r: "green"},
   {c: "review",  t: "Agent review", i: "◑", who: "reviewer", r: "yellow"},
   {c: "human",   t: "Human review", i: "◉", who: "you",      r: "magenta"},
-  {c: "pr",      t: "PR",           i: "⇡", who: "github",   r: "cyan"},
+  {c: "pr",      t: "PR",           i: "⇡", who: $forge,     r: "cyan"},
   {c: "done",    t: "Done",         i: "✓", who: "merged",   r: "dim"}
 ];
 
