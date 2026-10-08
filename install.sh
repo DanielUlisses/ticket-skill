@@ -21,7 +21,7 @@ for DEST in "${DESTS[@]}"; do
   DEST_AGENTS="$DEST/agents"
   mkdir -p "$DEST_SKILLS" "$DEST_AGENTS"
 
-  # /implement-tickets ships no scripts or templates of its own — it reuses /ticket's launcher
+  # /implement-tickets ships the board session's scripts and prompt; its launches reuse /ticket's launcher
   for skill in small-ticket ticket implement-tickets sweep-tickets; do
     mkdir -p "$DEST_SKILLS/$skill"
     cp "$SRC/skills/$skill/SKILL.md" "$DEST_SKILLS/$skill/"
@@ -34,6 +34,10 @@ for DEST in "${DESTS[@]}"; do
     done
   done
   cp "$SRC"/agents/*.md "$DEST_AGENTS/"
+
+  # The shell aliases (tkb, tkv, tkhelp, …) — code, so overwritten like the libraries.
+  cp "$SRC/shell/ticket-aliases.sh" "$DEST_SKILLS/ticket-aliases.sh"
+  echo "installed: $DEST_SKILLS/ticket-aliases.sh"
 
   # A skill installs as a self-contained directory, so the shared libraries go one
   # level up — the same place config/models.env has always gone — where every
@@ -63,9 +67,52 @@ for DEST in "${DESTS[@]}"; do
   echo "installed: $DEST_SKILLS/{small-ticket,ticket,implement-tickets,sweep-tickets} and $DEST_AGENTS/ticket-*.md"
 done
 
-for cmd in herdr git jq gh; do
+# Load the aliases from ~/.bashrc: one line, behind a marker, added once. It
+# points at the first config root installed into. TICKET_NO_BASHRC=1 skips it,
+# TICKET_BASHRC names another rc file (e.g. ~/.zshrc).
+RC="${TICKET_BASHRC:-$HOME/.bashrc}"
+ALIASES="${DESTS[0]}/skills/ticket-aliases.sh"
+if [[ "${TICKET_NO_BASHRC:-0}" == 1 ]]; then
+  echo "skipped $RC (TICKET_NO_BASHRC=1) — to load the aliases: . $ALIASES"
+elif grep -qF '# ticket-skill aliases' "$RC" 2>/dev/null; then
+  echo "aliases: already loaded from $RC"
+else
+  LINE="$(printf '[ -f %q ] && . %q' "$ALIASES" "$ALIASES")"
+  # A managed rc (a symlink into a dotfiles repo or the Nix store, a root-owned
+  # file) can't be appended to: say so and print the line, never fail the install
+  # over it — the skills are already in place.
+  # A managed rc usually loads a per-user hook for exactly this: a ~/.bashrc.d/
+  # directory or a ~/.bashrc.local-style file. Use the one it names.
+  hook=""
+  if [[ -z "${TICKET_BASHRC:-}" && -f "$RC" && ! -w "$(readlink -f "$RC" 2>/dev/null || echo "$RC")" ]]; then
+    if grep -qE 'bashrc\.d' "$RC" 2>/dev/null; then hook="$HOME/.bashrc.d/ticket-skill.sh"
+    else
+      for f in .bashrc.local .bashrc_local .bash_local .bashrc.user .bashrc.custom .bash_aliases .aliases; do
+        grep -qF "$f" "$RC" 2>/dev/null && { hook="$HOME/$f"; break; }
+      done
+    fi
+  fi
+  if [[ -n "$hook" ]] && grep -qF '# ticket-skill aliases' "$hook" 2>/dev/null; then
+    echo "aliases: already loaded from $hook (sourced by $RC)"
+  elif [[ -n "$hook" ]] && { mkdir -p "$(dirname "$hook")" && printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$hook"; } 2>/dev/null; then
+    echo "aliases: $RC isn't writable but loads $hook — added the line there; open a new shell or run: . $ALIASES"
+  elif { printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$RC"; } 2>/dev/null; then
+    echo "aliases: added a line to $RC — open a new shell or run: . $ALIASES"
+  else
+    target="$RC"; [[ -L "$RC" ]] && target="$RC -> $(readlink -f "$RC" 2>/dev/null || readlink "$RC")"
+    echo "warning: can't write $target (not writable) — the aliases weren't added to it."
+    echo "  Add this line wherever your shell config is managed (your dotfiles' bashrc, for one):"
+    echo "    $LINE"
+    echo "  or re-run with TICKET_BASHRC=<a writable rc file sourced by your shell>, or TICKET_NO_BASHRC=1 to skip."
+  fi
+fi
+
+for cmd in herdr git jq; do
   command -v "$cmd" >/dev/null || echo "warning: '$cmd' not found in PATH"
 done
+# PRs need the forge's CLI: gh for GitHub, az (+ azure-devops extension) for Azure DevOps.
+command -v gh >/dev/null || command -v az >/dev/null \
+  || echo "warning: neither 'gh' nor 'az' found in PATH — the board can't open, gate or merge PRs"
 # The launchers create worktrees with `herdr worktree create` rather than Omarchy's
 # `ga`, and cleanup is /sweep-tickets rather than `gd` — so neither shell function
 # is on any path these skills take, and nothing here warns about them. `gd` still

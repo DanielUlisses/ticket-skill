@@ -36,7 +36,7 @@ on every install.
 ## The launchers are parameters, not forks
 
 `/ticket` and `/small-ticket` differ in six things, and only six: `SKILL_DIR`,
-`TEMPLATE`, `RUN_NAME`, `PERMISSION_MODE`, `PERMISSION_LABEL` and `DISALLOWED_TOOLS`.
+`TEMPLATE`, `RUN_NAME`, `PERMISSION_MODE`, `PERMISSION_LABEL` and `DISALLOWED_TOOLS` — plus `COORDINATOR` (whose model the session itself runs on) and, for `/small-ticket` only, `DOC_TEMPLATE` (what a `--doc` launch renders; ADR 0005).
 Each `launch.sh` sets those and calls `launcher_main "$@"`. The differences are real
 and must not be flattened — `/small-ticket` starts in plan mode with a developer
 watching, `/ticket` starts unattended with eight git verbs blocked — but they are

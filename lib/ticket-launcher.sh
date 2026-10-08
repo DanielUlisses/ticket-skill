@@ -20,6 +20,16 @@
 #                     always read "plan mode" where /ticket's reads the mode
 #                     verbatim, and that output is contractual.
 #   DISALLOWED_TOOLS  array of --disallowedTools patterns
+#   DOC_TEMPLATE      optional: the template a `--doc` launch renders instead —
+#                     a ticket whose deliverable is a document (presales scope,
+#                     proposal, estimate), not code. Unset means the launcher has
+#                     no document mode and `--doc` is refused. ADR 0005.
+#   COORDINATOR       `config` — the session runs on TICKET_COORD_MODEL/EFFORT and
+#                     only the ticket-implementer subagent gets the ticket's model
+#                     and effort (/ticket, whose plan is already settled); or
+#                     `impl` — the session itself runs on the ticket's model and
+#                     effort (/small-ticket, whose orchestrator plans with the
+#                     developer). See docs/adr/0002-model-tiers-and-agent-roster.md.
 #
 # The caller sets PERMISSION_MODE after calling load_ticket_models, so a value in
 # ticket-models.env still reaches it — the order the launchers have always used.
@@ -411,6 +421,20 @@ effort_valid() {
 require_valid_effort() {
   effort_valid "$IMPL_EFFORT" \
     || die "invalid effort '$IMPL_EFFORT' from $IMPL_EFFORT_SOURCE — one of: $EFFORT_LEVELS"
+  # The fixed roles have no flag to outrank them, so whatever the config or the
+  # environment says is final — checked here with the implementer's for the same
+  # reason: an unknown level in an --agents definition is as silent as one on
+  # the command line.
+  local role var
+  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
+    # Under COORDINATOR=impl the coordinator's own setting is never used.
+    [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
+    var="${role}_EFFORT"
+    effort_valid "${!var}" \
+      || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
+  done
+  effort_valid "$REVIEW_EFFORT_UNTESTED" \
+    || die "invalid effort '$REVIEW_EFFORT_UNTESTED' for TICKET_REVIEW_EFFORT_UNTESTED — one of: $EFFORT_LEVELS"
 }
 
 # Says where a resolved value came from, for `launch.sh defaults` to quote.
@@ -450,6 +474,21 @@ load_ticket_models() {
   IMPL_MODEL="${TICKET_IMPL_MODEL:-opus}"
   REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
   TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
+  # The roster beyond the three original roles, and every fixed role's effort.
+  # Fallbacks match config/models.env, for a ticket-models.env installed before
+  # these knobs existed — the same cover IMPL_EFFORT's fallback gives.
+  COORD_MODEL="${TICKET_COORD_MODEL:-opus}";       COORD_EFFORT="${TICKET_COORD_EFFORT:-low}"
+  SCOUT_MODEL="${TICKET_SCOUT_MODEL:-haiku}";      SCOUT_EFFORT="${TICKET_SCOUT_EFFORT:-low}"
+  RESEARCH_MODEL="${TICKET_RESEARCH_MODEL:-haiku}"; RESEARCH_EFFORT="${TICKET_RESEARCH_EFFORT:-medium}"
+  CHECK_MODEL="${TICKET_CHECK_MODEL:-haiku}";      CHECK_EFFORT="${TICKET_CHECK_EFFORT:-low}"
+  REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
+  REVIEW_EFFORT_UNTESTED="${TICKET_REVIEW_EFFORT_UNTESTED:-high}"
+  BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
+  MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
+  RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
+  PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
+  DOCREVIEW_MODEL="${TICKET_DOC_REVIEW_MODEL:-opus}"; DOCREVIEW_EFFORT="${TICKET_DOC_REVIEW_EFFORT:-medium}"
+  TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
 
   # The in-script fallback is what covers a ticket-models.env installed before
@@ -502,6 +541,11 @@ print_launch_defaults() {
   echo "MODEL=$IMPL_MODEL (from $IMPL_MODEL_SOURCE)"
   echo "EFFORT=$IMPL_EFFORT (from $IMPL_EFFORT_SOURCE)"
   echo "EFFORTS=$EFFORT_LEVELS"
+  # Only where the session coordinates on its own setting (/ticket): there MODEL=
+  # and EFFORT= reach the implementer alone, and the question should know it.
+  [[ "${COORDINATOR:-impl}" == config ]] && echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
+  # What board.sh starts the board session on.
+  [[ "${COORDINATOR:-impl}" == config ]] && echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -522,6 +566,74 @@ print_launch_defaults() {
     echo "ACCOUNT=unknown (claude-acc activate failed in $parent — ask the developer, don't guess)"
   fi
   echo "ACCOUNTS=$(account_names | tr '\n' ' ' | sed 's/ $//')"
+}
+
+# ---- the subagent roster, defined per launch -----------------------------------
+# Claude Code reads a subagent's model and effort from its frontmatter, which
+# can't read config/models.env and can't vary per ticket. `claude --agents
+# '<json>'` can do both: a definition passed there outranks ~/.claude/agents/
+# for that session only. So every installed agents/ticket-*.md is re-issued here
+# with its prompt unchanged and the model and effort this launch resolved — the
+# ticket's own for ticket-implementer, config/models.env's for the rest. The
+# frontmatter copies stay as the fallback for an agent invoked any other way.
+#
+# TICKET_SESSION_AGENTS=0 skips it and launches exactly as before this existed:
+# the frontmatter's model and effort apply, and only an explicit `model` on the
+# Agent tool call varies them.
+role_of_agent() {
+  case "$1" in
+    ticket-implementer)      echo IMPL ;;
+    ticket-reviewer)         echo REVIEW ;;
+    ticket-tester)           echo TEST ;;
+    ticket-scout)            echo SCOUT ;;
+    ticket-researcher)       echo RESEARCH ;;
+    ticket-criteria-checker) echo CHECK ;;
+    ticket-merger)           echo MERGE ;;
+    ticket-retro)            echo RETRO ;;
+    ticket-pr-creator)       echo PR ;;
+    ticket-doc-reviewer)     echo DOCREVIEW ;;
+    *)                       return 1 ;;
+  esac
+}
+
+# Sets SESSION_AGENTS_JSON (empty when skipped) and SESSION_AGENTS_STATUS.
+# With names, only those agents are defined — every definition is prompt the
+# session pays for, so a session gets the roster it uses and no more.
+build_session_agents() {
+  local only=" $* "
+  SESSION_AGENTS_JSON=""
+  if [[ "${TICKET_SESSION_AGENTS:-1}" == 0 ]]; then
+    SESSION_AGENTS_STATUS="off (TICKET_SESSION_AGENTS=0 — subagents run on their frontmatter)"
+    return 0
+  fi
+  # Installed: ~/.claude/skills/<skill> -> ~/.claude/agents. Source tree:
+  # <repo>/skills/<skill> -> <repo>/agents. The same two-up hop finds both.
+  local dir="${TICKET_AGENTS_DIR:-$(dirname "$(dirname "$SKILL_DIR")")/agents}"
+  local json='{}' file name desc tools body role model_var effort_var names=()
+  for file in "$dir"/ticket-*.md; do
+    [[ -f "$file" ]] || continue
+    # Frontmatter is the block between the first two `---` lines; the body is
+    # everything after the second, verbatim.
+    name="$(awk '/^---$/{n++; next} n==1 && /^name:/{sub(/^name:[ ]*/,""); print; exit}' "$file")"
+    role="$(role_of_agent "$name")" || continue
+    [[ "$only" == "  " || "$only" == *" $name "* ]] || continue
+    desc="$(awk '/^---$/{n++; next} n==1 && /^description:/{sub(/^description:[ ]*/,""); print; exit}' "$file")"
+    tools="$(awk '/^---$/{n++; next} n==1 && /^tools:/{sub(/^tools:[ ]*/,""); print; exit}' "$file")"
+    body="$(awk 'n>=2{print; next} /^---$/{n++}' "$file")"
+    model_var="${role}_MODEL"; effort_var="${role}_EFFORT"
+    json="$(jq -c --arg n "$name" --arg d "$desc" --arg t "$tools" --arg p "$body" \
+              --arg m "${!model_var}" --arg e "${!effort_var}" \
+      '. + {($n): {description: $d, prompt: $p, model: $m, effort: $e,
+                   tools: ($t | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))}}' \
+      <<<"$json")" || die "couldn't build the --agents definition for $name from $file"
+    names+=("$name=${!model_var}/${!effort_var}")
+  done
+  if [[ ${#names[@]} -eq 0 ]]; then
+    SESSION_AGENTS_STATUS="none found in $dir (subagents run on their frontmatter — re-run install.sh)"
+    return 0
+  fi
+  SESSION_AGENTS_JSON="$json"
+  SESSION_AGENTS_STATUS="${names[*]}"
 }
 
 # ---- the launch ---------------------------------------------------------------
@@ -564,6 +676,8 @@ launcher_main() {
   # run, and a fifth positional would make the call site a row of bare words
   # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
+  DOC=0   # only the --doc flag sets it; never inherited from the environment
+  REVIEW_EFFORT_FLAG=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -573,6 +687,10 @@ launcher_main() {
       --effort)    [[ $# -ge 2 ]] || die "--effort needs a level — one of: $EFFORT_LEVELS"
                    IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
       --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
+      --doc)       DOC=1; shift ;;
+      --review-effort) [[ $# -ge 2 ]] || die "--review-effort needs a level — one of: $EFFORT_LEVELS"
+                   REVIEW_EFFORT_FLAG="$2"; shift 2 ;;
+      --review-effort=*) REVIEW_EFFORT_FLAG="${1#--review-effort=}"; shift ;;
       -*)          die "unknown flag: $1" ;;
       *)           ARGS+=("$1"); shift ;;
     esac
@@ -593,16 +711,41 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--review-effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  if (( ${DOC:-0} )); then
+    [[ -n "${DOC_TEMPLATE:-}" ]] || die "--doc: this launcher has no document mode — use /small-ticket"
+    TEMPLATE="$DOC_TEMPLATE"
+  fi
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
+  # How hard the reviewer thinks. A ticket nothing can test — its Seams line says
+  # None: no suite, or infra that only runs live — is reviewed at
+  # TICKET_REVIEW_EFFORT_UNTESTED, since that review is the last check before a
+  # real environment. --review-effort (the /small-ticket skill passes it when the
+  # plan-to-be has no suite) beats both.
+  REVIEW_EFFORT_WHY="config"
+  if [[ -n "$REVIEW_EFFORT_FLAG" ]]; then
+    effort_valid "$REVIEW_EFFORT_FLAG" || die "invalid --review-effort '$REVIEW_EFFORT_FLAG' — one of: $EFFORT_LEVELS"
+    REVIEW_EFFORT="$REVIEW_EFFORT_FLAG"; REVIEW_EFFORT_WHY="the --review-effort flag"
+  elif grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
+    REVIEW_EFFORT="$REVIEW_EFFORT_UNTESTED"; REVIEW_EFFORT_WHY="untested: the ticket's Seams line says None"
+  fi
   [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
 
   [[ "$BRANCH" =~ ^[a-z][a-z0-9-]{2,39}$ && "$BRANCH" != *--* && "$BRANCH" != *- ]] \
     || die "invalid branch '$BRANCH' — use kebab-case without '/' or '--', up to 40 chars (e.g. fix-webhook-retry)"
   git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
   [[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
+  # /small-ticket's orchestrator plans with the developer, so it thinks on the
+  # ticket's model and effort; /ticket's coordinator only dispatches a settled
+  # plan, so it runs on its own (cheap) setting from config/models.env.
+  case "${COORDINATOR:-impl}" in
+    impl)   COORD_MODEL="$IMPL_MODEL"; COORD_EFFORT="$IMPL_EFFORT" ;;
+    config) ;;
+    *)      die "internal: COORDINATOR must be 'impl' or 'config', not '$COORDINATOR'" ;;
+  esac
+  [[ "$COORD_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid coordinator model '$COORD_MODEL'"
   check_ticket_account
 
   # ---- main repo (--path keeps the worktree at ../<repo>--<branch>, so `gd` still works) ----
@@ -614,20 +757,30 @@ launcher_main() {
 
   # ---- update the base branch before creating the worktree -------------------------
   # `herdr worktree create --base` branches from the root's ref, so the root
-  # needs to be on the base branch and up to date with the remote.
-  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 || die "remote '$REMOTE' doesn't exist in $ROOT"
+  # needs to be on the base branch and up to date with the remote. A repo with
+  # no remote at all — a presales repo whose output is a PDF, say — has nothing
+  # to update from: it branches from the local base as it stands.
+  HAS_REMOTE=0
+  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
   resolve_base_branch
 
   CURRENT="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
   [[ "$CURRENT" == "$BASE_BRANCH" ]] \
     || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
 
-  log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
-  run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
-    || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
+  if (( HAS_REMOTE )); then
+    log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
+    run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
+      || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
+    BASE_SOURCE="updated via pull"
+  else
+    log "no '$REMOTE' remote in $ROOT — branching from the local '$BASE_BRANCH' as it stands"
+    BASE_SOURCE="local, no remote"
+  fi
 
   BASE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-  REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
+  REMOTE_COMMIT=""
+  (( HAS_REMOTE )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
   if [[ -n "$REMOTE_COMMIT" && "$BASE_COMMIT" != "$REMOTE_COMMIT" ]]; then
     if git -C "$ROOT" merge-base --is-ancestor "$REMOTE_COMMIT" "$BASE_COMMIT"; then
       log "warning: local '$BASE_BRANCH' has commits not yet pushed to $REMOTE"
@@ -657,6 +810,20 @@ launcher_main() {
   tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
   tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
   tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
+  tpl="${tpl//'{{SCOUT_MODEL}}'/"$SCOUT_MODEL"}"
+  tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
+  tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
+  tpl="${tpl//'{{DOC_REVIEW_MODEL}}'/"$DOCREVIEW_MODEL"}"
+  # The one file outside the worktree a ticket writes: its final report, kept
+  # where it outlives the worktree for ticket-retro to read.
+  REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
+  mkdir -p "$(dirname "$REPORT_FILE")"
+  tpl="${tpl//'{{REPORT_FILE}}'/"$REPORT_FILE"}"
+  # One word, rewritten at each phase of the brief, for `tk.sh view`: Herdr shows
+  # an agent as "working" whether it's implementing or reviewing.
+  PHASE_FILE="$(dirname "$(dirname "$REPORT_FILE")")/phase/$BRANCH"
+  mkdir -p "$(dirname "$PHASE_FILE")"
+  tpl="${tpl//'{{PHASE_FILE}}'/"$PHASE_FILE"}"
   # The two prose payloads go last, so the replacements above can't reach inside
   # them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
   # above the ticket in the template, so filling it first would let a `{{TICKET}}`
@@ -805,11 +972,24 @@ launcher_main() {
   # and must not be flattened: /small-ticket starts in plan mode with only
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
+  # A ticket's session uses the ticket-side roster; the merger, the retro and
+  # the PR creator belong to the board session (scripts/board.sh).
+  if (( ${DOC:-0} )); then
+    build_session_agents ticket-implementer ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  else
+    build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  fi
+  local -a agents_arg=()
+  [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
-  log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, effort $IMPL_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE"
+  log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
+  log "subagents: $SESSION_AGENTS_STATUS"
   set +e
+  # --agents goes before --disallowedTools: that one is variadic and would
+  # swallow anything after it.
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
-    --model "$IMPL_MODEL" --effort "$IMPL_EFFORT" --permission-mode "$PERMISSION_MODE" \
+    --model "$COORD_MODEL" --effort "$COORD_EFFORT" --permission-mode "$PERMISSION_MODE" \
+    ${agents_arg[@]+"${agents_arg[@]}"} \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
   set -e
@@ -817,15 +997,20 @@ launcher_main() {
   summary() {
     cat <<SUMMARY
 WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
-BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, updated via pull)
+BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
+KIND=$( (( ${DOC:-0} )) && echo document || echo code )
 WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
 MODEL=$IMPL_MODEL
 EFFORT=$IMPL_EFFORT
+COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
+REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
+SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
+REPORT_FILE=${REPORT_FILE:-?}
 PROMPT_FILE=$PROMPT_FILE
 SUMMARY
   }

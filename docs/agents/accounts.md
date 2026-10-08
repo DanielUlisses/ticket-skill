@@ -34,8 +34,8 @@ section is the knob; that one is when it gets turned.
 beats it — the same order, and the same reason, as the model knob: the skills'
 `allowed-tools` entries are prefix patterns like
 `Bash(~/.claude/skills/ticket/scripts/launch.sh *)`, which a `TICKET_ACCOUNT=x ~/.claude/…`
-prefix would no longer match. Both launchers take it, and `/implement-tickets` gets it
-free, since it runs `/ticket`'s launcher.
+prefix would no longer match. Both launchers take it, and the board session gets it
+free, since `tk.sh launch` runs `/ticket`'s launcher.
 
 `launch.sh defaults` is how a question states what inheriting would actually mean. It prints
 the account a **new worktree** would inherit — resolved at the directory the worktrees are cut
@@ -220,7 +220,7 @@ The developer is asked before the file is written: `list` writes nothing, and `/
 every removable item to them one at a time.
 
 **This is reconciliation, not teardown-before-removal, deliberately.** The agents here never merge —
-`/implement-tickets` coordinates a merge the developer performs and `/sweep-tickets` doesn't merge at
+The board session merges only on the developer's word, behind scripted gates, and `/sweep-tickets` doesn't merge at
 all — so there is no agent-side moment before the directory goes, and a hook on any one merge command
 would miss the hand-run `gh`, the web Merge button and a local `git merge` alike. The only moment a
 link can still be taken back *through claude-acc* is while the directory exists, and the sweep's other

@@ -38,6 +38,9 @@
 #   TICKET_AGENT_KIND      (default: claude)           — Claude Code kind in Herdr (`herdr agent`)
 #   TICKET_IMPL_MODEL       — implementation model; see resolution order above (fallback: opus)
 #   TICKET_IMPL_EFFORT      — how hard the implementation model thinks (low|medium|high|xhigh|max); --effort beats it; see resolution order above (fallback: medium)
+#   TICKET_COORD_MODEL / TICKET_COORD_EFFORT (default: opus / low) — the launched session itself, which coordinates; the model and effort above reach only its ticket-implementer subagent
+#   TICKET_SESSION_AGENTS  (default: 1) — 0 skips redefining the ticket-* subagents through --agents; they then run on their frontmatter
+#   TICKET_AGENTS_DIR      (default: <config-root>/agents) — where the ticket-*.md definitions are read from
 #   TICKET_IMPL_PERMISSION_MODE (default: bypassPermissions) — acceptEdits only covers Edit/Write, not the Bash implement/test loop
 #   TICKET_REMOTE          (default: origin)
 #   TICKET_BASE_BRANCH     (default: remote's default branch, e.g. main)
@@ -85,6 +88,9 @@ TEMPLATE="$SKILL_DIR/templates/ticket-agent-prompt.md"
 RUN_NAME="ticket"
 PERMISSION_MODE="${TICKET_IMPL_PERMISSION_MODE:-bypassPermissions}"
 PERMISSION_LABEL="$PERMISSION_MODE"
+# The plan is settled, so the session coordinates on TICKET_COORD_MODEL/EFFORT
+# and the ticket's model and effort go to the ticket-implementer subagent only.
+COORDINATOR="config"
 DISALLOWED_TOOLS=(
   "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)"
   "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)"

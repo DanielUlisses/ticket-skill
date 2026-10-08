@@ -86,7 +86,7 @@ substitutes nothing, and takes the placeholder's own blank line with it.
 |---|---|---|
 | `/small-ticket` | `skills/small-ticket/templates/agent-prompt.md` | its own `launch.sh` |
 | `/ticket` | `skills/ticket/templates/ticket-agent-prompt.md` | its own `launch.sh` |
-| `/implement-tickets` | the same as `/ticket` | it reuses `/ticket`'s `launch.sh` |
+| `/implement-tickets` (the board session) | the same as `/ticket` | `tk.sh launch` runs `/ticket`'s `launch.sh` |
 
 The template is the only part of this each `launch.sh` still decides for itself; the
 resolution and the wrapping are the shared library's.
@@ -97,21 +97,26 @@ The preamble tells the agent three things the memory file itself shouldn't have 
 repeat: that it is starting knowledge rather than orders, that the code in front of it
 wins wherever the two disagree, and that it must not edit the file.
 
-**Memory is read once per launch, not once per round.** `/implement-tickets` runs a
+**Memory is read once per launch, not once per round.** The board session runs a
 digest at the top of every coordination round, and memory is emphatically not part of it
 — that digest is six fields per ticket and must stay cheap enough to run every round.
 Memory is prose, it is read once, by the launcher, at the moment a worktree is created.
 
-### In `/small-ticket`, the orchestrator has to pass it on
+### The coordinator has to pass it on
 
-`/small-ticket` briefs an orchestrator that delegates the actual work to the
-`ticket-implementer`, `ticket-reviewer` and `ticket-tester` subagents. Those subagents get
+Both `/small-ticket` and, since ADR 0002, `/ticket` brief a coordinator that delegates the
+actual work to the `ticket-*` subagents. Those subagents get
 a fresh context and **never see the launcher's prompt** — injection reaches the
 orchestrator and stops there. So the orchestrator's template tells it, at the Phase 2
 hand-off, to pass on whatever in the memory bears on the files the implementer is about to
 touch. Review and testing aren't given it: they read the diff and run the checks, and
-neither was worth the tokens. If that turns out wrong, Phase 3 and 4 of
-`skills/small-ticket/templates/agent-prompt.md` are where it would change.
+neither was worth the tokens; nor are the Haiku scouts, researchers and criteria checkers,
+which answer one narrow question each. If that turns out wrong, the verify phases of
+`skills/small-ticket/templates/agent-prompt.md` and `skills/ticket/templates/ticket-agent-prompt.md`
+are where it would change.
+
+The scouts, researchers and criteria checkers don't close with `## Remember` — their whole
+report is a fact list for the coordinator, which is free to carry a durable one forward.
 
 ## How capture works
 

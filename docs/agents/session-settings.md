@@ -30,27 +30,38 @@ setting, and the answer is held for the rest of the session.
 | Setting | Default | Reaches the launcher as |
 |---|---|---|
 | Account | inherited — whatever the directory holding the worktrees resolves to | `--account <name>`, or no flag at all where it inherits |
-| Model | `ticket-models.env` ([`models.md`](models.md)) | the positional `[model]`, always passed explicitly |
-| Effort | `medium`, from `ticket-models.env` ([`models.md`](models.md)) | `--effort <level>`, always passed explicitly |
+| Model | the ticket's suggestion, else `ticket-models.env` ([`models.md`](models.md)) | the positional `[model]`, always passed explicitly |
+| Effort | the ticket's suggestion, else `medium` from `ticket-models.env` ([`models.md`](models.md)) | `--effort <level>`, always passed explicitly |
 
 A further setting is another row and another field carried through the session, not another
 round of questions — which is what the table shape is for. Effort was the first setting added
 after that sentence was written, and it went in as a row.
 
-Effort differs from the other two in where its *default* comes from: the ticket itself can
-suggest one. `/ticket` Phase 2 writes a `**Suggested effort:**` line into each ticket body with
-one clause of justification, and the launch question offers that level pre-selected instead of
-a bare `medium` — the coordinator suggests, the developer decides, the same asymmetry project
-memory has. A ticket carrying no such line (every ticket written before this) falls back to the
-launcher's `EFFORT=` default, and where a wave's tickets disagree, the question names the spread
-and pre-selects the highest of them: the ticket that asked for more thinking is the one that
-loses by getting less.
+Model and effort differ from the account in where their *default* comes from: the ticket
+itself can suggest one. `/ticket` Phase 2 writes `**Suggested model:**` and
+`**Suggested effort:**` lines into each ticket body, each with one clause of justification,
+and the launch question offers them pre-selected instead of the launcher's bare defaults — the
+coordinator suggests, the developer decides, the same asymmetry project memory has. A ticket
+carrying no such line (every ticket written before them) falls back to `MODEL=` / `EFFORT=`.
+
+Where a wave's tickets disagree, the question pre-selects **`As each ticket suggests`**: a
+*policy* rather than a value. The session holds it exactly as it would hold a value — settled
+once, never re-asked — and every launch under it passes that ticket's own suggestion. This
+replaced "pre-select the highest of them", which made sense while one effort governed the
+whole launched session; now that it reaches only the implementer
+([`../adr/0002-model-tiers-and-agent-roster.md`](../adr/0002-model-tiers-and-agent-roster.md)),
+a one-line ticket has no reason to pay for its neighbour's `high`.
+
+What the session settles is the **implementer's** model and effort. The coordinator each launched
+ticket runs on, and every helper role, come from `config/models.env`, and
+`launch.sh defaults` names the coordinator's in a `COORDINATOR=` line so the question can say so.
 
 Three rules follow from "settled once":
 
 - **A session that launches nothing asks nothing.** The question goes immediately before the
-  first launch, never on load: `/ticket` asks after the developer has picked tickets, and a
-  `/implement-tickets` round that starts nothing asks nothing.
+  first launch, never on load: the board session asks after the developer has picked a wave,
+  `/small-ticket` after it has a ticket, and a round that starts nothing asks nothing. `/ticket`
+  never asks: since ADR 0004 it launches nothing — the board session does.
 - **One launch can override without disturbing the session.** A value the developer names for
   a single ticket goes to that launch alone; the next ticket uses the session's settings again.
 - **The session's setting changes only on request**, and then applies to every launch after it.
@@ -100,7 +111,7 @@ developer rather than to guess.
 
 ## Where a wave records what it chose
 
-`/implement-tickets` writes `**Model:**`, `**Effort:**` and `**Account:**` into each ticket's run
+The board session (`tk.sh launch`) writes `**Model:**`, `**Effort:**` and `**Account:**` into each ticket's run
 state at launch, from the launcher's own lines rather than from what was asked for — the
 `ACCOUNT=` one in particular being verified in the pane. Those summary lines are bare values
 (`MODEL=opus`, `EFFORT=high`) — they say what launched, where the same-named lines from

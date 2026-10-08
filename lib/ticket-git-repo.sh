@@ -56,10 +56,12 @@ resolve_base_branch() {
 
 # git over the network: no credential prompt, and a timeout where the system has
 # one, so it can't hang. Always against ROOT.
+# GIT_TERMINAL_PROMPT=0 alone doesn't stop Git Credential Manager waiting on a
+# browser sign-in, or ssh on a passphrase, so those are switched off too.
 run_git_net() {
-  if command -v timeout >/dev/null 2>&1; then
-    GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$ROOT" "$@"
-  else
-    GIT_TERMINAL_PROMPT=0 git -C "$ROOT" "$@"
-  fi
+  local -a t=()
+  command -v timeout >/dev/null 2>&1 && t=(timeout "${TICKET_GIT_TIMEOUT:-120}")
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+  GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" \
+    "${t[@]}" git -C "$ROOT" "$@" </dev/null
 }
