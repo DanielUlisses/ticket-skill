@@ -7,7 +7,7 @@
 # to approve the plan in the pane.
 #
 # Usage:
-#   launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] [--effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #   launch.sh defaults
 #
@@ -82,6 +82,9 @@ load_ticket_models
 
 # ---- what makes this /small-ticket and not /ticket ---------------------------
 TEMPLATE="$SKILL_DIR/templates/agent-prompt.md"
+# `--doc`: a ticket whose deliverable is a document (presales scope, proposal,
+# estimate) — scoped, drafted, reviewed and rendered instead of coded and tested.
+DOC_TEMPLATE="$SKILL_DIR/templates/doc-prompt.md"
 RUN_NAME="small-ticket"
 PERMISSION_MODE="plan"
 PERMISSION_LABEL="plan mode"

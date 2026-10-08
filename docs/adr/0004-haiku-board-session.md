@@ -83,6 +83,9 @@ Two facts make Haiku worth the work of moving that prose into code:
 - **`--tools` and subagents.** If a session's `--tools` bounds what its subagents may use, the
   merger needs Edit/Grep/Glob and the researcher the web tools, so they're in the list — a few
   thousand tokens of definitions the board itself never calls. Trim once confirmed either way.
+- **The mattpocock skills need v1.3 or later** for `pr` and `retro`; `pr-open.sh check` and
+  `tk.sh retro` print `none found` for a missing one, and the agents fall back to the template or
+  the categories in their own prompt.
 - **`--disable-slash-commands`** may also hide `mattpocock-skills:resolving-merge-conflicts` from
   the merger; its prompt carries the procedure itself. `TICKET_BOARD_SKILLS=1` brings skills back.
 - **Not yet run live.** First real board: check `board.sh --print`, then that the first digest,

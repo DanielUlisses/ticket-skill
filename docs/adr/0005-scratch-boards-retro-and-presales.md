@@ -39,3 +39,28 @@ access. The curator is replaced by **`ticket-retro`** (Sonnet @ medium), which d
   environment changes by severity. It writes nothing.
 - It runs **before `/sweep-tickets`**, as the board's last step: the board prompt offers it when every
   ticket is resolved and only then points at the sweep.
+
+## 3. `/small-ticket` writes documents: `--doc`, and repos with no remote
+
+Presales work is mostly scoping a deliverable and writing it into a repo of documents — often with
+no remote — whose output is a Markdown file or a PDF. Two things stopped `/small-ticket` doing that:
+
+- **The launcher required a remote** and pulled before branching. Now, with no `TICKET_REMOTE`
+  remote, it logs it, skips the pull and branches from the local base as it stands; the summary's
+  `BRANCH=` line says `local, no remote`. `/sweep-tickets` already fell back to the local base, and
+  the board scripts do too (section 1).
+- **The brief and the reviewer assumed code** — seams, a test suite, a security/IaC checklist. A
+  `--doc` launch (only `/small-ticket` has one; the wrapper sets `DOC_TEMPLATE`) renders
+  `templates/doc-prompt.md` instead, and swaps `ticket-reviewer` for **`ticket-doc-reviewer`**
+  (Opus @ medium, `TICKET_DOC_REVIEW_*`). The orchestrator gathers sources with scouts and
+  researchers, scopes the document with the developer — `mattpocock-skills:grilling` where the
+  scope is open, since a presales document commits someone to something — and presents the
+  **outline as the plan**: audience, sections, in/out of scope and assumptions, the estimate
+  method, sources, output and render command, acceptance criteria. `ticket-implementer` drafts it
+  with every claim traced to a source and every assumption marked; `ticket-doc-reviewer` reviews
+  commitments, accuracy, numbers, coverage, clarity and house style; a tester renders it (the
+  repo's command, or `pandoc`/`typst`) while criteria checkers check the outline's criteria. The
+  hand-off leads with the open assumptions to confirm with the client. Nothing is sent anywhere.
+
+The summary's new `KIND=` line says which brief launched. `/small-ticket` decides between code and
+document from the ticket's deliverable and says so in one line; it asks only when it can't tell.

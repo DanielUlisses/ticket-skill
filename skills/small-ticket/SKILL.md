@@ -1,6 +1,6 @@
 ---
 name: small-ticket
-description: Opens an isolated Herdr worktree for one already-defined ticket, plans it in Claude Code, then implements, reviews, and tests it via subagents, leaving everything uncommitted. For a rough idea that still needs sharpening and splitting into tickets, use /ticket instead.
+description: Opens an isolated Herdr worktree for one already-defined ticket, plans it in Claude Code, then implements, reviews, and tests it via subagents, leaving everything uncommitted. Also takes document tickets — a presales scope, proposal or estimate written as Markdown or a PDF, in a repo that may have no remote. For a rough idea that still needs sharpening and splitting into tickets, use /ticket instead.
 argument-hint: "<task description>"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/small-ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write, AskUserQuestion
@@ -29,6 +29,12 @@ If the ticket is empty, ask for the task description and stop.
   - `type` ∈ `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`.
   - `slug` with 2–4 semantic words. E.g.: `fix-webhook-retry-backoff`, `feat-aks-spot-nodepool`.
   - **No `/` and no `--`**: the launcher puts the branch in the worktree directory name (`../<repo>--<branch>`) and `gd` splits repo/branch at the first `--`.
+
+## 2b. Code or document?
+
+A ticket is a **document** ticket when its deliverable is the document itself — a presales scope, a proposal, a statement of work, an estimate, a report — written as Markdown and maybe rendered to a PDF, rather than a change to a program. The repo is often a plain folder of such documents, sometimes with no remote. Say which you decided, in one line, and on what: "document ticket — the deliverable is a scope for the client". Ask only when you genuinely can't tell.
+
+A document ticket launches with `--doc`: the orchestrator scopes the document with the developer (grilling where the scope is open), outlines it as the plan, and its subagents draft, review (`ticket-doc-reviewer`: commitments, accuracy, numbers, coverage) and render it — no seams, no test suite. Its branch type is `docs`.
 
 ## 3. Save the ticket to a file
 
@@ -82,7 +88,7 @@ Neither is a reason to re-ask on the next ticket; re-ask only when the developer
 ## 5. Run the launcher
 
 ```bash
-~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" "<label>" "<branch>" "<ticket-file>" "<model>"
+~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" [--doc] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
 All three values come from step 4. `--account <name>` is passed only where the session settled on
@@ -95,7 +101,9 @@ ticket replaces one value here and leaves the session's settings alone. The summ
 way, verified in the pane, and its `MODEL=` and `EFFORT=` lines what it started on; see
 `docs/agents/accounts.md` and `docs/agents/session-settings.md`.
 
-The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --effort <the chosen effort> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model and effort drive this pane's plan-mode orchestrator — it plans with the developer, so it thinks on the ticket's setting — and the `ticket-implementer` subagent, which the launcher redefines through `--agents` with the same two values. Every other role (`ticket-reviewer`, `ticket-tester`, `ticket-scout`, `ticket-researcher`, `ticket-criteria-checker`) gets its model **and effort** from `config/models.env` the same way; the summary's `SUBAGENTS=` line lists them. See `docs/agents/models.md`.
+`--doc` only for a document ticket (step 2b): it sends `templates/doc-prompt.md` instead of `templates/agent-prompt.md`, and puts `ticket-doc-reviewer` in place of `ticket-reviewer`. The summary's `KIND=` line says which launched.
+
+The script: discovers the main repo root (even if this session is inside a worktree), updates the base branch (`git pull --ff-only origin main`, or the remote's default branch — a repo with **no remote** skips this and branches from the local base as it stands, and the summary's `BRANCH=` line says `local, no remote`), and only then creates the worktree with a single synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label> --no-focus` — which returns the worktree's own Herdr workspace, tab and root pane, or fails with Herdr's own error — then lays that workspace out as three tabs, `agent` | `review` | `shell` (see below), starts Claude Code on the root pane in the `agent` tab (`--model <the chosen model> --effort <the chosen effort> --permission-mode plan`, with `git commit`/`git push` blocked), and sends the rendered prompt from `templates/agent-prompt.md`. If the repo keeps a `docs/agents/project-memory.md` in its **main checkout**, the script folds it into that prompt as a `## Project memory` section, so the ticket starts knowing the repo; a repo without one launches exactly as before, and the summary's `PROJECT_MEMORY=` line says which happened — see `docs/agents/memory.md`. The chosen model and effort drive this pane's plan-mode orchestrator — it plans with the developer, so it thinks on the ticket's setting — and the `ticket-implementer` subagent, which the launcher redefines through `--agents` with the same two values. Every other role (`ticket-reviewer`, `ticket-tester`, `ticket-scout`, `ticket-researcher`, `ticket-criteria-checker`) gets its model **and effort** from `config/models.env` the same way; the summary's `SUBAGENTS=` line lists them. See `docs/agents/models.md`.
 
 Handle the exit code:
 

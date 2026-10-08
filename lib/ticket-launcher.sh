@@ -20,6 +20,10 @@
 #                     always read "plan mode" where /ticket's reads the mode
 #                     verbatim, and that output is contractual.
 #   DISALLOWED_TOOLS  array of --disallowedTools patterns
+#   DOC_TEMPLATE      optional: the template a `--doc` launch renders instead —
+#                     a ticket whose deliverable is a document (presales scope,
+#                     proposal, estimate), not code. Unset means the launcher has
+#                     no document mode and `--doc` is refused. ADR 0005.
 #   COORDINATOR       `config` — the session runs on TICKET_COORD_MODEL/EFFORT and
 #                     only the ticket-implementer subagent gets the ticket's model
 #                     and effort (/ticket, whose plan is already settled); or
@@ -422,7 +426,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR; do
+  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
     # Under COORDINATOR=impl the coordinator's own setting is never used.
     [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
@@ -480,6 +484,7 @@ load_ticket_models() {
   MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
   RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
   PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
+  DOCREVIEW_MODEL="${TICKET_DOC_REVIEW_MODEL:-opus}"; DOCREVIEW_EFFORT="${TICKET_DOC_REVIEW_EFFORT:-medium}"
   TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
 
@@ -583,6 +588,7 @@ role_of_agent() {
     ticket-merger)           echo MERGE ;;
     ticket-retro)            echo RETRO ;;
     ticket-pr-creator)       echo PR ;;
+    ticket-doc-reviewer)     echo DOCREVIEW ;;
     *)                       return 1 ;;
   esac
 }
@@ -676,6 +682,7 @@ launcher_main() {
       --effort)    [[ $# -ge 2 ]] || die "--effort needs a level — one of: $EFFORT_LEVELS"
                    IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
       --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
+      --doc)       DOC=1; shift ;;
       -*)          die "unknown flag: $1" ;;
       *)           ARGS+=("$1"); shift ;;
     esac
@@ -696,7 +703,11 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  if (( ${DOC:-0} )); then
+    [[ -n "${DOC_TEMPLATE:-}" ]] || die "--doc: this launcher has no document mode — use /small-ticket"
+    TEMPLATE="$DOC_TEMPLATE"
+  fi
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
   [[ -s "$TICKET_FILE" ]] || die "ticket file is empty or missing: $TICKET_FILE"
@@ -726,20 +737,30 @@ launcher_main() {
 
   # ---- update the base branch before creating the worktree -------------------------
   # `herdr worktree create --base` branches from the root's ref, so the root
-  # needs to be on the base branch and up to date with the remote.
-  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 || die "remote '$REMOTE' doesn't exist in $ROOT"
+  # needs to be on the base branch and up to date with the remote. A repo with
+  # no remote at all — a presales repo whose output is a PDF, say — has nothing
+  # to update from: it branches from the local base as it stands.
+  HAS_REMOTE=0
+  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
   resolve_base_branch
 
   CURRENT="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
   [[ "$CURRENT" == "$BASE_BRANCH" ]] \
     || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
 
-  log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
-  run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
-    || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
+  if (( HAS_REMOTE )); then
+    log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
+    run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
+      || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
+    BASE_SOURCE="updated via pull"
+  else
+    log "no '$REMOTE' remote in $ROOT — branching from the local '$BASE_BRANCH' as it stands"
+    BASE_SOURCE="local, no remote"
+  fi
 
   BASE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-  REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
+  REMOTE_COMMIT=""
+  (( HAS_REMOTE )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
   if [[ -n "$REMOTE_COMMIT" && "$BASE_COMMIT" != "$REMOTE_COMMIT" ]]; then
     if git -C "$ROOT" merge-base --is-ancestor "$REMOTE_COMMIT" "$BASE_COMMIT"; then
       log "warning: local '$BASE_BRANCH' has commits not yet pushed to $REMOTE"
@@ -772,6 +793,7 @@ launcher_main() {
   tpl="${tpl//'{{SCOUT_MODEL}}'/"$SCOUT_MODEL"}"
   tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
   tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
+  tpl="${tpl//'{{DOC_REVIEW_MODEL}}'/"$DOCREVIEW_MODEL"}"
   # The one file outside the worktree a ticket writes: its final report, kept
   # where it outlives the worktree for ticket-retro to read.
   REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
@@ -927,7 +949,11 @@ launcher_main() {
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
   # A ticket's session uses the ticket-side roster; the merger, the retro and
   # the PR creator belong to the board session (scripts/board.sh).
-  build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  if (( ${DOC:-0} )); then
+    build_session_agents ticket-implementer ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  else
+    build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  fi
   local -a agents_arg=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
@@ -946,7 +972,8 @@ launcher_main() {
   summary() {
     cat <<SUMMARY
 WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
-BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, updated via pull)
+BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
+KIND=$( (( ${DOC:-0} )) && echo document || echo code )
 WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
