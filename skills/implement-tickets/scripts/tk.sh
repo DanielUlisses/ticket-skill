@@ -390,35 +390,30 @@ cmd_view() {
   board_init "${1:-}"; shift || true
   local watch=0 every=30
   [[ "${1:-}" == --watch ]] && { watch=1; every="${2:-30}"; [[ "$every" =~ ^[1-9][0-9]*$ ]] || every=30; }
-  local bold="" dim="" off="" red="" yel="" grn="" cyn=""
-  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    bold=$'\e[1m'; dim=$'\e[2m'; off=$'\e[0m'; red=$'\e[31m'; yel=$'\e[33m'; grn=$'\e[32m'; cyn=$'\e[36m'
-  fi
+  # What a ticket that suggests nothing would launch on, for its card: the
+  # launcher's own defaults, read from the same ticket-models.env.
+  local dm de
+  read -r dm de < <(conf="${TICKET_MODELS_CONF:-$(dirname "$SKILL_DIR")/ticket-models.env}"
+    # shellcheck source=/dev/null
+    [[ -f "$conf" ]] && source "$conf" 2>/dev/null
+    echo "${TICKET_IMPL_MODEL:-opus} ${TICKET_IMPL_EFFORT:-medium}")
   render() {
-    local rows cols tw; rows="$(board_rows)"
+    local cols color=false
     # Fit the pane it's in — often half a screen, beside the board session.
-    cols="$(tput cols 2>/dev/null || echo "${COLUMNS:-100}")"; [[ "$cols" =~ ^[0-9]+$ ]] || cols=100
-    tw=$(( cols > 70 ? cols - 40 : cols - 12 )); (( tw < 16 )) && tw=16
-    printf '%s%s%s  %s· base %s · %s%s\n\n' "$bold" "$BOARD_ID" "$off" "$dim" "$BASE_REF" "$(date +%H:%M:%S)" "$off"
-    local col title color
-    for col in "needs:NEEDS YOU:$red" "pr:PR:$cyn" "human:HUMAN REVIEW:$yel" "review:AGENT REVIEW:$yel" \
-               "working:IN PROGRESS:$grn" "backlog:BACKLOG:" "blocked:BLOCKED:$dim" "done:DONE:$dim"; do
-      IFS=: read -r col title color <<<"$col"
-      jq -e --arg c "$col" 'any(.col == $c)' <<<"$rows" >/dev/null || continue
-      printf '%s%s%s (%s)%s\n' "$color" "$bold" "$title" "$(jq --arg c "$col" 'map(select(.col == $c)) | length' <<<"$rows")" "$off"
-      jq -r --arg c "$col" --argjson tw "$tw" --argjson wide "$(( cols > 90 ))" '.[] | select(.col == $c) |
-        "  \(.nn)  \(.title | .[0:$tw])\(if (.title | length) > $tw then "…" else "" end)" +
-        (if .note != "" then (if $wide == 1 then "  — " else "\n      " end) + .note else "" end) +
-        (if .model != "" and $wide == 1 then "  [\(.model)/\(.effort)]" else "" end)' <<<"$rows"
-      echo
-    done
+    cols="$(tput cols 2>/dev/null || echo "${COLUMNS:-120}")"; [[ "$cols" =~ ^[0-9]+$ ]] || cols=120
+    [[ -n "${COLUMNS:-}" && "$COLUMNS" =~ ^[0-9]+$ ]] && cols="$COLUMNS"
+    [[ -t 1 && -z "${NO_COLOR:-}" ]] && color=true
+    [[ "${TICKET_VIEW_COLOR:-}" == 1 ]] && color=true
+    board_rows | jq -r --argjson W "$cols" --argjson color "$color" --arg dm "$dm" --arg de "$de" \
+      --arg head "$BOARD_ID · base $BASE_REF · $(date +%H:%M:%S) · ~ = suggested model/effort" \
+      -f "$SKILL_DIR/scripts/board-view.jq"
   }
   if (( ! watch )); then render; return; fi
   while :; do
     (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
     load_board
     local frame; frame="$(render)"
-    printf '\e[H\e[2J%s\n%s(refreshes every %ss · ctrl-c to stop)%s\n' "$frame" "$dim" "$every" "$off"
+    printf '\e[H\e[2J%s\n(refreshes every %ss · ctrl-c to stop)\n' "$frame" "$every"
     sleep "$every"
   done
 }

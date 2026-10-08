@@ -125,3 +125,10 @@ Herdr shows an agent as `working` whether it's implementing or reviewing, so `/t
 now writes its phase — one word — to `~/.local/state/ticket-skill/<repo>/phase/<branch>` at each
 phase of its brief (`{{PHASE_FILE}}`); that, with its report file, is all it writes outside the
 worktree.
+
+The view is drawn as a **Trello-style board** (`scripts/board-view.jq`): a column per status — NEEDS
+YOU first, then backlog → blocked → in progress → agent review → human review → PR → done — and a
+bordered card per ticket carrying its number and title, where it stands, and **what implements it**:
+the run's model · effort once launched, or `~` and the ticket's suggestion (else the launcher's
+default) before. Empty columns are left out; columns that don't fit side by side wrap into further
+rows, so the half-width pane beside the board session still reads. DONE shows three cards and a count.
