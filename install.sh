@@ -77,13 +77,27 @@ if [[ "${TICKET_NO_BASHRC:-0}" == 1 ]]; then
 elif grep -qF '# ticket-skill aliases' "$RC" 2>/dev/null; then
   echo "aliases: already loaded from $RC"
 else
-  printf '\n# ticket-skill aliases — tkhelp lists them\n[ -f %q ] && . %q\n' "$ALIASES" "$ALIASES" >>"$RC"
-  echo "aliases: added a line to $RC — open a new shell or run: . $ALIASES"
+  LINE="$(printf '[ -f %q ] && . %q' "$ALIASES" "$ALIASES")"
+  # A managed rc (a symlink into a dotfiles repo or the Nix store, a root-owned
+  # file) can't be appended to: say so and print the line, never fail the install
+  # over it — the skills are already in place.
+  if { printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$RC"; } 2>/dev/null; then
+    echo "aliases: added a line to $RC — open a new shell or run: . $ALIASES"
+  else
+    target="$RC"; [[ -L "$RC" ]] && target="$RC -> $(readlink -f "$RC" 2>/dev/null || readlink "$RC")"
+    echo "warning: can't write $target (not writable) — the aliases weren't added to it."
+    echo "  Add this line wherever your shell config is managed (your dotfiles' bashrc, for one):"
+    echo "    $LINE"
+    echo "  or re-run with TICKET_BASHRC=<a writable rc file sourced by your shell>, or TICKET_NO_BASHRC=1 to skip."
+  fi
 fi
 
-for cmd in herdr git jq gh; do
+for cmd in herdr git jq; do
   command -v "$cmd" >/dev/null || echo "warning: '$cmd' not found in PATH"
 done
+# PRs need the forge's CLI: gh for GitHub, az (+ azure-devops extension) for Azure DevOps.
+command -v gh >/dev/null || command -v az >/dev/null \
+  || echo "warning: neither 'gh' nor 'az' found in PATH — the board can't open, gate or merge PRs"
 # The launchers create worktrees with `herdr worktree create` rather than Omarchy's
 # `ga`, and cleanup is /sweep-tickets rather than `gd` — so neither shell function
 # is on any path these skills take, and nothing here warns about them. `gd` still
