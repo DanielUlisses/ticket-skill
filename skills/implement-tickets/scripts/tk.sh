@@ -8,7 +8,8 @@
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates
-#   tk.sh merge   <board> <NN>           gates, then merge on the forge (GitHub or Azure DevOps), then resolve
+#   tk.sh pr      <board> <NN>           commit the ticket's work, push, open its PR — the words by the Cursor CLI
+#   tk.sh merge   <board> <NN>           gates, then merge the PR on the forge (GitHub or Azure DevOps), then resolve
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
@@ -278,6 +279,18 @@ cmd_merge() {
   method="$(forge_merge "$PR_NUMBER")"
   echo "MERGED $nn #$PR_NUMBER ($method)"
   resolve_ticket "$t"
+}
+
+# ---- opening a PR ---------------------------------------------------------------------
+# The Cursor CLI writes the words and pr-open.sh does the git (pr-cursor.sh): no
+# Claude agent, no Claude tokens. TICKET_PR_RUNNER=claude keeps the Claude agent:
+# exit 5 tells the board session to dispatch ticket-pr-creator instead.
+cmd_pr() {
+  load_models_env
+  if [[ "${TICKET_PR_RUNNER:-cursor}" == claude ]]; then
+    echo "RUNNER claude — dispatch ticket-pr-creator for ticket ${2:-?}"; return 5
+  fi
+  "$SKILL_DIR/scripts/pr-cursor.sh" "$@"
 }
 
 # ---- resolve ----------------------------------------------------------------------
@@ -580,10 +593,15 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   help                          this list
   start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused)
   status / what changed?        re-read the board, agents and git; report what moved
-  open a PR for 04 / PR 04      Sonnet PR creator: commit the ticket's files, push, open the PR
-                                  on GitHub or Azure DevOps, whichever the remote points at
-  merge 05                      five gates, then merge, resolve, offer what it unblocked
-                                  conflict -> Sonnet merger resolves; you choose Commit / Abort / Leave
+  open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
+                                  DevOps — the Cursor CLI writes message and body (no Claude
+                                  tokens, no attribution); TICKET_PR_RUNNER=claude: the Sonnet agent
+  merge 05                      five gates, then merges the PR ON THE FORGE (GitHub/Azure — what
+                                  the merge button does; your local main is untouched until you
+                                  pull), resolve, offer what it unblocked. No remote: refused —
+                                  merge the branch locally, the next status check resolves it
+                                  conflict -> Sonnet merger merges main INTO the ticket branch and
+                                  resolves it; you choose Commit (pushes the branch) / Abort / Leave
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
   ask 03 <question>             the same, as a question
@@ -608,6 +626,7 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkg  [board] NN    the five merge gates for one ticket
   tks  [board] NN    what one ticket's agent is doing
   tkw  [board] NN    why the board thinks a ticket has (or hasn't) landed
+  tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
   tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, help)
   tkhelp             this list
 
@@ -616,6 +635,8 @@ Forges (PRs, gates, merge) — picked from the remote URL
   Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
   TICKET_FORGE=github|azure       override the detection
   TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)
+  TICKET_PR_RUNNER=cursor|claude  who writes PR words: the Cursor CLI (default; cursor-agent login)
+                                  or the Claude ticket-pr-creator agent
   TICKET_NET_TIMEOUT=90           seconds before a push or forge call gives up (they never prompt;
                                   a timeout usually means: sign in once in a shell — az devops login)
 
@@ -628,6 +649,6 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|pr|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
   *) sed -n '2,25p' "$0"; exit 1 ;;
 esac

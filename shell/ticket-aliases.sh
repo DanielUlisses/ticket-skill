@@ -39,3 +39,4 @@ _tk_one() { local verb="$1"; shift
 tkg()    { _tk_one gates "$@"; }      # the five merge gates for one ticket
 tks()    { _tk_one show "$@"; }       # what one ticket's agent is doing
 tkw()    { _tk_one why "$@"; }        # why a ticket does or doesn't count as landed
+tkp()    { _tk_one pr "$@"; }         # commit, push and open one ticket's PR (Cursor writes the words)

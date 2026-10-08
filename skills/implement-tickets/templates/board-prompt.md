@@ -11,7 +11,8 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh digest {{BOARD}} [--full]` | board + agents + git, in one read; prints what changed, `FRONTIER`, `ACTION` and `WARN` lines |
 | `tk.sh launch {{BOARD}} <NN> --type <feat\|fix\|refactor\|chore\|docs\|test\|perf\|ci> --model <m> --effort <e> [--account <a>] [--research <file>]` | launches one ticket and records it |
 | `tk.sh gates {{BOARD}} <NN>` · `tk.sh ready {{BOARD}}` | merge gates for one ticket · every ticket that passes them |
-| `tk.sh merge {{BOARD}} <NN>` | gates, merge, resolve |
+| `tk.sh pr {{BOARD}} <NN>` | commit the ticket's work, push, open its PR (the Cursor CLI writes the words) |
+| `tk.sh merge {{BOARD}} <NN>` | gates, then merges the **PR on the forge** (not a local merge), resolve |
 | `tk.sh resolve {{BOARD}} <NN>` · `tk.sh why {{BOARD}} <NN>` | marks a landed ticket resolved · why it does or doesn't count as landed |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
 | `tk.sh help` | every command the developer can use |
@@ -65,7 +66,7 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 ## Opening a PR — only when the developer names it
 
-"open a PR for 03" / "PR 03" → say "Opening the PR for 03 — the PR creator is running." **before** anything else, then dispatch `ticket-pr-creator` with: the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title. It commits the ticket's work, pushes and opens the PR; show the developer its URL and the files it left out. A refusal (agent still working, PR already open) is reported as printed. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
+"open a PR for 03" / "PR 03" → say "Opening the PR for 03." **before** anything else, then run `tk.sh pr {{BOARD}} 03` — the Cursor CLI writes the commit message and body, the script commits, pushes and opens the PR. Show the developer its `OPENED` URL and any `LEFT OUT` lines; a refusal or error is reported as printed, and not retried. **Exit 5** means this repo opens PRs with the Claude agent instead: dispatch `ticket-pr-creator` with the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title, and report the same way. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
 
 ## Talking to a ticket
 

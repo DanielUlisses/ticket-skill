@@ -88,7 +88,8 @@ case "$verb" in
     [[ -z "$stray" ]] || { echo "UNSTAGED CHANGES — not committing; they aren't part of the merge:"; sed 's/^/  /' <<<"$stray"; exit 4; }
     g commit --no-edit >/dev/null
     # Plain push to the same branch: never --force, never another ref.
-    GIT_TERMINAL_PROMPT=0 g push "$REMOTE" "HEAD:refs/heads/$BRANCH"
+    rc=0; quiet_net git -C "$WT" push "$REMOTE" "HEAD:refs/heads/$BRANCH" || rc=$?
+    (( rc == 0 )) || die "push failed (exit $rc) — the merge commit is made; push it by hand from a shell (git -C $WT push $REMOTE HEAD:refs/heads/$BRANCH) once signed in"
     echo "PUSHED merge $(g rev-parse --short HEAD) to $REMOTE/$BRANCH — CI re-runs; check the gates again before merging the PR" ;;
   abort)
     in_merge || { echo "no merge in progress in $WT"; exit 0; }

@@ -573,3 +573,23 @@ forge_merge_commit() {
     *) return 0 ;;
   esac | cut -c1-7
 }
+
+# ---- attribution -------------------------------------------------------------------
+# Commit messages and PR bodies carry no tool attribution: no Co-authored-by
+# trailer, no "Generated with" line, no session link — whichever agent wrote
+# them. Prints <file> with those lines removed and trailing blank lines dropped.
+strip_attribution() {
+  grep -viE '^[[:space:]]*(co-authored-by:|claude-session:|(🤖[[:space:]]*)?generated (with|by) .*(claude|cursor|copilot|ai\b))|claude\.ai/code/session|^[[:space:]]*made with cursor' "$1" \
+    | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}'
+}
+
+# The installed ticket-models.env (or the repo's config/models.env when run from
+# a checkout); every value in it defers to the environment.
+load_models_env() {
+  local f="${TICKET_MODELS_CONF:-}"
+  [[ -n "$f" ]] || for f in "$LIB_DIR/ticket-models.env" "$(dirname "$LIB_DIR")/config/models.env" ""; do [[ -f "$f" ]] && break; done
+  # shellcheck source=/dev/null
+  [[ -n "$f" && -f "$f" ]] && source "$f"
+  return 0
+}
+

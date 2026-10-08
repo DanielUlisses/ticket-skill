@@ -235,3 +235,27 @@ request. It now makes one `ls-remote` and one fetch for the whole board, and one
 PRs (the status board: one of open PRs too) answers every ticket; a digest over 15 s prints a `WARN`
 saying where the time went.
 
+## 9. The Cursor CLI writes PRs; nothing carries attribution
+
+Opening a PR is writing a commit message and a PR body — no design judgement — yet it ran on a Claude
+subagent (Sonnet) billed to the subscription the tickets need. It now runs on the **Cursor CLI**:
+`tk.sh pr <board> <NN>` (the board's "open a PR for NN") runs `pr-cursor.sh`, which takes
+`pr-open.sh check`'s refusals first, then sends `cursor-agent -p` one prompt — the check output, recent
+commit subjects, the ticket, its report, the PR template, the `pr` skill (Cursor's own install, else the
+mattpocock one) and the capped diff — and asks for one JSON object: title, commit message, body, paths,
+left-out paths. Cursor runs no command and writes no file; its answer goes to `pr-open.sh open`, so the
+commit is still exactly the named paths, on the ticket's branch, without force. The board session runs
+a script rather than dispatching an agent. `TICKET_PR_RUNNER=claude` keeps `ticket-pr-creator` (`tk.sh pr`
+exits 5 and the board dispatches it). Cursor needs `cursor-agent login` or `CURSOR_API_KEY`;
+`TICKET_PR_CURSOR_MODEL` picks its model.
+
+No commit message or PR body the workflow makes carries tool attribution — no `Co-authored-by`
+trailer, no "Generated with" line, no session link. `pr-open.sh` strips them from whatever it is given,
+Cursor's answer or the Claude agent's, so no agent's habit can slip one through; the merger's commit
+uses git's own merge message.
+
+`tk.sh merge` merges the **PR on the forge** — what the merge button does — never a local merge; the
+local base is untouched until the developer pulls. In a repo with no remote it refuses: the developer
+merges the branch locally and the next digest resolves it. The merger's conflict resolution merges the
+base *into the ticket's branch* and pushes that branch; the PR is still merged by `tk.sh merge`.
+

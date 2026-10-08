@@ -86,6 +86,12 @@ case "$verb" in
       esac
     done
     [[ -n "$title" && -s "$msg" && -s "$body" && -f "$paths" ]] || die "open needs --title, --message-file, --body-file and --paths-file"
+    # No attribution in what lands: the message and body are cleaned here,
+    # whatever wrote them, so no agent's habit can slip a trailer through.
+    clean="$(mktemp -d)"; trap 'rm -rf "$clean"' EXIT
+    strip_attribution "$msg" >"$clean/msg"; strip_attribution "$body" >"$clean/body"
+    msg="$clean/msg"; body="$clean/body"
+    [[ -s "$msg" && -s "$body" ]] || die "the commit message or PR body is empty once attribution lines are removed"
     preflight
     files="$(changed)"
     # Exactly the paths the agent named, each one a file this ticket changed.

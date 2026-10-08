@@ -12,7 +12,7 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 | Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
 | Retro | `ticket-retro`, dispatched by the board when it closes | `sonnet` @ `medium` | no — `TICKET_RETRO_*` |
-| Opening PRs | `ticket-pr-creator`, dispatched by the board | `sonnet` @ `low` | no — `TICKET_PR_*` |
+| Opening PRs | the **Cursor CLI** (`tk.sh pr` → `pr-cursor.sh`), no Claude model; `ticket-pr-creator` only with `TICKET_PR_RUNNER=claude` | Cursor's default (`TICKET_PR_CURSOR_MODEL`); the agent `sonnet` @ `low` | no — `TICKET_PR_*` |
 | Review | `ticket-reviewer` | `opus` @ `medium` — `high` when nothing can test the ticket | effort only: `TICKET_REVIEW_EFFORT_UNTESTED` for a ticket whose **Seams under test** says `None`, or `--review-effort` |
 | Document review | `ticket-doc-reviewer`, `/small-ticket --doc` only | `opus` @ `medium` | no — `TICKET_DOC_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |

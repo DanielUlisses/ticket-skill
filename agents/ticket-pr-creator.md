@@ -1,6 +1,6 @@
 ---
 name: ticket-pr-creator
-description: Turns a finished ticket's uncommitted work into a commit, a pushed branch and a pull request, through pr-open.sh, with the body shaped by the mattpocock pr skill. Use only when the developer asks the board session to open a PR for a named ticket.
+description: Turns a finished ticket's uncommitted work into a commit, a pushed branch and a pull request, through pr-open.sh, with the body shaped by the mattpocock pr skill. Use only when the developer asks the board session to open a PR for a named ticket and tk.sh pr exited 5 (TICKET_PR_RUNNER=claude) — by default the Cursor CLI writes PRs and no agent is dispatched.
 tools: Read, Write, Grep, Glob, Bash
 model: sonnet
 effort: low
@@ -37,6 +37,9 @@ without force.
    It prints `STEP` lines as it goes. If it stops on a push or forge error — a timeout means a
    sign-in it can't ask for — **stop and return that error as printed**; don't retry. The commit
    stands; once the developer has signed in, the retry is `open` with an empty `--paths-file`.
+
+Never add a `Co-authored-by` trailer, a "Generated with" line or any other attribution to the
+message or the body — `pr-open.sh` strips them anyway.
 
 Return: the PR URL, the commit, the files committed, the files left out and why. Never run
 `git commit`, `git push`, `gh pr create`, `az repos pr create`, `git rebase`, `git reset`, `git stash`, `git checkout` or
