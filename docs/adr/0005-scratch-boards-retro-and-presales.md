@@ -105,3 +105,20 @@ checkers — losing Matt's smell baseline and the skill's own process. It's back
   and the findings come back as one deduplicated list, each tagged with its axis.
 - Ticket sessions keep skills enabled; only the board session disables them, and the reviewer never
   runs there. Where the skill is missing, the reviewer says so and uses its own list.
+
+## 6. A status board in a Herdr tab
+
+`tk.sh view <board> [--watch <secs>]` renders the board for the developer, grouped by where each
+ticket actually is: **needs you** (agent at a dialog, no live agent, landing unknown), **PR** (open,
+with checks running / failed, conflict, changes requested, awaiting review or ready to merge),
+**human review** (agent finished), **agent review** (verifying, reviewing, fixing, reporting),
+**in progress** (recon, implementing), **backlog** (ready to launch), **blocked** (waiting on named
+tickets) and **done**. It's a script reading the same board, Herdr state, git and `gh` the digest
+reads — no model, so it costs nothing to leave open — and `board.sh` opens it, refreshing every 30s
+(`TICKET_BOARD_VIEW`), in a `tickets` tab beside the board session; where Herdr won't create the tab
+or run the command, it prints the command instead.
+
+Herdr shows an agent as `working` whether it's implementing or reviewing, so `/ticket`'s coordinator
+now writes its phase — one word — to `~/.local/state/ticket-skill/<repo>/phase/<branch>` at each
+phase of its brief (`{{PHASE_FILE}}`); that, with its report file, is all it writes outside the
+worktree.

@@ -18,6 +18,8 @@
 #   TICKET_BOARD_AUTOCOMPACT  (default: 100k) — Claude Code's --autocompact window
 #   TICKET_BOARD_SKILLS       (default: 0) — 1 keeps skills (and their listing in the prompt)
 #   TICKET_SESSION_AGENTS     (default: 1) — 0 leaves the dispatched agents on their frontmatter
+#   TICKET_BOARD_VIEW         (default: 30) — seconds between refreshes of the `tickets` tab the
+#                             board opens beside itself (tk.sh view --watch); 0 opens none
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -80,7 +82,28 @@ cmd=(claude "Run the board ${BOARD_ID}: start with the first turn."
 # The board's own scripts run without a prompt each time; anything else asks.
 cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
 
+# The status board, in a `tickets` tab beside this one: tk.sh view, refreshing
+# itself — a script, not a model, so it costs nothing to leave open. Best effort:
+# where this Herdr can't create the tab or run a command in it, say what to run.
+open_view_tab() {
+  local every="${TICKET_BOARD_VIEW:-30}" view_cmd json pane
+  [[ "$every" =~ ^[0-9]+$ && "$every" -gt 0 ]] || return 0
+  view_cmd="$SCRIPTS/tk.sh view $(printf '%q' "$BOARD_ID") --watch $every"
+  if [[ "${HERDR_ENV:-}" == 1 ]] && command -v herdr >/dev/null 2>&1; then
+    local create=(tab create --cwd "$ROOT" --label tickets)
+    has_flag --no-focus tab create && create+=(--no-focus)
+    if json="$(herdr "${create[@]}" 2>/dev/null)" \
+       && pane="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // .result.tab.root_pane.pane_id // empty' <<<"$json")" \
+       && [[ -n "$pane" ]] && herdr pane run "$pane" "$view_cmd" >/dev/null 2>&1; then
+      log "status board opened in a 'tickets' tab (pane $pane)"
+      return 0
+    fi
+  fi
+  log "couldn't open the status board tab — in any tab at $ROOT, run: $view_cmd"
+}
+
 log "board $BOARD_ID on $BOARD_MODEL @ $BOARD_EFFORT — subagents: $SESSION_AGENTS_STATUS"
 if (( print )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
+open_view_tab
 cd "$ROOT"
 exec "${cmd[@]}"

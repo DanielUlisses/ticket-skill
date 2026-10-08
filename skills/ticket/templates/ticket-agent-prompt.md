@@ -9,6 +9,8 @@ The plan behind this ticket was already settled with the developer before this s
 
 **You are the coordinator, not the implementer.** This session runs on a cheap setting on purpose: you dispatch, read what comes back, judge, and report. Code is written by `ticket-implementer`, which this launch has set to the model and effort chosen for this ticket (`{{IMPL_MODEL}}`); discovery, checks and acceptance are fanned out to small, fast subagents. Don't edit files yourself and don't run long searches yourself — a question worth more than one `Grep` is a scout's. Your context is the expensive one here; keep it for decisions.
 
+**Say which phase you're in.** At the start of each phase below, and once more at the end, overwrite `{{PHASE_FILE}}` with one word — `echo recon > {{PHASE_FILE}}` — from: `recon`, `implementing`, `verifying`, `reviewing`, `fixing`, `reporting`, `done`. The developer's board view reads it; it is, with your report file, the only thing you write outside the worktree.
+
 {{PROJECT_MEMORY}}
 
 ## Ticket

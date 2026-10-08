@@ -12,6 +12,7 @@
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
+#   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #
@@ -323,6 +324,102 @@ cmd_show() {
   herdr agent read "$AGENT" --source recent-unwrapped --lines "${3:-60}"
 }
 
+# ---- the board, for the developer's eyes -----------------------------------------
+# A status board in the terminal — no model, no tokens. Columns:
+#   backlog       open, nothing blocking it: ready to launch
+#   blocked       open, waiting on unresolved tickets
+#   working       its agent is scouting or implementing
+#   agent review  its agent is verifying, reviewing or fixing review findings
+#   needs you     at a dialog, no live agent, or its landing can't be told
+#   human review  the agent finished; the developer reviews (or asks for a PR)
+#   pr            a PR is open — checks running/failed, conflict, changes requested, ready to merge
+#   done          resolved
+# The phase comes from the file each ticket's coordinator writes as it moves
+# through its brief ({{PHASE_FILE}}); Herdr alone can't tell implementing from
+# reviewing, since the agent is "working" either way.
+board_rows() {
+  local t nn status branch agent agents herdr_ok=1 st l phase pr phase_dir rows=""
+  phase_dir="$(board_state_dir)/phase"
+  agents="$(agent_states)" || herdr_ok=0
+  while IFS= read -r t; do
+    nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
+    branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
+    st="-"; l="-"; phase="-"; pr="null"
+    if [[ "$status" == in-progress ]]; then
+      l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
+      if [[ -n "$agent" ]]; then
+        if (( herdr_ok )); then st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$agents")"; st="${st:-gone}"; else st="?"; fi
+      fi
+      [[ -s "$phase_dir/$branch" ]] && phase="$(head -1 "$phase_dir/$branch" | tr -cd 'a-z-')"
+      if (( HAS_REMOTE )) && command -v gh >/dev/null 2>&1 && [[ -n "$branch" ]]; then
+        pr="$(gh pr list --head "$branch" --state open --json number,isDraft,mergeable,reviewDecision,statusCheckRollup --jq '.[0] // null' 2>/dev/null || echo null)"
+        [[ -n "$pr" ]] || pr="null"
+      fi
+    fi
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --argjson pr "$pr" '$t + {state:$st, landed:$l, phase:$ph, pr:$pr}')"$'\n'
+  done < <(jq -c '.[]' <<<"$BOARD_JSON")
+  printf '%s' "$rows" | jq -s '
+    (map({key: .nn, value: .status}) | from_entries) as $st |
+    map(. as $t | ($t.blockers | map(select($st[.] != "resolved"))) as $open |
+      $t + {open_blockers: $open} +
+      (if $t.status == "resolved" then {col: "done", note: ""}
+       elif $t.status == "open" then
+         (if ($open | length) > 0 then {col: "blocked", note: "waiting on \($open | join(", "))"}
+          else {col: "backlog", note: "ready to launch"} end)
+       elif ($t.landed | startswith("yes")) then {col: "done", note: "landed — resolve it"}
+       elif $t.pr != null then
+         ($t.pr | [.statusCheckRollup[]? | if .__typename == "StatusContext" then .state
+                   elif .status != "COMPLETED" then "PENDING" else .conclusion end] as $c |
+          {col: "pr", note: ("#\(.number) " +
+            (if .isDraft then "draft"
+             elif .mergeable == "CONFLICTING" then "conflict"
+             elif .reviewDecision == "CHANGES_REQUESTED" then "changes requested"
+             elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then "checks failed"
+             elif ($c | any(. == "PENDING" or . == "EXPECTED" or . == "QUEUED" or . == "IN_PROGRESS")) then "checks running"
+             elif .reviewDecision == "REVIEW_REQUIRED" then "awaiting review"
+             else "ready to merge" end))})
+       elif ($t.landed | startswith("unknown")) then {col: "needs", note: "landed? \($t.landed | ltrimstr("unknown:"))"}
+       elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
+       elif $t.state == "gone" then {col: "needs", note: "no live agent"}
+       elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: "agent finished"}
+       elif ($t.phase | IN("verifying", "reviewing", "fixing", "reporting")) then {col: "review", note: $t.phase}
+       else {col: "working", note: (if $t.phase != "-" then $t.phase else $t.state end)} end))'
+}
+
+cmd_view() {
+  board_init "${1:-}"; shift || true
+  local watch=0 every=30
+  [[ "${1:-}" == --watch ]] && { watch=1; every="${2:-30}"; [[ "$every" =~ ^[1-9][0-9]*$ ]] || every=30; }
+  local bold="" dim="" off="" red="" yel="" grn="" cyn=""
+  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    bold=$'\e[1m'; dim=$'\e[2m'; off=$'\e[0m'; red=$'\e[31m'; yel=$'\e[33m'; grn=$'\e[32m'; cyn=$'\e[36m'
+  fi
+  render() {
+    local rows; rows="$(board_rows)"
+    printf '%s%s%s  %s· base %s · %s%s\n\n' "$bold" "$BOARD_ID" "$off" "$dim" "$BASE_REF" "$(date +%H:%M:%S)" "$off"
+    local col title color
+    for col in "needs:NEEDS YOU:$red" "pr:PR:$cyn" "human:HUMAN REVIEW:$yel" "review:AGENT REVIEW:$yel" \
+               "working:IN PROGRESS:$grn" "backlog:BACKLOG:" "blocked:BLOCKED:$dim" "done:DONE:$dim"; do
+      IFS=: read -r col title color <<<"$col"
+      jq -e --arg c "$col" 'any(.col == $c)' <<<"$rows" >/dev/null || continue
+      printf '%s%s%s (%s)%s\n' "$color" "$bold" "$title" "$(jq --arg c "$col" 'map(select(.col == $c)) | length' <<<"$rows")" "$off"
+      jq -r --arg c "$col" '.[] | select(.col == $c) |
+        "  \(.nn)  \(.title | .[0:48])\(if (.title | length) > 48 then "…" else "" end)" +
+        (if .note != "" then "  — \(.note)" else "" end) +
+        (if .model != "" then "  [\(.model)/\(.effort)]" else "" end)' <<<"$rows"
+      echo
+    done
+  }
+  if (( ! watch )); then render; return; fi
+  while :; do
+    (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
+    load_board
+    local frame; frame="$(render)"
+    printf '\e[H\e[2J%s\n%s(refreshes every %ss · ctrl-c to stop)%s\n' "$frame" "$dim" "$every" "$off"
+    sleep "$every"
+  done
+}
+
 # Each ticket's **Suggested helpers:** line — what the board scans for research a
 # whole wave shares, before launching it. Read from the body, so it's here and
 # not in the digest.
@@ -377,6 +474,6 @@ cmd_retro() {
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro|view) "cmd_$verb" "$@" ;;
   *) sed -n '2,25p' "$0"; exit 1 ;;
 esac

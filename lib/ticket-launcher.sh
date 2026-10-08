@@ -819,6 +819,11 @@ launcher_main() {
   REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
   mkdir -p "$(dirname "$REPORT_FILE")"
   tpl="${tpl//'{{REPORT_FILE}}'/"$REPORT_FILE"}"
+  # One word, rewritten at each phase of the brief, for `tk.sh view`: Herdr shows
+  # an agent as "working" whether it's implementing or reviewing.
+  PHASE_FILE="$(dirname "$(dirname "$REPORT_FILE")")/phase/$BRANCH"
+  mkdir -p "$(dirname "$PHASE_FILE")"
+  tpl="${tpl//'{{PHASE_FILE}}'/"$PHASE_FILE"}"
   # The two prose payloads go last, so the replacements above can't reach inside
   # them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
   # above the ticket in the template, so filling it first would let a `{{TICKET}}`
