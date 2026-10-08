@@ -20,6 +20,12 @@
 #                     always read "plan mode" where /ticket's reads the mode
 #                     verbatim, and that output is contractual.
 #   DISALLOWED_TOOLS  array of --disallowedTools patterns
+#   COORDINATOR       `config` — the session runs on TICKET_COORD_MODEL/EFFORT and
+#                     only the ticket-implementer subagent gets the ticket's model
+#                     and effort (/ticket, whose plan is already settled); or
+#                     `impl` — the session itself runs on the ticket's model and
+#                     effort (/small-ticket, whose orchestrator plans with the
+#                     developer). See docs/adr/0002-model-tiers-and-agent-roster.md.
 #
 # The caller sets PERMISSION_MODE after calling load_ticket_models, so a value in
 # ticket-models.env still reaches it — the order the launchers have always used.
@@ -411,6 +417,18 @@ effort_valid() {
 require_valid_effort() {
   effort_valid "$IMPL_EFFORT" \
     || die "invalid effort '$IMPL_EFFORT' from $IMPL_EFFORT_SOURCE — one of: $EFFORT_LEVELS"
+  # The fixed roles have no flag to outrank them, so whatever the config or the
+  # environment says is final — checked here with the implementer's for the same
+  # reason: an unknown level in an --agents definition is as silent as one on
+  # the command line.
+  local role var
+  for role in COORD REVIEW TEST SCOUT RESEARCH CHECK; do
+    # Under COORDINATOR=impl the coordinator's own setting is never used.
+    [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
+    var="${role}_EFFORT"
+    effort_valid "${!var}" \
+      || die "invalid effort '${!var}' for TICKET_${role}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
+  done
 }
 
 # Says where a resolved value came from, for `launch.sh defaults` to quote.
@@ -450,6 +468,15 @@ load_ticket_models() {
   IMPL_MODEL="${TICKET_IMPL_MODEL:-opus}"
   REVIEW_MODEL="${TICKET_REVIEW_MODEL:-opus}"
   TEST_MODEL="${TICKET_TEST_MODEL:-haiku}"
+  # The roster beyond the three original roles, and every fixed role's effort.
+  # Fallbacks match config/models.env, for a ticket-models.env installed before
+  # these knobs existed — the same cover IMPL_EFFORT's fallback gives.
+  COORD_MODEL="${TICKET_COORD_MODEL:-opus}";       COORD_EFFORT="${TICKET_COORD_EFFORT:-low}"
+  SCOUT_MODEL="${TICKET_SCOUT_MODEL:-haiku}";      SCOUT_EFFORT="${TICKET_SCOUT_EFFORT:-low}"
+  RESEARCH_MODEL="${TICKET_RESEARCH_MODEL:-haiku}"; RESEARCH_EFFORT="${TICKET_RESEARCH_EFFORT:-medium}"
+  CHECK_MODEL="${TICKET_CHECK_MODEL:-haiku}";      CHECK_EFFORT="${TICKET_CHECK_EFFORT:-low}"
+  REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
+  TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
 
   # The in-script fallback is what covers a ticket-models.env installed before
@@ -502,6 +529,9 @@ print_launch_defaults() {
   echo "MODEL=$IMPL_MODEL (from $IMPL_MODEL_SOURCE)"
   echo "EFFORT=$IMPL_EFFORT (from $IMPL_EFFORT_SOURCE)"
   echo "EFFORTS=$EFFORT_LEVELS"
+  # Only where the session coordinates on its own setting (/ticket): there MODEL=
+  # and EFFORT= reach the implementer alone, and the question should know it.
+  [[ "${COORDINATOR:-impl}" == config ]] && echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -522,6 +552,66 @@ print_launch_defaults() {
     echo "ACCOUNT=unknown (claude-acc activate failed in $parent — ask the developer, don't guess)"
   fi
   echo "ACCOUNTS=$(account_names | tr '\n' ' ' | sed 's/ $//')"
+}
+
+# ---- the subagent roster, defined per launch -----------------------------------
+# Claude Code reads a subagent's model and effort from its frontmatter, which
+# can't read config/models.env and can't vary per ticket. `claude --agents
+# '<json>'` can do both: a definition passed there outranks ~/.claude/agents/
+# for that session only. So every installed agents/ticket-*.md is re-issued here
+# with its prompt unchanged and the model and effort this launch resolved — the
+# ticket's own for ticket-implementer, config/models.env's for the rest. The
+# frontmatter copies stay as the fallback for an agent invoked any other way.
+#
+# TICKET_SESSION_AGENTS=0 skips it and launches exactly as before this existed:
+# the frontmatter's model and effort apply, and only an explicit `model` on the
+# Agent tool call varies them.
+role_of_agent() {
+  case "$1" in
+    ticket-implementer)      echo IMPL ;;
+    ticket-reviewer)         echo REVIEW ;;
+    ticket-tester)           echo TEST ;;
+    ticket-scout)            echo SCOUT ;;
+    ticket-researcher)       echo RESEARCH ;;
+    ticket-criteria-checker) echo CHECK ;;
+    *)                       return 1 ;;
+  esac
+}
+
+# Sets SESSION_AGENTS_JSON (empty when skipped) and SESSION_AGENTS_STATUS.
+build_session_agents() {
+  SESSION_AGENTS_JSON=""
+  if [[ "${TICKET_SESSION_AGENTS:-1}" == 0 ]]; then
+    SESSION_AGENTS_STATUS="off (TICKET_SESSION_AGENTS=0 — subagents run on their frontmatter)"
+    return 0
+  fi
+  # Installed: ~/.claude/skills/<skill> -> ~/.claude/agents. Source tree:
+  # <repo>/skills/<skill> -> <repo>/agents. The same two-up hop finds both.
+  local dir="${TICKET_AGENTS_DIR:-$(dirname "$(dirname "$SKILL_DIR")")/agents}"
+  local json='{}' file name desc tools body role model_var effort_var names=()
+  for file in "$dir"/ticket-*.md; do
+    [[ -f "$file" ]] || continue
+    # Frontmatter is the block between the first two `---` lines; the body is
+    # everything after the second, verbatim.
+    name="$(awk '/^---$/{n++; next} n==1 && /^name:/{sub(/^name:[ ]*/,""); print; exit}' "$file")"
+    role="$(role_of_agent "$name")" || continue
+    desc="$(awk '/^---$/{n++; next} n==1 && /^description:/{sub(/^description:[ ]*/,""); print; exit}' "$file")"
+    tools="$(awk '/^---$/{n++; next} n==1 && /^tools:/{sub(/^tools:[ ]*/,""); print; exit}' "$file")"
+    body="$(awk 'n>=2{print; next} /^---$/{n++}' "$file")"
+    model_var="${role}_MODEL"; effort_var="${role}_EFFORT"
+    json="$(jq -c --arg n "$name" --arg d "$desc" --arg t "$tools" --arg p "$body" \
+              --arg m "${!model_var}" --arg e "${!effort_var}" \
+      '. + {($n): {description: $d, prompt: $p, model: $m, effort: $e,
+                   tools: ($t | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))}}' \
+      <<<"$json")" || die "couldn't build the --agents definition for $name from $file"
+    names+=("$name=${!model_var}/${!effort_var}")
+  done
+  if [[ ${#names[@]} -eq 0 ]]; then
+    SESSION_AGENTS_STATUS="none found in $dir (subagents run on their frontmatter — re-run install.sh)"
+    return 0
+  fi
+  SESSION_AGENTS_JSON="$json"
+  SESSION_AGENTS_STATUS="${names[*]}"
 }
 
 # ---- the launch ---------------------------------------------------------------
@@ -603,6 +693,15 @@ launcher_main() {
     || die "invalid branch '$BRANCH' — use kebab-case without '/' or '--', up to 40 chars (e.g. fix-webhook-retry)"
   git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
   [[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
+  # /small-ticket's orchestrator plans with the developer, so it thinks on the
+  # ticket's model and effort; /ticket's coordinator only dispatches a settled
+  # plan, so it runs on its own (cheap) setting from config/models.env.
+  case "${COORDINATOR:-impl}" in
+    impl)   COORD_MODEL="$IMPL_MODEL"; COORD_EFFORT="$IMPL_EFFORT" ;;
+    config) ;;
+    *)      die "internal: COORDINATOR must be 'impl' or 'config', not '$COORDINATOR'" ;;
+  esac
+  [[ "$COORD_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid coordinator model '$COORD_MODEL'"
   check_ticket_account
 
   # ---- main repo (--path keeps the worktree at ../<repo>--<branch>, so `gd` still works) ----
@@ -657,6 +756,9 @@ launcher_main() {
   tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
   tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
   tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
+  tpl="${tpl//'{{SCOUT_MODEL}}'/"$SCOUT_MODEL"}"
+  tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
+  tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
   # The two prose payloads go last, so the replacements above can't reach inside
   # them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
   # above the ticket in the template, so filling it first would let a `{{TICKET}}`
@@ -805,11 +907,18 @@ launcher_main() {
   # and must not be flattened: /small-ticket starts in plan mode with only
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
+  build_session_agents
+  local -a agents_arg=()
+  [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
-  log "starting '$AGENT' ($AGENT_KIND, $IMPL_MODEL, effort $IMPL_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE"
+  log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
+  log "subagents: $SESSION_AGENTS_STATUS"
   set +e
+  # --agents goes before --disallowedTools: that one is variadic and would
+  # swallow anything after it.
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
-    --model "$IMPL_MODEL" --effort "$IMPL_EFFORT" --permission-mode "$PERMISSION_MODE" \
+    --model "$COORD_MODEL" --effort "$COORD_EFFORT" --permission-mode "$PERMISSION_MODE" \
+    ${agents_arg[@]+"${agents_arg[@]}"} \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
   set -e
@@ -824,6 +933,8 @@ REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
 MODEL=$IMPL_MODEL
 EFFORT=$IMPL_EFFORT
+COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
+SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
 PROMPT_FILE=$PROMPT_FILE

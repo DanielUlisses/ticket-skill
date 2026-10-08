@@ -102,16 +102,21 @@ digest at the top of every coordination round, and memory is emphatically not pa
 — that digest is six fields per ticket and must stay cheap enough to run every round.
 Memory is prose, it is read once, by the launcher, at the moment a worktree is created.
 
-### In `/small-ticket`, the orchestrator has to pass it on
+### The coordinator has to pass it on
 
-`/small-ticket` briefs an orchestrator that delegates the actual work to the
-`ticket-implementer`, `ticket-reviewer` and `ticket-tester` subagents. Those subagents get
+Both `/small-ticket` and, since ADR 0002, `/ticket` brief a coordinator that delegates the
+actual work to the `ticket-*` subagents. Those subagents get
 a fresh context and **never see the launcher's prompt** — injection reaches the
 orchestrator and stops there. So the orchestrator's template tells it, at the Phase 2
 hand-off, to pass on whatever in the memory bears on the files the implementer is about to
 touch. Review and testing aren't given it: they read the diff and run the checks, and
-neither was worth the tokens. If that turns out wrong, Phase 3 and 4 of
-`skills/small-ticket/templates/agent-prompt.md` are where it would change.
+neither was worth the tokens; nor are the Haiku scouts, researchers and criteria checkers,
+which answer one narrow question each. If that turns out wrong, the verify phases of
+`skills/small-ticket/templates/agent-prompt.md` and `skills/ticket/templates/ticket-agent-prompt.md`
+are where it would change.
+
+The scouts, researchers and criteria checkers don't close with `## Remember` — their whole
+report is a fact list for the coordinator, which is free to carry a durable one forward.
 
 ## How capture works
 

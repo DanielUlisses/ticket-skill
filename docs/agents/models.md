@@ -2,29 +2,36 @@
 
 ## Roles and defaults
 
-Three roles, each with its own default:
+Seven roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
+placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 
-| Role | Default | Where it's set |
-|---|---|---|
-| Implementation (`ticket-implementer`, and the `/small-ticket` plan-mode orchestrator itself) | `opus` | `config/models.env` (`TICKET_IMPL_MODEL`); mirrored in `agents/ticket-implementer.md`'s `model:` frontmatter; rendered into templates as `{{IMPL_MODEL}}` |
-| Review (`ticket-reviewer`) | `opus` | `config/models.env` (`TICKET_REVIEW_MODEL`); mirrored in `agents/ticket-reviewer.md`'s `model:` frontmatter; rendered as `{{REVIEW_MODEL}}` |
-| Testing (`ticket-tester`) | `haiku` | `config/models.env` (`TICKET_TEST_MODEL`); mirrored in `agents/ticket-tester.md`'s `model:` frontmatter; rendered as `{{TEST_MODEL}}` |
+| Role | Agent | Default | Varies per ticket? |
+|---|---|---|---|
+| Implementation | `ticket-implementer` (and `/small-ticket`'s plan-mode orchestrator) | `opus` @ `medium` | **yes** — the ticket's `**Suggested model:**`/`**Suggested effort:**`, the launch question, the 4th positional and `--effort` |
+| Coordination | the session a `/ticket` / `/implement-tickets` launch starts | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
+| Review | `ticket-reviewer` | `opus` @ `medium` | no — `TICKET_REVIEW_*` |
+| Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |
+| Repo discovery | `ticket-scout`, one per question | `haiku` @ `low` | no — `TICKET_SCOUT_*` |
+| External research | `ticket-researcher`, one per question | `haiku` @ `medium` | no — `TICKET_RESEARCH_*` |
+| Acceptance | `ticket-criteria-checker`, one per criterion | `haiku` @ `low` | no — `TICKET_CHECK_*` |
 
-**Effort** is a fourth knob in the same file (`TICKET_IMPL_EFFORT`, default `medium`) but not a
-fourth row: it is one level for the whole launched session rather than one per role, and it has
-no frontmatter counterpart, because a subagent has no effort of its own. Its own section is
-below.
+All of it lives in `config/models.env`, installed by `./install.sh` as `skills/ticket-models.env`,
+one file shared by the three launching skills. The shared `lib/ticket-launcher.sh` sources it and
+turns it into two things:
 
-`config/models.env` is the one source of truth for the shell path — the shared
-`lib/ticket-launcher.sh` both `launch.sh` scripts run sources it. It's installed by `./install.sh`
-as `skills/ticket-models.env`, one file shared by all three skill directories (`ticket`,
-`small-ticket`, `implement-tickets`), since all three read the same values. The `model:` frontmatter in `agents/*.md` is a second, independent copy that Claude Code
-reads directly when a subagent is invoked without an explicit `model` override — see "Frontmatter
-can't read the config file" below.
+- the **session's own** `--model`/`--effort` — the coordinator's for `/ticket` (its launcher sets
+  `COORDINATOR=config`), the implementer's for `/small-ticket` (`COORDINATOR=impl`), since that
+  orchestrator plans with the developer and planning is where the thinking pays;
+- an **`--agents` JSON** that re-issues every installed `agents/ticket-*.md` — prompt and tools
+  unchanged — with the model and effort this launch resolved for its role. A definition passed
+  there outranks `~/.claude/agents/` for that session only, which is what lets one ticket's
+  implementer run on `sonnet @ high` while the next one's runs on `opus @ low`, without writing a
+  file anywhere.
 
-Implementation and review both default to **Opus**. Testing stays on **Haiku** — it's read-only and
-mechanical (run the discovered checks, report pass/fail), and hasn't needed a stronger model. It's
-in the config as its own knob precisely so that can change with one edit, without touching code.
+The summary every launch prints carries `MODEL=`/`EFFORT=` (the implementer's — what run state
+records), `COORDINATOR=` (the session's) and `SUBAGENTS=` (every role, `name=model/effort`).
+`TICKET_SESSION_AGENTS=0` turns the `--agents` half off; subagents then run on their frontmatter,
+which carries the same defaults.
 
 ## Why aliases, not pinned ids
 
@@ -42,10 +49,12 @@ A model is only half the choice. Claude Code takes `--effort <low|medium|high|xh
 until this knob existed every ticket ran at whatever the CLI defaulted to — chosen by nobody.
 `TICKET_IMPL_EFFORT` in `config/models.env` is the other half, defaulting to **`medium`**.
 
-There is one effort, not three. It is the *session's*, set on the `claude` process the launcher
-starts, so unlike the model it can't be handed separately to a subagent: `ticket-reviewer` and
-`ticket-tester` run at whatever their pane runs at. `config/models.env` says as much next to the
-line.
+Effort used to be one level for the whole launched session, because a subagent had no effort
+of its own. It has one now: Claude Code reads an `effort:` field from a subagent's definition,
+and `--agents` carries it per launch. So `TICKET_IMPL_EFFORT` (and `--effort`) is the
+*implementer's* effort, and every other role has its own `TICKET_<ROLE>_EFFORT`. Under
+`/small-ticket` the implementer's effort is also the orchestrator's; under `/ticket` the
+coordinator runs on `TICKET_COORD_EFFORT`.
 
 ### Resolution order
 
@@ -97,10 +106,10 @@ silently ignore would be worse than one that refuses to answer.
 
 ### Where it shows up
 
-`herdr agent start ... -- --model "$IMPL_MODEL" --effort "$IMPL_EFFORT" ...`, the launcher's
-`starting '<agent>' (claude, opus, effort medium, bypassPermissions)` log line, and the
-`EFFORT=` line of the summary every launch prints, next to its new `MODEL=` line and the
-`ACCOUNT=` line that was already there.
+`herdr agent start ... -- --model "$COORD_MODEL" --effort "$COORD_EFFORT" --agents '<json>' ...`
+(the coordinator's pair is the implementer's under `/small-ticket`), the launcher's
+`starting '<agent>' (claude, opus, effort low, bypassPermissions) … — implementer sonnet, effort high`
+log line, and the summary's `EFFORT=`, `COORDINATOR=` and `SUBAGENTS=` lines.
 
 ### A `ticket-models.env` installed before this existed
 
@@ -135,20 +144,21 @@ Three ways to override, from the launch question down to the quietest option:
    (`session-settings.md`). Every later launch in that session reuses the answer, waves included; a
    resumed `/implement-tickets` session with `in-progress` tickets already on the board pre-selects
    the model recorded there instead (see that skill's Phase 2). The answer is passed as the 4th
-   positional argument to `launch.sh` and covers implementation only — review and testing still
-   follow the config file (except in `/ticket` and `/implement-tickets`, see the asymmetry note
-   below). A model the developer names for one ticket goes to that launch alone and leaves the
+   positional argument to `launch.sh` and covers implementation only — every other role
+   follows the config file. Where the session's tickets suggest different models or efforts, the
+   question offers `As each ticket suggests`, a policy under which each launch passes its own
+   ticket's suggestion (`session-settings.md`). A model the developer names for one ticket goes to that launch alone and leaves the
    session's setting standing.
 2. **The 4th positional argument directly**, if you're calling `launch.sh` by hand:
    `launch.sh <tab-label> <branch> <ticket-file> <model>`. It's a positional argument rather than an
    env-var prefix on purpose — the skills' `allowed-tools` entries are prefix patterns like
    `Bash(~/.claude/skills/ticket/scripts/launch.sh *)`, which a `TICKET_IMPL_MODEL=x ~/.claude/...`
    prefix would no longer match.
-3. **An exported `TICKET_IMPL_MODEL`** (or `TICKET_REVIEW_MODEL` / `TICKET_TEST_MODEL`) in the
+3. **An exported `TICKET_IMPL_MODEL`** (or any other `TICKET_<ROLE>_MODEL` / `_EFFORT`) in the
    environment `launch.sh` runs in. This beats the config file but loses to the positional argument.
 
 Resolution order, highest wins: **4th positional arg** → **exported env var** → **`config/models.env`**
-→ **the in-script fallback** (`opus`/`opus`/`haiku`, matching the defaults above, in case the config
+→ **the in-script fallback** (matching the defaults above, in case the config
 file itself is missing). Effort follows the same four steps with `--effort` in the first slot — see
 "Effort: how hard the implementation model thinks" above.
 
@@ -162,44 +172,40 @@ an exported `TICKET_IMPL_MODEL` wins silently and afterwards the two are indisti
 choosing a model for one and not the other never made sense: whichever model plans the ticket also
 implements it.
 
-## A documented asymmetry: `/ticket` and `/implement-tickets` review on the implementation model
+## The asymmetry that's gone
 
-`/ticket`'s launched coordinator — and `/implement-tickets`, which reuses the same launcher — implements
-**and** reviews the ticket in one unattended Claude Code session, since nothing is there to click
-through a `model` switch mid-run. Whatever model answers the launch question governs that entire
-session, review included. `TICKET_REVIEW_MODEL` only reaches the separate `ticket-reviewer` subagent
-in the `/small-ticket` path, where implementation and review are genuinely two different Agent tool
-calls. Picking Sonnet or Haiku at the `/ticket` / `/implement-tickets` launch question silently
-downgrades that ticket's review too — worth remembering before trading Opus for a cheaper run there.
+Until ADR 0002, `/ticket`'s launched session implemented **and** reviewed in one process, so
+picking Sonnet or a `low` effort at the launch question silently downgraded the review too.
+That session is now a coordinator that delegates both: the implementer gets the ticket's model
+and effort, the reviewer gets `TICKET_REVIEW_*` whatever the implementer runs on. A cheap
+implementer is now reviewed by the configured reviewer — the combination that most wants it.
 
-**The same applies to effort, and more widely.** Whatever effort answers the launch question is
-the `claude` process's for that whole session, so in `/ticket` and `/implement-tickets` it
-governs the review as well as the implementation — picking `low` there buys a shallower review
-along with a cheaper run. Effort has no `/small-ticket` escape hatch either: there is no
-`TICKET_REVIEW_EFFORT`, because effort is a property of the session, not an argument the
-orchestrator can pass to an Agent tool call the way it passes `model`. In `/small-ticket` the
-level governs the plan-mode orchestrator, and the subagents it delegates to inherit the pane's.
+The trade that replaced it: `/ticket` no longer runs `mattpocock-skills:code-review` in the
+coordinator's own context. Its two axes are covered by `ticket-reviewer` (standards, plus
+correctness and security) and `ticket-criteria-checker` (spec, criterion by criterion).
 
 ## New-model checklist
 
 When a new model ships (a new family, or you want to pin a specific id instead of riding the alias):
 
-1. Decide alias vs. pinned id (see "Why aliases" above).
+1. Decide alias vs. pinned id (see "Why aliases" above), and where it belongs in the roster
+   (ADR 0002's tiers: does the new model move a role?).
 2. Edit `config/models.env`.
-3. Mirror the same value in the `model:` frontmatter of `agents/ticket-implementer.md`,
-   `agents/ticket-reviewer.md`, and `agents/ticket-tester.md` — the config file and the frontmatter
-   are two independent copies kept in sync by hand (see below), and this step is where that happens.
-4. `grep -rniE 'opus|sonnet|haiku|fable' skills agents config docs lib` to catch any prose that names a
-   model outside the two files above — `lib/ticket-launcher.sh` holds the in-script fallbacks — a stale mention in a `SKILL.md` sentence or this doc itself.
+3. Mirror the same values in the `model:` and `effort:` frontmatter of every `agents/ticket-*.md`
+   — the fallback for `TICKET_SESSION_AGENTS=0` and for an agent invoked outside a launch.
+4. `grep -rniE 'opus|sonnet|haiku|fable' skills agents config docs lib` to catch any prose that
+   names a model outside the files above — `lib/ticket-launcher.sh` holds the in-script fallbacks.
 5. Re-run `./install.sh` for every Claude config root in use.
-6. Smoke-test with one `/small-ticket` run and confirm the launched agent, and the subagents it
-   delegates to, report the model you expect.
+6. Smoke-test with one `/ticket` launch and one `/small-ticket` launch: the summary's
+   `COORDINATOR=` and `SUBAGENTS=` lines say what was asked for, and `/agents` in the pane lists
+   the `ticket-*` agents with those models.
 
-## Frontmatter can't read the config file
+## Frontmatter is the fallback, `--agents` is the source
 
-Claude Code resolves a subagent's `model:` frontmatter at invocation time; it can't source a shell
-file. So `agents/*.md` carries its own copy of the defaults, independent of `config/models.env`,
-and step 3 of the checklist above is how the two are kept in sync — there's no way to make Claude
-Code read one from the other. In the `/small-ticket` flow this frontmatter is only a **fallback**:
-the orchestrator's own prompt template passes `model` to the Agent tool call explicitly for every
-subagent, so the frontmatter default is only what runs if that subagent is invoked some other way.
+Claude Code resolves a subagent's `model:`/`effort:` frontmatter at invocation time and can't
+source a shell file, so `agents/*.md` carries its own copy of the defaults. It used to be the only
+copy that reached an effort. Now every launch redefines the `ticket-*` agents through `--agents`
+from the resolved config, so the frontmatter only applies when that's switched off
+(`TICKET_SESSION_AGENTS=0`) or when an agent is invoked outside a launch. Keep it in step anyway
+(step 3 above) — a stale fallback is a quiet wrong answer. The briefs still pass `model` on each
+Agent tool call; it agrees with `--agents` and keeps the `general-purpose` fallback honest.

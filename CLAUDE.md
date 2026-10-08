@@ -25,11 +25,11 @@ now reported and verified rather than assumed. See `docs/agents/accounts.md`.
 
 ### Agent models
 
-Which Claude model each ticket role (implementation, review, testing) runs on is configured once, in `config/models.env`, not scattered per skill — as is `TICKET_IMPL_EFFORT`, how hard the implementation model thinks, which reaches a launch as `--effort <level>` and is one level for the whole launched session. See `docs/agents/models.md` for the defaults, the per-run override, and the checklist for bumping a model.
+Seven roles, configured once in `config/models.env`: the **implementer**, whose model and effort vary per ticket (its `**Suggested model:**` / `**Suggested effort:**` lines, the launch question, `--effort`); and six fixed ones — the `/ticket` **coordinator** (`opus @ low`), the **reviewer** (`opus @ medium`), and the Haiku swarm of **testers**, **scouts**, **researchers** and **criteria checkers**. Every launch redefines the `ticket-*` subagents through `claude --agents` with those values, so the `agents/*.md` frontmatter is only a fallback kept in step. See `docs/agents/models.md` for the roster and the checklist for bumping a model, and `docs/adr/0002-model-tiers-and-agent-roster.md` for why each role sits where it does.
 
 ### Session launch settings
 
-The account, the model and the effort a session's tickets run on are asked **once**, at its first launch,
+The account, the implementer's model and its effort a session's tickets run on are asked **once**, at its first launch,
 by whichever launching skill gets there first, and hold for every launch after it — a session
 that launches nothing asks nothing. `launch.sh defaults` is what names the defaults in that
 question, including the account a *new* worktree would inherit, which is not the one the

@@ -37,6 +37,8 @@
 #   TICKET_AGENT_KIND  (default: claude)  — Claude Code kind in Herdr (`herdr agent`)
 #   TICKET_IMPL_MODEL   — orchestrator + implementer model; see resolution order above (fallback: opus)
 #   TICKET_IMPL_EFFORT  — how hard the implementation model thinks (low|medium|high|xhigh|max); --effort beats it; see resolution order above (fallback: medium)
+#   TICKET_SESSION_AGENTS (default: 1) — 0 skips redefining the ticket-* subagents through --agents; they then run on their frontmatter
+#   TICKET_AGENTS_DIR  (default: <config-root>/agents) — where the ticket-*.md definitions are read from
 #   TICKET_REMOTE      (default: origin)
 #   TICKET_BASE_BRANCH (default: remote's default branch, e.g. main)
 #   TICKET_MODELS_CONF (default: <skills-dir>/ticket-models.env) — override the config file path
@@ -83,6 +85,9 @@ TEMPLATE="$SKILL_DIR/templates/agent-prompt.md"
 RUN_NAME="small-ticket"
 PERMISSION_MODE="plan"
 PERMISSION_LABEL="plan mode"
+# The orchestrator plans with the developer, so it thinks on the ticket's own
+# model and effort, the same ones its ticket-implementer subagent gets.
+COORDINATOR="impl"
 DISALLOWED_TOOLS=( "Bash(git commit:*)" "Bash(git push:*)" )
 
 launcher_main "$@"

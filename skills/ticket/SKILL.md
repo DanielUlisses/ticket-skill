@@ -43,6 +43,8 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Give each ticket its **blocked-by** edges: the other tickets that must land first. No blockers means it's on the **frontier** — startable immediately.
 - Give each ticket its **seams under test**: the public boundaries its tests observe behaviour at (`mattpocock-skills:tdd` carries the vocabulary). Phase 4's coordinator runs unattended and writes no test at a seam nobody confirmed, so they get confirmed here, while the developer is present.
 - Give each ticket a **suggested effort**: how hard the coordinator's model should think on it, one of `low`, `medium`, `high`, `xhigh`, `max`, with one clause saying why. A ticket that is one mechanical edit against a file whose shape is already known does not need `high`; a ticket still uncertain in its shape at launch time is exactly where the extra thinking pays. `medium` is the default and needs no defending. You **suggest** — Phase 3's launch question offers it pre-selected and the developer decides, the same asymmetry project memory has.
+- Give each ticket a **suggested model** for its implementer — `opus` or `sonnet` — with one clause saying why. **Opus** where the ticket still holds design judgement: a new abstraction, a cross-cutting change, a subtle bug, a seam nobody has tested before. **Sonnet** where the ticket is well specified and follows a pattern the repo already has: another endpoint like the five beside it, a migration batch in a wide refactor, wiring a settled interface through. Model and effort are two knobs — `sonnet` at `high` and `opus` at `low` are both sensible answers. `opus` is the default and needs no defending; `haiku` is not an implementer here, it is what the helpers run on.
+- Give each ticket a **suggested helpers** line where it would help: what the launched coordinator should fan out to its cheap subagents before and after implementation — the repo questions worth a scout each, the external API worth a researcher, checks worth splitting across testers (`scouts: callers of PaymentService, how retries are done elsewhere · research: Stripe webhook signature, API 2025-09 · tests: split by package`). Leave it out when the ticket is small enough that the coordinator's own judgement covers it.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs.
 - Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
@@ -83,7 +85,11 @@ Issues being *enabled* is GitHub's default and proves nothing on its own, which 
 
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
+**Suggested model:** <opus|sonnet> — <one clause: why this ticket needs that model>
+
 **Suggested effort:** <low|medium|high|xhigh|max> — <one clause: why this ticket needs that much thinking, or that little>
+
+**Suggested helpers:** <what to fan out to scouts, researchers and testers — this line only when it helps>
 
 - [ ] <Acceptance criterion>
 - [ ] <Acceptance criterion>
@@ -93,7 +99,7 @@ The two homes differ in only two places: the GitHub home carries the heading as 
 
 `**Parent:**` is written only when the task opened with a Jira id, and then identically in **both** homes: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
 
-`**Suggested effort:**` is written the same way in **both** homes — a body line like the two above it, in the file under `.scratch/` and in the issue body alike. It is what Phase 3's launch question pre-selects, and what `/implement-tickets` reads back off a board later; a ticket written before this line existed simply carries none, and the launcher's own `medium` stands.
+`**Suggested model:**`, `**Suggested effort:**` and `**Suggested helpers:**` are written the same way in **both** homes — body lines like the two above them, in the file under `.scratch/` and in the issue body alike. The first two are what Phase 3's launch question pre-selects, and what `/implement-tickets` reads back off a board later; the third reaches the coordinator inside the ticket body it is sent. A ticket written before these lines existed simply carries none, and the launcher's own defaults stand.
 
 ### Naming the board
 
@@ -212,15 +218,15 @@ The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the
 
 `EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
 
-**The tickets suggest the effort.** Every ticket Phase 2 wrote carries a `**Suggested effort:**` line — read the *selection's* and pre-select it over the launcher's `EFFORT=` default. Where the selected tickets disagree, name the spread and pre-select the highest of them: the ticket that asked for more thinking is the one that loses by getting less, and a single ticket can still be launched at its own level as a per-ticket override. Where none of them carries the line — a board written before this existed — `EFFORT=` stands.
+**The tickets suggest the model and the effort.** Every ticket Phase 2 wrote carries a `**Suggested model:**` and a `**Suggested effort:**` line — read the *selection's*. Where they all agree, pre-select that value over the launcher's default. Where they disagree, pre-select **`As each ticket suggests`** — a policy rather than a value: every launch then passes that ticket's own suggestion, and the session holds the policy the way it would hold a value. Name the spread either way (`02, 03 sonnet/medium · 04 opus/high`). Where none of them carries the lines — a board written before they existed — `MODEL=` and `EFFORT=` stand.
 
 Then ask with **one** `AskUserQuestion` call, one question per setting:
 
 | Setting | Question | Options, in order | How it reaches the launcher |
 |---|---|---|---|
 | Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
-| Model | "Which model should implement this session's tickets?" | the `MODEL=` value first, labelled `(default)`, then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary agrees with what launched |
-| Effort | "How hard should the model think on this session's tickets?" | the suggested level first, labelled `(suggested by the tickets)` — or the `EFFORT=` value labelled `(default)` where none of them suggests one — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary agrees with what launched |
+| Model | "Which model should implement this session's tickets?" | the pre-selection above first — `As each ticket suggests`, the tickets' shared suggestion labelled `(suggested by the tickets)`, or the `MODEL=` value labelled `(default)` — then the rest of Opus / Sonnet / `As each ticket suggests`, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary agrees with what launched — under the policy, that ticket's suggestion (`MODEL=` for a ticket that carries none) |
+| Effort | "How hard should the implementer think on this session's tickets?" | the same, for effort: `As each ticket suggests`, the shared suggestion, or the `EFFORT=` value labelled `(default)` — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly — under the policy, that ticket's suggestion (`EFFORT=` for a ticket that carries none) |
 
 One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
 
@@ -231,7 +237,7 @@ One call with one question per setting, not one question then another: a further
 
 Neither is a reason to re-ask on the next ticket; re-ask only when the developer asks you to. See `docs/agents/session-settings.md`.
 
-Since this coordinator implements *and* reviews in one unattended session (see Phase 4), the chosen model **and the chosen effort** govern both — there is no separate review model here the way `/small-ticket` has one, and no separate review effort anywhere. Trading effort down for a cheaper run buys a shallower review with it.
+The model and effort chosen here reach the **implementer** only. The launched session is a coordinator that writes no code, and runs on its own setting — the `COORDINATOR=` line `defaults` prints, `opus @ low` out of the box — while review, testing, scouting and acceptance checks run on the fixed roles in `config/models.env`. So trading the implementer down to Sonnet no longer trades the review down with it. See `docs/agents/models.md`.
 
 ## Phase 4 — Launch one coordinator per launched ticket
 
@@ -260,9 +266,9 @@ alone. An unknown account name stops the script before anything is
 created, and `claude-acc list` is the answer to show them. See `docs/agents/accounts.md` and
 `docs/agents/session-settings.md`.
 
-The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
+The script runs the same shared launcher `small-ticket` does — one `lib/ticket-launcher.sh`, installed as `~/.claude/skills/ticket-launcher.sh`, with only the template, the permission mode and the blocked tools differing (discover the repo root, fast-forward the base branch, then one synchronous `herdr worktree create --cwd <root> --branch <branch> --base <base> --path <root>/../<repo>--<branch> --label <label>` that returns the worktree's own workspace, tab and root pane — or fails with Herdr's own error — then lay that workspace out as three tabs, `agent` | `review` | `shell`; `small-ticket`'s **Manual fallback** section has the call sequence and the note on why `review` is built by moving the reviewr plugin's pane), then starts Claude Code unattended on the root pane in the `agent` tab — on the coordinator's own model and effort, with every `ticket-*` subagent redefined through `--agents` so the implementer carries this ticket's model and effort and the rest carry `config/models.env`'s — no plan mode, since the plan is already agreed, and no one there to click a permission prompt mid-run — with `git add`, `commit`, `push`, `stash`, `reset`, `rebase`, `checkout`, and `switch` all blocked, and sends `templates/ticket-agent-prompt.md` — with the repo's `docs/agents/project-memory.md` folded in as a `## Project memory` section where the main checkout keeps one, and nothing at all where it doesn't (`docs/agents/memory.md`; the script's `PROJECT_MEMORY=` summary line says which). That prompt is what actually tells the coordinator how to implement (mattpocock's `implement` process inlined, since that skill is `disable-model-invocation` and can't be called) and how to review (`mattpocock-skills:code-review`), both restricted to leave everything unstaged; see that file for the exact rules passed to it.
 
-Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `MODEL=`, `EFFORT=` and `ACCOUNT=` lines name what that ticket actually started on.
+Handle the exit code exactly as `small-ticket` does: **0** → move to the next ticket; **3** → tell the developer to answer the trust dialog in that tab, then run the printed `launch.sh prompt …` command once they confirm; **other** → read the error (every Herdr call carries Herdr's own message, `ERROR: herdr worktree create failed: ...`, `ERROR: herdr tab create (shell) failed: ...`), don't delete branches or worktrees, and try the next ticket. Launch tickets one at a time, keeping each script's summary block — it names the workspace and all three tabs, its `REVIEW=` line says whether the `review` tab holds the reviewr pane or an empty shell, and its `MODEL=`, `EFFORT=` and `ACCOUNT=` lines name what that ticket's implementer and account actually started on, `COORDINATOR=` what the session itself runs on, and `SUBAGENTS=` every role's model and effort.
 
 ## Phase 5 — Report
 
@@ -276,7 +282,8 @@ Only step 3, starting the agent, differs — `/ticket` runs unattended, so it do
 
 ```bash
 herdr agent start tk-<branch> --kind claude --pane <root-pane> -- \
-  --model <the chosen model> --effort <the chosen effort> --permission-mode bypassPermissions \
+  --model <TICKET_COORD_MODEL> --effort <TICKET_COORD_EFFORT> --permission-mode bypassPermissions \
+  --agents '<the ticket-* definitions, implementer on the chosen model and effort>' \
   --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" \
     "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)" \
     "Bash(git checkout:*)" "Bash(git switch:*)"
