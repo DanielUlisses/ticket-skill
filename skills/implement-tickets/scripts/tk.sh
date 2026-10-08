@@ -8,7 +8,7 @@
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates
-#   tk.sh merge   <board> <NN>           gates, then merge with the repo's method, then resolve
+#   tk.sh merge   <board> <NN>           gates, then merge on the forge (GitHub or Azure DevOps), then resolve
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
@@ -198,38 +198,33 @@ cmd_launch() {
 # ---- gates and merge ---------------------------------------------------------------
 # Sets PR_NUMBER. Prints one GATE line per gate; returns 0 / 10 / 11 / 12.
 run_gates() {
-  local t="$1" branch pr json fail=0 conflicting=0 pending=0
+  local t="$1" branch json fail=0 conflicting=0 pending=0 forge
   branch="$(jq -r .branch <<<"$t")"
-  PR_NUMBER=""
+  PR_NUMBER=""; forge="$(forge_name)"
   [[ -n "$branch" ]] || { echo "GATE pr FAIL ticket has no branch recorded"; return 12; }
-  pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
-  [[ -n "$pr" ]] || { echo "GATE pr FAIL no open PR on $branch — not pushed, or no PR opened yet"; return 12; }
-  PR_NUMBER="$pr"; echo "GATE pr PASS #$pr"
-  json="$(gh pr view "$pr" --json isDraft,baseRefName,mergeable,reviewDecision,statusCheckRollup)"
+  json="$(forge_pr_open "$branch")" || { echo "GATE pr FAIL couldn't ask $forge about $branch"; return 12; }
+  [[ -n "$json" ]] || { echo "GATE pr FAIL no open PR on $branch — not pushed, or no PR opened yet"; return 12; }
+  PR_NUMBER="$(jq -r .number <<<"$json")"; echo "GATE pr PASS #$PR_NUMBER"
   if [[ "$(jq -r .mergeable <<<"$json")" == UNKNOWN ]]; then
-    sleep 3; json="$(gh pr view "$pr" --json isDraft,baseRefName,mergeable,reviewDecision,statusCheckRollup)"
+    sleep 3; json="$(forge_pr_get "$PR_NUMBER")" || { echo "GATE pr FAIL couldn't re-read #$PR_NUMBER from $forge"; return 12; }
   fi
   if [[ "$(jq -r .isDraft <<<"$json")" == true ]]; then echo "GATE ready FAIL draft"; fail=1
-  elif [[ "$(jq -r .baseRefName <<<"$json")" != "$BASE_BRANCH" ]]; then echo "GATE ready FAIL base is $(jq -r .baseRefName <<<"$json"), not $BASE_BRANCH"; fail=1
+  elif [[ "$(jq -r .base <<<"$json")" != "$BASE_BRANCH" ]]; then echo "GATE ready FAIL base is $(jq -r .base <<<"$json"), not $BASE_BRANCH"; fail=1
   else echo "GATE ready PASS"; fi
   case "$(jq -r .mergeable <<<"$json")" in
     MERGEABLE)   echo "GATE mergeable PASS" ;;
     CONFLICTING) echo "GATE mergeable FAIL conflicts with $BASE_BRANCH — send ticket-merger"; conflicting=1 ;;
-    *)           echo "GATE mergeable FAIL GitHub hasn't computed it yet — ask again in a minute"; fail=1 ;;
+    *)           echo "GATE mergeable FAIL $forge hasn't computed it yet — ask again in a minute"; fail=1 ;;
   esac
-  local checks
-  checks="$(jq -r '[.statusCheckRollup[]? |
-      if .__typename == "StatusContext" then {n: .context, s: (if .state == "SUCCESS" then "ok" elif (.state == "PENDING" or .state == "EXPECTED") then "pending" else "bad" end)}
-      else {n: .name, s: (if .status != "COMPLETED" then "pending"
-                          elif (.conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "NEUTRAL") then "ok" else "bad" end)} end]' <<<"$json")"
+  local checks; checks="$(jq -c .checks <<<"$json")"
   if [[ "$(jq '[.[] | select(.s == "bad")] | length' <<<"$checks")" -gt 0 ]]; then
     echo "GATE checks FAIL failed: $(jq -r '[.[] | select(.s == "bad") | .n] | join(", ")' <<<"$checks")"; fail=1
   elif [[ "$(jq '[.[] | select(.s == "pending")] | length' <<<"$checks")" -gt 0 ]]; then
     echo "GATE checks FAIL still running: $(jq -r '[.[] | select(.s == "pending") | .n] | join(", ")' <<<"$checks")"; pending=1
   else echo "GATE checks PASS ($(jq length <<<"$checks") checks)"; fi
-  case "$(jq -r '.reviewDecision // ""' <<<"$json")" in
+  case "$(jq -r .review <<<"$json")" in
     APPROVED|"") echo "GATE review PASS" ;;
-    *) echo "GATE review FAIL $(jq -r .reviewDecision <<<"$json")"; fail=1 ;;
+    *) echo "GATE review FAIL $(jq -r .review <<<"$json")"; fail=1 ;;
   esac
   (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
 }
@@ -238,7 +233,7 @@ run_gates() {
 # the branch locally and the next digest sees it by ancestry.
 need_pr_remote() {
   (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — no PRs here; merge the branch locally and the next digest resolves it"
-  need gh
+  forge_need
 }
 
 cmd_gates() {
@@ -262,11 +257,10 @@ cmd_merge() {
   t="$(ticket_json "$nn")"
   set +e; run_gates "$t"; rc=$?; set -e
   [[ $rc -eq 0 ]] || { echo "NOT MERGED — a gate failed"; return $rc; }
-  method="$(gh repo view --json viewerDefaultMergeMethod --jq .viewerDefaultMergeMethod | tr '[:upper:]' '[:lower:]')"
-  [[ "$method" =~ ^(merge|squash|rebase)$ ]] || method=squash
-  # Never --admin (it would skip the gates GitHub enforces), never --delete-branch
-  # (the branch is still checked out in the ticket's worktree; /sweep-tickets owns it).
-  gh pr merge "$PR_NUMBER" "--$method"
+  # The forge's own merge: GitHub's default method for the repo, Azure's
+  # TICKET_AZURE_MERGE. Never bypassing the rules the forge enforces, never
+  # deleting the branch (it's still checked out in the ticket's worktree).
+  method="$(forge_merge "$PR_NUMBER")"
   echo "MERGED $nn #$PR_NUMBER ($method)"
   resolve_ticket "$t"
 }
@@ -279,7 +273,7 @@ resolve_ticket() {
   l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
   [[ "$l" == yes:* ]] || die "ticket $nn hasn't landed ($l) — not resolving it"
   if [[ "$l" == yes:pr#* ]]; then
-    sha="$(gh pr view "${l#yes:pr#}" --json mergeCommit --jq '.mergeCommit.oid // ""' | cut -c1-7)"
+    sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
   else
     sha="$(git -C "$ROOT" rev-parse --short "$branch")"
   fi
@@ -363,8 +357,8 @@ board_rows() {
         checks="$(sed -n 2p "$phase_dir/$branch" | tr -cd 'a-z0-9=/ -')"
         phase="${phase:--}"
       fi
-      if (( HAS_REMOTE )) && command -v gh >/dev/null 2>&1 && [[ -n "$branch" ]]; then
-        pr="$(gh pr list --head "$branch" --state open --json number,isDraft,mergeable,reviewDecision,statusCheckRollup --jq '.[0] // null' 2>/dev/null || echo null)"
+      if forge_ok && [[ -n "$branch" ]]; then
+        pr="$(forge_pr_open "$branch" 2>/dev/null || true)"
         [[ -n "$pr" ]] || pr="null"
       fi
     fi
@@ -382,15 +376,14 @@ board_rows() {
           else {col: "backlog", note: "ready to launch"} end)
        elif ($t.landed | startswith("yes")) then {col: "done", note: "landed — resolve it"}
        elif $t.pr != null then
-         ($t.pr | [.statusCheckRollup[]? | if .__typename == "StatusContext" then .state
-                   elif .status != "COMPLETED" then "PENDING" else .conclusion end] as $c |
+         ($t.pr | [.checks[]?.s] as $c |
           {col: "pr", note: ("#\(.number) " +
             (if .isDraft then "draft"
              elif .mergeable == "CONFLICTING" then "conflict"
-             elif .reviewDecision == "CHANGES_REQUESTED" then "changes requested"
-             elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then "checks failed"
-             elif ($c | any(. == "PENDING" or . == "EXPECTED" or . == "QUEUED" or . == "IN_PROGRESS")) then "checks running"
-             elif .reviewDecision == "REVIEW_REQUIRED" then "awaiting review"
+             elif .review == "CHANGES_REQUESTED" then "changes requested"
+             elif ($c | any(. == "bad")) then "checks failed"
+             elif ($c | any(. == "pending")) then "checks running"
+             elif .review == "REVIEW_REQUIRED" then "awaiting review"
              else "ready to merge" end))})
        elif ($t.landed | startswith("unknown")) then {col: "needs", note: "landed? \($t.landed | ltrimstr("unknown:"))"}
        elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
@@ -534,6 +527,7 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused)
   status / what changed?        re-read the board, agents and git; report what moved
   open a PR for 04 / PR 04      Sonnet PR creator: commit the ticket's files, push, open the PR
+                                  on GitHub or Azure DevOps, whichever the remote points at
   merge 05                      five gates, then merge, resolve, offer what it unblocked
                                   conflict -> Sonnet merger resolves; you choose Commit / Abort / Leave
   merge everything ready        list what passes every gate, ask once, merge in order
@@ -560,6 +554,12 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tks  [board] NN    what one ticket's agent is doing
   tk <verb> ...      tk.sh directly (digest, view, gates, ready, helpers, retro, help)
   tkhelp             this list
+
+Forges (PRs, gates, merge) — picked from the remote URL
+  GitHub         gh, logged in
+  Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
+  TICKET_FORGE=github|azure       override the detection
+  TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)
 
 Elsewhere
   /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command

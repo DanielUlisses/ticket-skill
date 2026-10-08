@@ -8,8 +8,8 @@
 # resolving free-text blockers, and answering "has this branch landed".
 #
 # Boards live in one home: files under <root>/.scratch/<board>/ (ADR 0005 dropped
-# GitHub-issue boards). PRs may still be on GitHub; that's a merge question, not
-# a board one, and landed() asks it where gh can.
+# GitHub-issue boards). PRs live on the repo's forge — GitHub or Azure DevOps —
+# which is a merge question, not a board one; the forge layer below answers it.
 #
 # Requires ticket-git-repo.sh (die/log/need, resolve_repo_root,
 # resolve_base_branch, run_git_net) to have been sourced first.
@@ -131,7 +131,7 @@ landed() {
   [[ -n "$branch" ]] || { echo "-"; return; }
   git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" || {
     # A deleted local branch can still have a merged PR.
-    (( HAS_REMOTE )) && pr="$(gh pr list --head "$branch" --state merged --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+    forge_ok && pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
     [[ -n "${pr:-}" ]] && echo "yes:pr#$pr" || echo "unknown:no-local-branch"; return; }
   [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "$branch" "$BASE_REF" 2>/dev/null || true)"
   if ! count="$(git -C "$ROOT" rev-list --count "$base_sha..$branch" 2>/dev/null)"; then
@@ -142,8 +142,8 @@ landed() {
      || git -C "$ROOT" merge-base --is-ancestor "$branch" "$BASE_BRANCH" 2>/dev/null; then
     echo "yes:ancestry"; return
   fi
-  if (( HAS_REMOTE )) && command -v gh >/dev/null 2>&1; then
-    pr="$(gh pr list --head "$branch" --state merged --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  if forge_ok; then
+    pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
     [[ -n "$pr" ]] && { echo "yes:pr#$pr"; return; }
   fi
   echo "no"
@@ -186,6 +186,201 @@ board_init() {
     HAS_REMOTE=1
     git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$BASE_BRANCH" && BASE_REF="$REMOTE/$BASE_BRANCH"
   fi
+  forge_detect
   resolve_board "${1:-}"
   load_board
+}
+
+# ---- the forge: where PRs live ---------------------------------------------------
+# GitHub (gh) or Azure DevOps (az + its azure-devops extension), picked from the
+# remote's URL; TICKET_FORGE=github|azure overrides it. Every caller reads one PR
+# shape, whichever forge answered:
+#   {number, url, isDraft, base, mergeable: MERGEABLE|CONFLICTING|UNKNOWN,
+#    review: APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|"", checks: [{n, s: ok|pending|bad}]}
+# so the gates, the merge, the landing check, the status board and pr-open.sh
+# never call gh or az themselves.
+
+# Sets FORGE (github|azure|none) and, for Azure, AZ_ORG / AZ_PROJECT / AZ_REPO
+# parsed from the remote — passed explicitly, so a remote not named origin works.
+forge_detect() {
+  FORGE=none; AZ_ORG=""; AZ_PROJECT=""; AZ_REPO=""
+  (( HAS_REMOTE )) || return 0
+  local url; url="$(git -C "$ROOT" remote get-url "$REMOTE")"
+  case "${TICKET_FORGE:-}" in
+    github|azure) FORGE="$TICKET_FORGE" ;;
+    "") if [[ "$url" =~ (dev\.azure\.com|visualstudio\.com) ]]; then FORGE=azure; else FORGE=github; fi ;;
+    *) die "TICKET_FORGE is '$TICKET_FORGE' — github or azure" ;;
+  esac
+  [[ "$FORGE" == azure ]] || return 0
+  local re_https='^https?://([^@/]+@)?dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/?#]+)'
+  local re_vs='^https?://([^@/]+@)?([^./]+)\.visualstudio\.com/(DefaultCollection/)?([^/]+)/_git/([^/?#]+)'
+  local re_ssh='^([^@]+@)?(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com):v3/([^/]+)/([^/]+)/([^/]+)$'
+  if [[ "$url" =~ $re_https ]]; then
+    AZ_ORG="https://dev.azure.com/${BASH_REMATCH[2]}"; AZ_PROJECT="${BASH_REMATCH[3]}"; AZ_REPO="${BASH_REMATCH[4]}"
+  elif [[ "$url" =~ $re_vs ]]; then
+    AZ_ORG="https://${BASH_REMATCH[2]}.visualstudio.com"; AZ_PROJECT="${BASH_REMATCH[4]}"; AZ_REPO="${BASH_REMATCH[5]}"
+  elif [[ "$url" =~ $re_ssh ]]; then
+    AZ_ORG="https://dev.azure.com/${BASH_REMATCH[3]}"; AZ_PROJECT="${BASH_REMATCH[4]}"; AZ_REPO="${BASH_REMATCH[5]}"
+  fi
+  AZ_PROJECT="${AZ_PROJECT//%20/ }"; AZ_REPO="${AZ_REPO%.git}"; AZ_REPO="${AZ_REPO//%20/ }"
+}
+
+# Quiet: can the forge be asked at all? (The landing check and the status board
+# just skip it when not.)
+forge_ok() {
+  case "${FORGE:-none}" in
+    github) command -v gh >/dev/null 2>&1 ;;
+    azure)  command -v az >/dev/null 2>&1 && [[ -n "$AZ_ORG" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Loud: what a PR verb needs, or why it can't run.
+forge_need() {
+  case "$FORGE" in
+    github) need gh ;;
+    azure)
+      need az
+      [[ "${TICKET_AZURE_MERGE:-squash}" =~ ^(squash|merge)$ ]] || die "TICKET_AZURE_MERGE is '$TICKET_AZURE_MERGE' — squash or merge"
+      [[ -n "$AZ_ORG" ]] || die "can't read an Azure DevOps org/project/repo from the '$REMOTE' remote ($(git -C "$ROOT" remote get-url "$REMOTE"))"
+      az extension show --name azure-devops --only-show-errors >/dev/null 2>&1 \
+        || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
+    *) die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
+  esac
+}
+
+forge_name() { case "$FORGE" in github) echo GitHub ;; azure) echo "Azure DevOps" ;; *) echo "no forge" ;; esac; }
+
+az_() { az "$@" --org "$AZ_ORG" --output json --only-show-errors; }
+
+# One GitHub PR (from pr list/view --json) into the common shape.
+GH_PR_FIELDS=number,url,isDraft,baseRefName,mergeable,reviewDecision,statusCheckRollup
+gh_norm() {
+  jq -c '{number, url, isDraft, base: .baseRefName,
+    mergeable: (if .mergeable == "MERGEABLE" or .mergeable == "CONFLICTING" then .mergeable else "UNKNOWN" end),
+    review: (.reviewDecision // ""),
+    checks: [.statusCheckRollup[]? |
+      if .__typename == "StatusContext" then {n: .context, s: (if .state == "SUCCESS" then "ok" elif (.state == "PENDING" or .state == "EXPECTED") then "pending" else "bad" end)}
+      else {n: .name, s: (if .status != "COMPLETED" then "pending"
+                          elif (.conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "NEUTRAL") then "ok" else "bad" end)} end]}'
+}
+
+# One Azure PR (pr show) plus its policy evaluations (pr policy list) into the
+# common shape. Votes: 10 approved, 5 approved with suggestions, 0 none,
+# -5 waiting for author, -10 rejected. Reviewer policies feed review; every
+# other blocking policy (build validation, status checks, comment resolution,
+# linked work items) is a check.
+az_norm() {
+  local pr="$1" pol="$2"
+  jq -cn --argjson p "$pr" --argjson pol "$pol" --arg web "$AZ_ORG/$(jq -rn --arg s "$AZ_PROJECT" '$s|@uri')/_git/$(jq -rn --arg s "$AZ_REPO" '$s|@uri')" '
+    def ok_st: . == "approved" or . == "notApplicable";
+    def reviewer_policy: (.configuration.type.displayName // "") | test("reviewers"; "i");
+    ($pol | map(select(.configuration.isBlocking != false and .configuration.isEnabled != false))) as $blocking |
+    ($p.reviewers // []) as $rv |
+    {number: $p.pullRequestId, url: "\($web)/pullrequest/\($p.pullRequestId)",
+     isDraft: ($p.isDraft // false), base: ($p.targetRefName | sub("^refs/heads/"; "")),
+     mergeable: (if $p.mergeStatus == "succeeded" then "MERGEABLE" elif $p.mergeStatus == "conflicts" then "CONFLICTING" else "UNKNOWN" end),
+     review: (if any($rv[]; (.vote // 0) <= -5) then "CHANGES_REQUESTED"
+              elif any($blocking[] | select(reviewer_policy); .status | ok_st | not) then "REVIEW_REQUIRED"
+              elif any($rv[]; .isRequired == true and (.vote // 0) < 5) then "REVIEW_REQUIRED"
+              elif any($rv[]; (.vote // 0) >= 5) then "APPROVED" else "" end),
+     checks: [$blocking[] | select(reviewer_policy | not) |
+       {n: (.configuration.settings.displayName // .configuration.type.displayName // "policy"),
+        s: (if (.status | ok_st) then "ok" elif .status == "running" or .status == "queued" then "pending" else "bad" end)}]}'
+}
+
+az_pr_full() {
+  local id="$1" pr pol
+  pr="$(az_ repos pr show --id "$id")" || return 1
+  pol="$(az_ repos pr policy list --id "$id" 2>/dev/null)" || pol='[]'
+  az_norm "$pr" "${pol:-[]}"
+}
+
+# The open PR from <branch>, in the common shape, or nothing.
+forge_pr_open() {
+  local branch="$1" id
+  case "$FORGE" in
+    github)
+      local j; j="$(gh pr list --head "$branch" --state open --json "$GH_PR_FIELDS" --jq '.[0] // empty')" || return 1
+      [[ -z "$j" ]] || gh_norm <<<"$j" ;;
+    azure)
+      id="$(az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --source-branch "$branch" --status active | jq -r '.[0].pullRequestId // empty')" || return 1
+      [[ -z "$id" ]] || az_pr_full "$id" ;;
+    *) return 1 ;;
+  esac
+}
+
+# PR <id> again, in the common shape (the gates re-ask while mergeability computes).
+forge_pr_get() {
+  case "$FORGE" in
+    github) gh pr view "$1" --json "$GH_PR_FIELDS" | gh_norm ;;
+    azure)  az_pr_full "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# The id of a merged PR from <branch>, or nothing.
+forge_merged_pr() {
+  case "$FORGE" in
+    github) gh pr list --head "$1" --state merged --json number --jq '.[0].number // empty' ;;
+    azure)  az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --source-branch "$1" --status completed | jq -r '.[0].pullRequestId // empty' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Opens a PR; prints its URL. Run from the ticket's worktree.
+forge_pr_create() {
+  local base="$1" branch="$2" title="$3" body="$4" desc id
+  case "$FORGE" in
+    github) gh pr create --base "$base" --head "$branch" --title "$title" --body-file "$body" ;;
+    azure)
+      # Azure caps a description at 4000 characters; the full body stays in the
+      # file the agent wrote, so a long one is cut with a note rather than refused.
+      desc="$(cat "$body")"
+      (( ${#desc} <= 4000 )) || desc="${desc:0:3950}"$'\n\n'"… (truncated at Azure DevOps' 4000-character limit)"
+      id="$(az_ repos pr create --project "$AZ_PROJECT" --repository "$AZ_REPO" \
+              --source-branch "$branch" --target-branch "$base" --title "$title" --description "$desc" \
+            | jq -r '.pullRequestId // empty')"
+      [[ -n "$id" ]] || die "az repos pr create returned no PR id"
+      forge_pr_get "$id" | jq -r .url ;;
+    *) return 1 ;;
+  esac
+}
+
+# Merges PR <id>; prints the method used. Never bypasses policy or admin rules,
+# never deletes the source branch — it's still checked out in the ticket's
+# worktree, and /sweep-tickets owns it.
+forge_merge() {
+  local id="$1" method
+  case "$FORGE" in
+    github)
+      method="$(gh repo view --json viewerDefaultMergeMethod --jq .viewerDefaultMergeMethod | tr '[:upper:]' '[:lower:]')"
+      [[ "$method" =~ ^(merge|squash|rebase)$ ]] || method=squash
+      gh pr merge "$id" "--$method" >&2 ;;
+    azure)
+      method="${TICKET_AZURE_MERGE:-squash}"
+      [[ "$method" =~ ^(squash|merge)$ ]] || die "TICKET_AZURE_MERGE is '$method' — squash or merge"
+      local st
+      st="$(az_ repos pr update --id "$id" --status completed --squash "$([[ $method == squash ]] && echo true || echo false)" \
+              --delete-source-branch false | jq -r '.status // empty')"
+      # Azure merges asynchronously after the update: give it a few seconds, then
+      # only "completed" counts — a policy can still refuse it.
+      local i; for i in 1 2 3 4 5; do
+        [[ "$st" == active ]] || break
+        sleep 3; st="$(az_ repos pr show --id "$id" | jq -r '.status // empty')"
+      done
+      [[ "$st" == completed ]] || die "Azure DevOps didn't complete PR $id (status: ${st:-?}) — a policy may still be pending"
+      ;;
+    *) return 1 ;;
+  esac
+  echo "$method"
+}
+
+# The short sha PR <id> merged as, or nothing.
+forge_merge_commit() {
+  case "$FORGE" in
+    github) gh pr view "$1" --json mergeCommit --jq '.mergeCommit.oid // ""' ;;
+    azure)  az_ repos pr show --id "$1" | jq -r '.lastMergeCommit.commitId // ""' ;;
+    *) return 0 ;;
+  esac | cut -c1-7
 }

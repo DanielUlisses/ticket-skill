@@ -15,9 +15,8 @@ script in two branches. It is gone:
 - `/ticket` always writes `.scratch/<board>/issues/<NN>-<slug>.md`, whatever tracker the repo has.
 - `board-lib.sh` resolves a Jira id, a slug or a path to one folder and parses only files;
   `tk.sh`, `pr-open.sh` and `merge-conflict.sh` lost their GitHub-board branches.
-- **PRs still live on GitHub.** "Has it landed" still asks `gh` for a merged PR, and the merge
-  gates, the merger and the PR creator still work against GitHub PRs — that is about where the
-  code goes, not where the board is.
+- **PRs live on the repo's forge** — GitHub or Azure DevOps (§7). That is about where the code
+  goes, not where the board is.
 - **A repo with no remote is supported.** The board scripts take the local base as the merge
   target, skip the fetch and the PR leg, and the PR verbs say to merge locally instead.
 
@@ -152,3 +151,39 @@ header bar carries the status dot, the board, the base and the active / needs-yo
 column has an icon; chips are dark text on the role's colour.
 
 ![The status board in its tickets tab, Tokyo Night theme](../assets/board-tui.png)
+
+## 7. PRs on GitHub or Azure DevOps
+
+The board's PR leg — the merge gates, `merge`, the landing check, the status board's PR column and
+`pr-open.sh` — called `gh` directly, so a repo on Azure DevOps had boards that could launch and
+review but never open, gate or merge a PR. They now go through a small **forge layer** in
+`board-lib.sh`:
+
+- **Detection.** `board_init` reads the remote's URL: `dev.azure.com`, `*.visualstudio.com` or their
+  SSH hosts mean Azure DevOps, anything else GitHub; no remote, no forge. `TICKET_FORGE=github|azure`
+  overrides it. For Azure the organization, project and repository are parsed from the URL and passed
+  to every `az` call, so a remote not named `origin` works and nothing depends on `az devops configure`.
+- **One PR shape.** Each forge's PR is normalized to `{number, url, isDraft, base, mergeable, review,
+  checks:[{n, s: ok|pending|bad}]}`, and every caller reads only that. Azure's mapping: `mergeStatus`
+  `succeeded`/`conflicts` → mergeable/conflicting; reviewer votes and reviewer policies → review (any
+  `-5`/`-10` vote is changes requested; an unmet reviewer policy or a required reviewer without an
+  approving vote is review required); every other **blocking, enabled** policy — build validation,
+  status checks, comment resolution, linked work items — is a check (`approved`/`notApplicable` ok,
+  `running`/`queued` pending, anything else failed). The five gates and their exit codes are unchanged.
+- **Merge.** GitHub keeps the repo's default method. Azure completes the PR with
+  `TICKET_AZURE_MERGE` (`squash`, the default, or `merge`), never bypassing policy and never deleting
+  the source branch — the same two nevers as `--admin` and `--delete-branch` on GitHub. Azure merges
+  asynchronously, so `merge` waits a few seconds for `completed` and otherwise reports the PR still
+  active rather than claiming it merged.
+- **Opening.** `pr-open.sh` commits and pushes exactly as before and opens the PR with
+  `az repos pr create` on Azure. Azure caps a description at 4000 characters: `check` prints
+  `FORGE Azure DevOps` so `ticket-pr-creator` keeps the body under it, and a longer one is cut with a
+  note rather than refused.
+- **Requirements.** GitHub: `gh`, logged in. Azure: `az` with the `azure-devops` extension, logged in
+  (`az devops login`, or `AZURE_DEVOPS_EXT_PAT`); the PR verbs say exactly that when it's missing,
+  while the landing check and the status board simply skip the forge.
+
+The Azure field names (`mergeStatus`, `reviewers[].vote`, policy evaluations'
+`configuration.type.displayName` and `status`) follow the Azure DevOps REST API that `az repos pr`
+returns; the scripts were exercised against stubs, so the first real Azure board is the check that
+they match.

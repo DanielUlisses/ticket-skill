@@ -17,7 +17,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh help` | every command the developer can use |
 | `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
 
-`tk.sh` above is `{{TK}}`. Never use `git commit`, `git push`, `gh pr create`, `gh pr merge`, `merge-conflict.sh` or `pr-open.sh` yourself — the scripts, `ticket-merger` and `ticket-pr-creator` do those.
+`tk.sh` above is `{{TK}}`. Never use `git commit`, `git push`, `gh pr`/`az repos pr` commands, `merge-conflict.sh` or `pr-open.sh` yourself — the scripts, `ticket-merger` and `ticket-pr-creator` do those.
 
 The developer watches the board in a `tickets` tab (`tk.sh view`, a script). You don't need to describe the board's layout to them — say what changed and what you did.
 

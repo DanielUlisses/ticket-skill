@@ -22,6 +22,9 @@ without force.
      printed — and never claim a check that isn't in it.
    - Name the `PARENT` Jira id where `check` printed one, and the ticket number. The board
      resolves the ticket itself on merge, so nothing in the body needs to close anything.
+   - `FORGE` says where the PR opens — GitHub or Azure DevOps; `pr-open.sh` does either. On Azure
+     DevOps the description is plain Markdown capped at 4000 characters: keep the body under it
+     (anything longer is cut with a note), and don't use GitHub-only syntax such as `Closes #N`.
 3. **The files.** List every changed path that belongs to the ticket, one per line, in a paths
    file. Leave out build output, logs, editor files and anything `check` marked `RISKY` — and say
    which you left out and why.
@@ -32,5 +35,5 @@ without force.
    `pr-open.sh open <board> <NN> --title "<title>" --message-file <f> --body-file <f> --paths-file <f>`.
 
 Return: the PR URL, the commit, the files committed, the files left out and why. Never run
-`git commit`, `git push`, `gh pr create`, `git rebase`, `git reset`, `git stash`, `git checkout` or
+`git commit`, `git push`, `gh pr create`, `az repos pr create`, `git rebase`, `git reset`, `git stash`, `git checkout` or
 `git switch` yourself, and never edit the ticket's code — the PR is for what the ticket wrote.

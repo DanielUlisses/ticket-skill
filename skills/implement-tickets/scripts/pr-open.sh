@@ -30,7 +30,7 @@ verb="${1:-}"; board="${2:-}"; nn="${3:-}"
 shift 3
 board_init "$board"
 (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push or open a PR; the developer commits and merges locally"
-need gh
+forge_need
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
 WT="$(jq -r .worktree <<<"$t")"
@@ -44,7 +44,8 @@ preflight() {
   [[ "$(g rev-parse --abbrev-ref HEAD)" == "$BRANCH" ]] || die "$WT is not on $BRANCH"
   ! g rev-parse -q --verify MERGE_HEAD >/dev/null || die "a merge is in progress in $WT"
   require_agent_quiet "$(jq -r .agent <<<"$t")" "opening a PR"
-  local pr; pr="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')"
+  local pr; pr="$(forge_pr_open "$BRANCH")" || die "couldn't ask $(forge_name) whether $BRANCH has an open PR"
+  pr="$(jq -r '.url // empty' <<<"${pr:-null}")"
   [[ -z "$pr" ]] || die "$BRANCH already has an open PR: $pr"
 }
 
@@ -61,6 +62,7 @@ case "$verb" in
     ahead="$(g rev-list --count "$REMOTE/$BASE_BRANCH..HEAD" 2>/dev/null || echo 0)"
     [[ -n "$files" || "$ahead" -gt 0 ]] || die "nothing to open a PR for: no changes and no commits on $BRANCH"
     echo "READY ticket $nn on $BRANCH (base $BASE_BRANCH) in $WT"
+    echo "FORGE $(forge_name)$([[ $FORGE == azure ]] && echo " — description capped at 4000 characters; keep the body under it")"
     echo "COMMITS already on the branch: $ahead"
     echo "CHANGED"; sed 's/^/  /' <<<"${files:-  (none — only the commits above)}"
     r="$(risky <<<"$files")"; [[ -z "$r" ]] || { echo "RISKY — never include these:"; sed 's/^/  /' <<<"$r"; }
@@ -102,7 +104,7 @@ case "$verb" in
     fi
     left="$(changed)"
     GIT_TERMINAL_PROMPT=0 g push -q -u "$REMOTE" "HEAD:refs/heads/$BRANCH"
-    url="$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$title" --body-file "$body")"
+    url="$(cd "$WT" && forge_pr_create "$BASE_BRANCH" "$BRANCH" "$title" "$body")"
     echo "OPENED $url"
     echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, pushed"
     [[ -z "$left" ]] || { echo "LEFT UNCOMMITTED (not named):"; sed 's/^/  /' <<<"$left"; } ;;
