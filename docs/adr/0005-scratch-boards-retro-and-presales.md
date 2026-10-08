@@ -115,8 +115,11 @@ with checks running / failed, conflict, changes requested, awaiting review or re
 **in progress** (recon, implementing), **backlog** (ready to launch), **blocked** (waiting on named
 tickets) and **done**. It's a script reading the same board, Herdr state, git and `gh` the digest
 reads — no model, so it costs nothing to leave open — and `board.sh` opens it, refreshing every 30s
-(`TICKET_BOARD_VIEW`), in a `tickets` tab beside the board session; where Herdr won't create the tab
-or run the command, it prints the command instead.
+(`TICKET_BOARD_VIEW`), **side by side with the board session**: `herdr pane split --current
+--direction right` (the calling pane comes from `HERDR_PANE_ID`), the new pane read from
+`.result.pane.pane_id`, then `herdr pane run`. `TICKET_BOARD_VIEW_PLACEMENT=tab` puts it in a
+`tickets` tab instead, and a refused split falls back to that tab; where Herdr won't do either, it
+prints the command. The view fits its pane: below 90 columns each note moves to its own line.
 
 Herdr shows an agent as `working` whether it's implementing or reviewing, so `/ticket`'s coordinator
 now writes its phase — one word — to `~/.local/state/ticket-skill/<repo>/phase/<branch>` at each

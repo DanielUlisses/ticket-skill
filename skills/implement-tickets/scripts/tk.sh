@@ -395,7 +395,10 @@ cmd_view() {
     bold=$'\e[1m'; dim=$'\e[2m'; off=$'\e[0m'; red=$'\e[31m'; yel=$'\e[33m'; grn=$'\e[32m'; cyn=$'\e[36m'
   fi
   render() {
-    local rows; rows="$(board_rows)"
+    local rows cols tw; rows="$(board_rows)"
+    # Fit the pane it's in — often half a screen, beside the board session.
+    cols="$(tput cols 2>/dev/null || echo "${COLUMNS:-100}")"; [[ "$cols" =~ ^[0-9]+$ ]] || cols=100
+    tw=$(( cols > 70 ? cols - 40 : cols - 12 )); (( tw < 16 )) && tw=16
     printf '%s%s%s  %s· base %s · %s%s\n\n' "$bold" "$BOARD_ID" "$off" "$dim" "$BASE_REF" "$(date +%H:%M:%S)" "$off"
     local col title color
     for col in "needs:NEEDS YOU:$red" "pr:PR:$cyn" "human:HUMAN REVIEW:$yel" "review:AGENT REVIEW:$yel" \
@@ -403,10 +406,10 @@ cmd_view() {
       IFS=: read -r col title color <<<"$col"
       jq -e --arg c "$col" 'any(.col == $c)' <<<"$rows" >/dev/null || continue
       printf '%s%s%s (%s)%s\n' "$color" "$bold" "$title" "$(jq --arg c "$col" 'map(select(.col == $c)) | length' <<<"$rows")" "$off"
-      jq -r --arg c "$col" '.[] | select(.col == $c) |
-        "  \(.nn)  \(.title | .[0:48])\(if (.title | length) > 48 then "…" else "" end)" +
-        (if .note != "" then "  — \(.note)" else "" end) +
-        (if .model != "" then "  [\(.model)/\(.effort)]" else "" end)' <<<"$rows"
+      jq -r --arg c "$col" --argjson tw "$tw" --argjson wide "$(( cols > 90 ))" '.[] | select(.col == $c) |
+        "  \(.nn)  \(.title | .[0:$tw])\(if (.title | length) > $tw then "…" else "" end)" +
+        (if .note != "" then (if $wide == 1 then "  — " else "\n      " end) + .note else "" end) +
+        (if .model != "" and $wide == 1 then "  [\(.model)/\(.effort)]" else "" end)' <<<"$rows"
       echo
     done
   }
