@@ -42,10 +42,10 @@ LAUNCHER="${TICKET_LAUNCHER:-$(dirname "$SKILL_DIR")/ticket/scripts/launch.sh}"
 cmd_digest() {
   board_init "${1:-}"; shift || true
   local full=0; [[ "${1:-}" == --full ]] && full=1
-  if (( HAS_REMOTE )); then
-    run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || echo "WARN fetch of $REMOTE/$BASE_BRANCH failed — landed answers use the last fetch"
-  fi
-  fetch_ticket_branches
+  local t0=$SECONDS t1 t2
+  fetch_board_refs
+  t1=$SECONDS
+  forge_cache_begin
   local agents facts="" t nn status branch base agent st tab l
   local herdr_ok=1
   export LANDED_ERRS; LANDED_ERRS="$(mktemp)"
@@ -69,6 +69,10 @@ cmd_digest() {
   # unmerged — say so once, with its own words, rather than per ticket or never.
   [[ -s "$LANDED_ERRS" ]] && echo "WARN $(forge_name) couldn't be asked whether PRs merged: $(grep -v '^[[:space:]]*$' "$LANDED_ERRS" | sort -u | tail -1)"
   rm -f "$LANDED_ERRS"; unset LANDED_ERRS
+  forge_cache_end
+  t2=$SECONDS
+  # Every board turn starts here, so a slow one says where the time went.
+  (( t2 - t0 < 15 )) || echo "WARN digest took $((t2 - t0))s: fetch $((t1 - t0))s, landing checks and $(forge_name) $((t2 - t1))s"
 
   local state_file prev="{}"
   state_file="$(board_state_dir)/$BOARD_SLUG.digest.json"
@@ -376,6 +380,12 @@ cmd_show() {
 # through its brief ({{PHASE_FILE}}); Herdr alone can't tell implementing from
 # reviewing, since the agent is "working" either way.
 board_rows() {
+  forge_cache_begin
+  board_rows_ "$@"
+  local rc=$?; forge_cache_end; return $rc
+}
+
+board_rows_() {
   local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr phase_dir rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
@@ -491,7 +501,7 @@ cmd_view() {
   local next=0 out key
   while :; do
     if (( SECONDS >= next )); then
-      (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
+      fetch_board_refs >/dev/null
       load_board
       next=$(( SECONDS + every ))
     fi
@@ -606,6 +616,8 @@ Forges (PRs, gates, merge) — picked from the remote URL
   Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
   TICKET_FORGE=github|azure       override the detection
   TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)
+  TICKET_NET_TIMEOUT=90           seconds before a push or forge call gives up (they never prompt;
+                                  a timeout usually means: sign in once in a shell — az devops login)
 
 Elsewhere
   /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command

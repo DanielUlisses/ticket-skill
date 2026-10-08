@@ -220,3 +220,18 @@ resolved. So:
   ("belongs on api's board"). A ticket without a `**Repo:**` line is taken as this repo's, as before.
 - `/small-ticket` runs its launcher from the root of the repo the ticket changes.
 
+### 7b. No prompts, no waiting per ticket
+
+An agent runs the forge and push calls with no terminal, so anything that asks — Git Credential
+Manager's browser sign-in (which ignores `GIT_TERMINAL_PROMPT=0`), an ssh passphrase, `az` offering
+to install an extension — hung the PR creator with nothing on screen. Every network call now runs
+non-interactive (`GCM_INTERACTIVE=never`, ssh `BatchMode`, no askpass, `az` dynamic install off,
+stdin closed) under `TICKET_NET_TIMEOUT` (90 s); a timeout names the likely sign-in, and `pr-open.sh`
+prints `STEP` lines and says how to retry (`open` with an empty paths file — the commit stands).
+
+The digest, which starts every board turn, also asked per ticket: a fetch of each ticket branch and an
+`az` lookup each — seconds apiece on Azure, minutes on a busy board before the board got to the
+request. It now makes one `ls-remote` and one fetch for the whole board, and one listing of merged
+PRs (the status board: one of open PRs too) answers every ticket; a digest over 15 s prints a `WARN`
+saying where the time went.
+

@@ -33,6 +33,10 @@ without force.
    and why.
 5. Write the message, the body and the paths to files under `/tmp`, then
    `pr-open.sh open <board> <NN> --title "<title>" --message-file <f> --body-file <f> --paths-file <f>`.
+   Give that Bash call a 300000 ms timeout: it pushes and calls the forge, each limited to 90 s.
+   It prints `STEP` lines as it goes. If it stops on a push or forge error — a timeout means a
+   sign-in it can't ask for — **stop and return that error as printed**; don't retry. The commit
+   stands; once the developer has signed in, the retry is `open` with an empty `--paths-file`.
 
 Return: the PR URL, the commit, the files committed, the files left out and why. Never run
 `git commit`, `git push`, `gh pr create`, `az repos pr create`, `git rebase`, `git reset`, `git stash`, `git checkout` or

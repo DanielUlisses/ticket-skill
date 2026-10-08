@@ -46,7 +46,7 @@ preflight() {
   [[ "$(g rev-parse --abbrev-ref HEAD)" == "$BRANCH" ]] || die "$WT is not on $BRANCH"
   ! g rev-parse -q --verify MERGE_HEAD >/dev/null || die "a merge is in progress in $WT"
   require_agent_quiet "$(jq -r .agent <<<"$t")" "opening a PR"
-  local pr; pr="$(forge_pr_open "$BRANCH")" || die "couldn't ask $(forge_name) whether $BRANCH has an open PR"
+  local pr; pr="$(forge_pr_open "$BRANCH")" || die "couldn't ask $(forge_name) whether $BRANCH has an open PR — not signed in, or it timed out after ${TICKET_NET_TIMEOUT:-90}s (az devops login / gh auth login in a shell, then ask again)"
   pr="$(jq -r '.url // empty' <<<"${pr:-null}")"
   [[ -z "$pr" ]] || die "$BRANCH already has an open PR: $pr"
 }
@@ -105,7 +105,14 @@ case "$verb" in
       die "no paths named and no commits on $BRANCH — nothing to push"
     fi
     left="$(changed)"
-    GIT_TERMINAL_PROMPT=0 g push -q -u "$REMOTE" "HEAD:refs/heads/$BRANCH"
+    echo "STEP committed $(g rev-parse --short HEAD) — pushing $BRANCH to $REMOTE" >&2
+    rc=0; quiet_net git -C "$WT" push -q -u "$REMOTE" "HEAD:refs/heads/$BRANCH" || rc=$?
+    case $rc in
+      0) ;;
+      124) die "git push timed out after ${TICKET_NET_TIMEOUT:-90}s — git is likely waiting on credentials it can't ask for here (Git Credential Manager's browser sign-in, an ssh passphrase). Push once by hand from a shell — git -C $WT push -u $REMOTE HEAD:refs/heads/$BRANCH — so the credential is cached, then ask for the PR again — run open with an empty --paths-file, since the commit is already made. Nothing is lost." ;;
+      *) die "git push failed (exit $rc) — the commit is made, nothing is lost; see git's error above. Retry: open with an empty --paths-file" ;;
+    esac
+    echo "STEP pushed — opening the PR on $(forge_name)" >&2
     url="$(cd "$WT" && forge_pr_create "$BASE_BRANCH" "$BRANCH" "$title" "$body")"
     echo "OPENED $url"
     echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, pushed"

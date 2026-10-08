@@ -163,7 +163,7 @@ ticket_json() {
 
 # Prints yes:<how> | no | unknown:<why>. Needs ROOT, BASE_BRANCH, BASE_REF and
 # HAS_REMOTE from board_init, and a fetch already done where there is a remote
-# (fetch_ticket_branches too, for the remote side of each branch).
+# (fetch_board_refs does both: the base and each ticket's remote branch).
 # Asks, in order, of the local branch and of its remote-tracking copy (a PR
 # pushed or fixed from elsewhere ends up only there): is it an ancestor of the
 # base (a merge commit or a fast-forward); is everything it changed already in a
@@ -218,15 +218,22 @@ landed() {
   echo "no"
 }
 
-# Brings each in-progress ticket's remote branch up to date, best effort — one
-# deleted after its merge just keeps its last-fetched copy.
-fetch_ticket_branches() {
+# One round trip for the whole board: the base and every in-progress ticket's
+# remote branch that still exists (one ls-remote, one fetch) — not a fetch per
+# ticket, which on a slow or credential-managed remote is what made every turn
+# of the board slow. A branch deleted after its merge keeps its last copy.
+# Prints a WARN when the fetch fails.
+fetch_board_refs() {
   (( HAS_REMOTE )) || return 0
-  local b
-  while IFS= read -r b; do
-    [[ -n "$b" ]] || continue
-    run_git_net fetch "$REMOTE" "+refs/heads/$b:refs/remotes/$REMOTE/$b" --quiet 2>/dev/null || true
-  done < <(jq -r '.[] | select(.status == "in-progress") | .branch' <<<"$BOARD_JSON")
+  local heads b; local -a specs=("+refs/heads/$BASE_BRANCH:refs/remotes/$REMOTE/$BASE_BRANCH")
+  if heads="$(run_git_net ls-remote --heads "$REMOTE" 2>/dev/null)"; then
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && grep -qF -- $'\t'"refs/heads/$b" <<<"$heads" \
+        && specs+=("+refs/heads/$b:refs/remotes/$REMOTE/$b")
+    done < <(jq -r '.[] | select(.status == "in-progress") | .branch' <<<"$BOARD_JSON")
+  fi
+  run_git_net fetch "$REMOTE" "${specs[@]}" --quiet 2>/dev/null \
+    || echo "WARN fetch from $REMOTE failed — landed answers use the last fetch"
 }
 
 # Is every change on <tip> already in commit <c>? True at a squash commit, or the
@@ -359,15 +366,36 @@ forge_need() {
       need az
       [[ "${TICKET_AZURE_MERGE:-squash}" =~ ^(squash|merge)$ ]] || die "TICKET_AZURE_MERGE is '$TICKET_AZURE_MERGE' — squash or merge"
       [[ -n "$AZ_ORG" ]] || die "can't read an Azure DevOps org/project/repo from the '$REMOTE' remote ($(git -C "$ROOT" remote get-url "$REMOTE"))"
-      az extension show --name azure-devops --only-show-errors >/dev/null 2>&1 \
-        || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
+      local rc=0; quiet_net az extension show --name azure-devops --only-show-errors >/dev/null 2>&1 || rc=$?
+      (( rc != 124 )) || die "az timed out after ${TICKET_NET_TIMEOUT:-90}s just checking its extensions — run any az command in a shell to see what it's waiting on"
+      (( rc == 0 )) || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
     *) die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
   esac
 }
 
 forge_name() { case "$FORGE" in github) echo GitHub ;; azure) echo "Azure DevOps" ;; *) echo "no forge" ;; esac; }
 
-az_() { az "$@" --org "$AZ_ORG" --output json --only-show-errors; }
+# Every call that can reach the network runs with no way to prompt and a time
+# limit: an agent runs these with no terminal, so a credential manager waiting
+# for a browser sign-in, ssh asking for a passphrase or az offering to install
+# its extension would otherwise hang the board with nothing on screen. A timeout
+# exits 124, which callers turn into a message naming the likely cause.
+# TICKET_NET_TIMEOUT (default 90) is the limit in seconds.
+quiet_net() {
+  local -a t=()
+  command -v timeout >/dev/null 2>&1 && t=(timeout "${TICKET_NET_TIMEOUT:-90}")
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+  GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" \
+  AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no AZURE_CORE_COLLECT_TELEMETRY=no \
+  GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+    "${t[@]}" "$@" </dev/null
+  local rc=$?
+  (( rc != 124 )) || echo "ERROR: $1 timed out after ${TICKET_NET_TIMEOUT:-90}s — it is likely waiting on a sign-in it can't ask for here (az devops login, gh auth login, or a credential manager)" >&2
+  return $rc
+}
+
+az_() { quiet_net az "$@" --org "$AZ_ORG" --output json --only-show-errors; }
+gh_() { quiet_net gh "$@"; }
 
 # One GitHub PR (from pr list/view --json) into the common shape.
 GH_PR_FIELDS=number,url,isDraft,baseRefName,mergeable,reviewDecision,statusCheckRollup
@@ -415,9 +443,26 @@ az_pr_full() {
 # The open PR from <branch>, in the common shape, or nothing.
 forge_pr_open() {
   local branch="$1" id
+  if [[ -n "${FORGE_CACHE:-}" ]]; then
+    # One listing of the repo's open PRs answers every ticket of the run.
+    local f="$FORGE_CACHE/open" row
+    if [[ ! -e "$f" && ! -e "$f.err" ]]; then
+      case "$FORGE" in
+        github) gh_ pr list --state open --limit 200 --json "$GH_PR_FIELDS,headRefName" \
+                  --jq '.[] | "\(.headRefName)\t\(. | tojson)"' ;;
+        azure)  az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --status active --top 200 \
+                  | jq -r '.[] | "\(.sourceRefName | sub("^refs/heads/"; ""))\t\(.pullRequestId)"' ;;
+      esac >"$f.tmp" 2>"$f.err" && { mv "$f.tmp" "$f"; rm -f "$f.err"; }
+    fi
+    [[ -e "$f" ]] || { cat "$f.err" >&2; return 1; }
+    row="$(awk -F'\t' -v b="$branch" '$1 == b { sub(/^[^\t]*\t/, ""); print; exit }' "$f")"
+    [[ -n "$row" ]] || return 0
+    case "$FORGE" in github) gh_norm <<<"$row" ;; azure) az_pr_full "$row" ;; esac
+    return
+  fi
   case "$FORGE" in
     github)
-      local j; j="$(gh pr list --head "$branch" --state open --json "$GH_PR_FIELDS" --jq '.[0] // empty')" || return 1
+      local j; j="$(gh_ pr list --head "$branch" --state open --json "$GH_PR_FIELDS" --jq '.[0] // empty')" || return 1
       [[ -z "$j" ]] || gh_norm <<<"$j" ;;
     azure)
       id="$(az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --source-branch "$branch" --status active | jq -r '.[0].pullRequestId // empty')" || return 1
@@ -429,16 +474,41 @@ forge_pr_open() {
 # PR <id> again, in the common shape (the gates re-ask while mergeability computes).
 forge_pr_get() {
   case "$FORGE" in
-    github) gh pr view "$1" --json "$GH_PR_FIELDS" | gh_norm ;;
+    github) gh_ pr view "$1" --json "$GH_PR_FIELDS" | gh_norm ;;
     azure)  az_pr_full "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# A board asks about every ticket each turn, and an az call alone takes seconds,
+# so a run of tk.sh lists the repo's merged PRs once and answers each ticket from
+# that list. FORGE_CACHE (a directory, set by forge_cache_begin) holds it; the
+# landing checks run in subshells, so the cache is files, not variables.
+forge_cache_begin() { FORGE_CACHE="$(mktemp -d)"; export FORGE_CACHE; }
+forge_cache_end()   { [[ -n "${FORGE_CACHE:-}" ]] && rm -rf "$FORGE_CACHE"; unset FORGE_CACHE; }
+
+# branch<TAB>id for the repo's most recent merged PRs, newest first.
+forge_merged_list() {
+  case "$FORGE" in
+    github) gh_ pr list --state merged --limit 200 --json number,headRefName --jq '.[] | "\(.headRefName)\t\(.number)"' ;;
+    azure)  az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --status completed --top 200 \
+              | jq -r '.[] | "\(.sourceRefName | sub("^refs/heads/"; ""))\t\(.pullRequestId)"' ;;
     *) return 1 ;;
   esac
 }
 
 # The id of a merged PR from <branch>, or nothing.
 forge_merged_pr() {
+  if [[ -n "${FORGE_CACHE:-}" ]]; then
+    local f="$FORGE_CACHE/merged"
+    if [[ ! -e "$f" && ! -e "$f.err" ]]; then
+      forge_merged_list >"$f.tmp" 2>"$f.err" && { mv "$f.tmp" "$f"; rm -f "$f.err"; }
+    fi
+    [[ -e "$f" ]] || { cat "$f.err" >&2; return 1; }
+    awk -F'\t' -v b="$1" '$1 == b { print $2; exit }' "$f"; return 0
+  fi
   case "$FORGE" in
-    github) gh pr list --head "$1" --state merged --json number --jq '.[0].number // empty' ;;
+    github) gh_ pr list --head "$1" --state merged --json number --jq '.[0].number // empty' ;;
     azure)  az_ repos pr list --project "$AZ_PROJECT" --repository "$AZ_REPO" --source-branch "$1" --status completed | jq -r '.[0].pullRequestId // empty' ;;
     *) return 1 ;;
   esac
@@ -448,15 +518,18 @@ forge_merged_pr() {
 forge_pr_create() {
   local base="$1" branch="$2" title="$3" body="$4" desc id
   case "$FORGE" in
-    github) gh pr create --base "$base" --head "$branch" --title "$title" --body-file "$body" ;;
+    github) gh_ pr create --base "$base" --head "$branch" --title "$title" --body-file "$body" ;;
     azure)
       # Azure caps a description at 4000 characters; the full body stays in the
       # file the agent wrote, so a long one is cut with a note rather than refused.
       desc="$(cat "$body")"
       (( ${#desc} <= 4000 )) || desc="${desc:0:3950}"$'\n\n'"… (truncated at Azure DevOps' 4000-character limit)"
-      id="$(az_ repos pr create --project "$AZ_PROJECT" --repository "$AZ_REPO" \
-              --source-branch "$branch" --target-branch "$base" --title "$title" --description "$desc" \
-            | jq -r '.pullRequestId // empty')"
+      local out rc=0
+      out="$(az_ repos pr create --project "$AZ_PROJECT" --repository "$AZ_REPO" \
+              --source-branch "$branch" --target-branch "$base" --title "$title" --description "$desc")" || rc=$?
+      (( rc != 124 )) || die "az repos pr create timed out after ${TICKET_NET_TIMEOUT:-90}s — az is likely waiting on a sign-in: run 'az devops login' (or set AZURE_DEVOPS_EXT_PAT) in a shell, then ask again — open with an empty --paths-file, since the commit is made and pushed."
+      (( rc == 0 )) || die "az repos pr create failed (exit $rc) — the branch is pushed; see the error above. Retry: open with an empty --paths-file"
+      id="$(jq -r '.pullRequestId // empty' <<<"$out")"
       [[ -n "$id" ]] || die "az repos pr create returned no PR id"
       forge_pr_get "$id" | jq -r .url ;;
     *) return 1 ;;
@@ -470,9 +543,9 @@ forge_merge() {
   local id="$1" method
   case "$FORGE" in
     github)
-      method="$(gh repo view --json viewerDefaultMergeMethod --jq .viewerDefaultMergeMethod | tr '[:upper:]' '[:lower:]')"
+      method="$(gh_ repo view --json viewerDefaultMergeMethod --jq .viewerDefaultMergeMethod | tr '[:upper:]' '[:lower:]')"
       [[ "$method" =~ ^(merge|squash|rebase)$ ]] || method=squash
-      gh pr merge "$id" "--$method" >&2 ;;
+      gh_ pr merge "$id" "--$method" >&2 ;;
     azure)
       method="${TICKET_AZURE_MERGE:-squash}"
       [[ "$method" =~ ^(squash|merge)$ ]] || die "TICKET_AZURE_MERGE is '$method' — squash or merge"
@@ -495,7 +568,7 @@ forge_merge() {
 # The short sha PR <id> merged as, or nothing.
 forge_merge_commit() {
   case "$FORGE" in
-    github) gh pr view "$1" --json mergeCommit --jq '.mergeCommit.oid // ""' ;;
+    github) gh_ pr view "$1" --json mergeCommit --jq '.mergeCommit.oid // ""' ;;
     azure)  az_ repos pr show --id "$1" | jq -r '.lastMergeCommit.commitId // ""' ;;
     *) return 0 ;;
   esac | cut -c1-7

@@ -65,7 +65,7 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 ## Opening a PR — only when the developer names it
 
-"open a PR for 03" / "PR 03" → dispatch `ticket-pr-creator` with: the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title. It commits the ticket's work, pushes and opens the PR; show the developer its URL and the files it left out. A refusal (agent still working, PR already open) is reported as printed. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
+"open a PR for 03" / "PR 03" → say "Opening the PR for 03 — the PR creator is running." **before** anything else, then dispatch `ticket-pr-creator` with: the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title. It commits the ticket's work, pushes and opens the PR; show the developer its URL and the files it left out. A refusal (agent still working, PR already open) is reported as printed. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
 
 ## Talking to a ticket
 
