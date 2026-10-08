@@ -150,3 +150,5 @@ Catppuccin, Gruvbox or Nord (`TICKET_VIEW_THEME`) — in 24-bit colour where the
 `COLORTERM=truecolor`, mapped onto the 16 ANSI colours otherwise, and none under `NO_COLOR`. A filled
 header bar carries the status dot, the board, the base and the active / needs-you / done counts; each
 column has an icon; chips are dark text on the role's colour.
+
+![The status board in its tickets tab, Tokyo Night theme](../assets/board-tui.png)
