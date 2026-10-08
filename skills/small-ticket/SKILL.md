@@ -80,6 +80,8 @@ Then ask with **one** `AskUserQuestion` call, one question per setting:
 | Model | "Which model should implement this session's tickets?" | the ticket's suggested model first, labelled `(suggested by the ticket)` — or the `MODEL=` value labelled `(default)` where it suggests none — then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the rendered prompt agree with what launched |
 | Effort | "How hard should the model think on this session's tickets?" | the ticket's suggested level first, labelled `(suggested by the ticket)` — or the `EFFORT=` value labelled `(default)` where it suggests none — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary agrees with what launched |
 
+Every option list must hold **two or more distinct labels**: list a value once even where two rules would put it in twice (the suggestion and the default being the same model, say). A setting left with a single option is **not asked** — `ACCOUNTS=` naming only the inherited account is the usual case — state it in one line ("Account: default (inherited — the only one)") and ask the remaining questions; the question tool rejects a one-option question outright, and the developer never sees it.
+
 One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
 
 **Then hold them.** Every launch in this session passes all three and names all three in its report. Two overrides exist and they are different things:

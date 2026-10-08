@@ -49,6 +49,8 @@ A turn where nothing changed is one line saying so.
 - Model: `As each ticket suggests` first when the wave's `suggests:` disagree, else their shared value; then opus, sonnet. Add `fable` when any ticket suggests `xhigh` or `max`.
 - Effort: the same rule, over `EFFORTS=`.
 
+Each question needs **two or more distinct options** — drop a duplicate (the shared value is listed once). A question left with one option is **not asked**: `ACCOUNTS=` naming only the inherited account means one line in your reply — "Account: <name> (inherited — the only one)" — and the call asks the rest.
+
 Hold the answers for the rest of the session; ask again only when the developer asks. Under `As each ticket suggests`, each launch passes that ticket's `suggests:` value (the `MODEL=`/`EFFORT=` default when it has none).
 
 **Shared research.** With two or more tickets in the wave, run `tk.sh helpers {{BOARD}} <NN>…`. A `research:` topic named by two or more of them gets one `ticket-researcher` each, all in one message. Write their answers to one file (Write, under `/tmp`) and pass it as `--research` to every launch in the wave.
