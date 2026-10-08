@@ -185,9 +185,11 @@ That session is now a coordinator that delegates both: the implementer gets the 
 and effort, the reviewer gets `TICKET_REVIEW_*` whatever the implementer runs on. A cheap
 implementer is now reviewed by the configured reviewer — the combination that most wants it.
 
-The trade that replaced it: `/ticket` no longer runs `mattpocock-skills:code-review` in the
-coordinator's own context. Its two axes are covered by `ticket-reviewer` (standards, plus
-correctness and security) and `ticket-criteria-checker` (spec, criterion by criterion).
+`mattpocock-skills:code-review` moved with it: the coordinator no longer runs it in its own, low-effort
+context — `ticket-reviewer` calls it and runs both of its axes (standards with Matt's smell baseline,
+and spec against the ticket) itself, at the reviewer's effort rather than in sub-agents that would
+inherit the coordinator's, then adds correctness, security and infra. `ticket-criteria-checker`
+still checks the spec criterion by criterion, and the reviewer builds on its table.
 
 ## New-model checklist
 

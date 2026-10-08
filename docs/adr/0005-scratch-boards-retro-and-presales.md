@@ -88,3 +88,20 @@ medium` is the wrong depth for it.
 
 Agents still never run a plan or anything else against a real environment; the plan is the
 developer's.
+
+## 5. `ticket-reviewer` runs mattpocock's code review
+
+0002 took `mattpocock-skills:code-review` out of the `/ticket` coordinator, so it wouldn't run in the
+coordinator's low-effort context, and split its axes across `ticket-reviewer` and the criteria
+checkers — losing Matt's smell baseline and the skill's own process. It's back, in the reviewer:
+
+- `ticket-reviewer` gained the `Skill` tool and calls `mattpocock-skills:code-review` first, with the
+  overrides the old brief used: fixed point = the base commit, diffed against the working tree;
+  spec = the ticket or approved plan; standards = the repo's documents plus the smell baseline.
+- **It runs both axes itself, not in the skill's sub-agents.** A sub-agent's effort comes from its
+  definition or the session, and the ticket session's is the coordinator's `low`; the reviewer's
+  own `medium` — `high` when untested — is the effort the review is meant to get.
+- Its own checklist (correctness, security, infra, the untested checklist and Expected plan) follows,
+  and the findings come back as one deduplicated list, each tagged with its axis.
+- Ticket sessions keep skills enabled; only the board session disables them, and the reviewer never
+  runs there. Where the skill is missing, the reviewer says so and uses its own list.
