@@ -9,7 +9,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | Command | Does |
 |---|---|
 | `tk.sh digest {{BOARD}} [--full]` | board + agents + git, in one read; prints what changed, `FRONTIER`, `ACTION` and `WARN` lines |
-| `tk.sh launch {{BOARD}} <NN> --type <feat\|fix\|refactor\|chore\|docs\|test\|perf\|ci> --model <m> --effort <e> [--account <a>] [--research <file>]` | launches one ticket and records it |
+| `tk.sh launch {{BOARD}} <NN> --type <feat\|fix\|refactor\|chore\|docs\|test\|perf\|ci> --model <m> --effort <e> [--research <file>]` | launches one ticket and records it (`--account <a>` only when the developer names one) |
 | `tk.sh gates {{BOARD}} <NN>` · `tk.sh ready {{BOARD}}` | merge gates for one ticket · every ticket that passes them |
 | `tk.sh pr {{BOARD}} <NN>` | commit the ticket's work, push, open its PR (the Cursor CLI writes the words) |
 | `tk.sh merge {{BOARD}} <NN>` | gates, then merges the **PR on the forge** (not a local merge), resolve |
@@ -44,12 +44,11 @@ A turn where nothing changed is one line saying so.
 
 ## Launching a wave
 
-**Settings, once per session.** Run `{{LAUNCHER}} defaults`, then ask with **one** AskUserQuestion, three questions:
-- Account: the `ACCOUNT=` name first `(default — inherited)`, then the rest of `ACCOUNTS=`. The inherited one passes no `--account`.
+**Settings, once per session.** Run `{{LAUNCHER}} defaults`, then ask with **one** AskUserQuestion, two questions. The account is not asked — each devbox has one, and launches pass no `--account` unless the developer names one:
 - Model: `As each ticket suggests` first when the wave's `suggests:` disagree, else their shared value; then opus, sonnet. Add `fable` when any ticket suggests `xhigh` or `max`.
 - Effort: the same rule, over `EFFORTS=`.
 
-Each question needs **two or more distinct options** — drop a duplicate (the shared value is listed once). A question left with one option is **not asked**: `ACCOUNTS=` naming only the inherited account means one line in your reply — "Account: <name> (inherited — the only one)" — and the call asks the rest.
+Each question needs **two or more distinct options** — drop a duplicate (the shared value is listed once).
 
 Hold the answers for the rest of the session; ask again only when the developer asks. Under `As each ticket suggests`, each launch passes that ticket's `suggests:` value (the `MODEL=`/`EFFORT=` default when it has none).
 

@@ -46,9 +46,9 @@ Create a temp file with `mktemp -t ticket.XXXXXX.md` and write the ticket text i
 
 ## 4. Settle the session's launch settings
 
-Three things govern every ticket a session launches: the **account** it bills to, the **model** that implements it, and the **effort** — how hard that model thinks — it runs at. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — a second `/small-ticket` here, and anything `/ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, which is why this comes after step 1 has found a ticket to launch.
+Two things are asked for every session's tickets: the **model** that implements them and the **effort** — how hard that model thinks — they run at. The **account** is not asked: each devbox has one Claude account, and a launch inherits it (no `--account`) unless the developer names another for a ticket. They are settled **once**, at the first launch of the session, and every later launch reuses the answer — a second `/small-ticket` here, and anything `/ticket` or `/implement-tickets` launches later in the same session. A session that launches nothing asks nothing, which is why this comes after step 1 has found a ticket to launch.
 
-**Already settled** — this session answered, for an earlier ticket or because the developer named them up front: don't ask again. State which account, model and effort are in force when you launch and move on.
+**Already settled** — this session answered, for an earlier ticket or because the developer named them up front: don't ask again. State which model and effort are in force when you launch and move on.
 
 **Not settled yet** — a fresh session, a single ad-hoc ticket included: read the defaults before you state them, rather than assuming them:
 
@@ -56,7 +56,7 @@ Three things govern every ticket a session launches: the **account** it bills to
 ~/.claude/skills/small-ticket/scripts/launch.sh defaults
 ```
 
-It changes nothing and prints one line per setting, plus the options for the account and for the effort:
+It changes nothing and prints one line per setting, plus the options for the effort (the `ACCOUNT=` lines only report the account a new worktree inherits — nothing to ask):
 
 ```
 MODEL=opus (from /home/you/.claude/skills/ticket-models.env)
@@ -66,8 +66,6 @@ ACCOUNT=default (inherited by a new worktree in /home/you/repos — config root 
 ACCOUNTS=default work
 ```
 
-The `ACCOUNT=` name is the one a **new worktree** would inherit. That is not the same question as which account *this* session is running under, and the difference is the entire reason this is asked: a session in a worktree that overrode its own account would otherwise offer that account as the default and launch the ticket somewhere else. Quote what the command printed.
-
 `EFFORT=` is the level an unnamed launch would run at, and its source is named the same way `MODEL=`'s is. On a machine whose `ticket-models.env` predates this knob it reads `(from the launcher's built-in fallback — nothing set it in <path>)`, which is `medium` and is correct: `install.sh` never overwrites a hand-held destination copy, so that file keeps saying nothing about effort until the developer deletes it. `EFFORTS=` is the list of levels to offer, printed by the launcher so no skill has to keep its own copy of it.
 
 **The ticket may suggest the model and the effort.** A ticket written by `/ticket` carries `**Suggested model:**` and `**Suggested effort:**` lines; where the text saved in step 3 has them, pre-select those over the launcher's `MODEL=` and `EFFORT=` defaults and say they came from the ticket. An ad-hoc ticket carries none, and the defaults stand.
@@ -76,15 +74,14 @@ Then ask with **one** `AskUserQuestion` call, one question per setting:
 
 | Setting | Question | Options, in order | How it reaches the launcher |
 |---|---|---|---|
-| Account | "Which Claude account should this session's tickets run on?" | the `ACCOUNT=` name first, labelled `(default — inherited)`, then the rest of `ACCOUNTS=` | `--account <name>` — and the inherited default passes **no flag at all**, since inheriting is what writes no link |
 | Model | "Which model should implement this session's tickets?" | the ticket's suggested model first, labelled `(suggested by the ticket)` — or the `MODEL=` value labelled `(default)` where it suggests none — then the other two of Opus / Sonnet / Haiku, then **Other…** — the launcher takes any model id, a pinned one included | the positional `[model]`, always explicitly, even when it is the default, so the summary and the rendered prompt agree with what launched |
 | Effort | "How hard should the model think on this session's tickets?" | the ticket's suggested level first, labelled `(suggested by the ticket)` — or the `EFFORT=` value labelled `(default)` where it suggests none — then the rest of `EFFORTS=` | `--effort <level>`, always explicitly, even when it is the default, so the summary agrees with what launched |
 
-Every option list must hold **two or more distinct labels**: list a value once even where two rules would put it in twice (the suggestion and the default being the same model, say). A setting left with a single option is **not asked** — `ACCOUNTS=` naming only the inherited account is the usual case — state it in one line ("Account: default (inherited — the only one)") and ask the remaining questions; the question tool rejects a one-option question outright, and the developer never sees it.
+Every option list must hold **two or more distinct labels**: list a value once even where two rules would put it in twice (the suggestion and the default being the same model, say). The question tool rejects a one-option question outright, and the developer never sees it.
 
 One call with one question per setting, not one question then another: a further setting is another row here and another field you carry, not another round of questions.
 
-**Then hold them.** Every launch in this session passes all three and names all three in its report. Two overrides exist and they are different things:
+**Then hold them.** Every launch in this session passes both and names them in its report. Two overrides exist and they are different things:
 
 - **For one ticket** — the developer names an account, a model or an effort for a single launch. It goes to that launch alone; the session's settings are untouched and the next ticket uses them again.
 - **For the session** — the developer asks to change the setting itself. Replace it, say so, and use the new value for every launch after it.
@@ -97,8 +94,8 @@ Neither is a reason to re-ask on the next ticket; re-ask only when the developer
 ~/.claude/skills/small-ticket/scripts/launch.sh [--account <name>] --effort "<level>" [--review-effort "<level>"] [--doc] "<label>" "<branch>" "<ticket-file>" "<model>"
 ```
 
-All three values come from step 4. `--account <name>` is passed only where the session settled on
-a named account; where it inherits, the flag is left off entirely and the ticket resolves the
+Model and effort come from step 4. `--account <name>` is passed only where the developer named an
+account; otherwise the flag is left off entirely and the ticket resolves the
 developer's own directory link, which is what every ticket did before this knob existed.
 `--effort <level>` is passed always — there is no "inherit" for it, and a level the launcher
 doesn't know stops the script before anything is created, since Claude Code itself would only

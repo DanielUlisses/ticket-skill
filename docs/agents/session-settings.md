@@ -29,7 +29,7 @@ setting, and the answer is held for the rest of the session.
 
 | Setting | Default | Reaches the launcher as |
 |---|---|---|
-| Account | inherited — whatever the directory holding the worktrees resolves to | `--account <name>`, or no flag at all where it inherits |
+| Account | inherited — **not asked**: each devbox has one Claude account | no flag; `--account <name>` only when the developer names one |
 | Model | the ticket's suggestion, else `ticket-models.env` ([`models.md`](models.md)) | the positional `[model]`, always passed explicitly |
 | Effort | the ticket's suggestion, else `medium` from `ticket-models.env` ([`models.md`](models.md)) | `--effort <level>`, always passed explicitly |
 
