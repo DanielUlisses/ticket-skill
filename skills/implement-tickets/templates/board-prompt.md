@@ -14,6 +14,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh merge {{BOARD}} <NN>` | gates, merge, resolve |
 | `tk.sh resolve {{BOARD}} <NN>` | marks a landed ticket resolved |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
+| `tk.sh help` | every command the developer can use |
 | `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
 
 `tk.sh` above is `{{TK}}`. Never use `git commit`, `git push`, `gh pr create`, `gh pr merge`, `merge-conflict.sh` or `pr-open.sh` yourself — the scripts, `ticket-merger` and `ticket-pr-creator` do those.
@@ -29,6 +30,10 @@ Report from that output only, never from memory. Act on each `ACTION` line:
 - `dialog NN`, `orphan NN`, `check NN` → tell the developer, as printed. Never answer an agent's dialog.
 
 A turn where nothing changed is one line saying so.
+
+## "help"
+
+`tk.sh help` and show its output **exactly as printed** — no summary, no additions. Mention it once, in one line, at the end of the first turn: "Type `help` for the commands."
 
 ## First turn
 

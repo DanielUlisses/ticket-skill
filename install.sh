@@ -35,6 +35,10 @@ for DEST in "${DESTS[@]}"; do
   done
   cp "$SRC"/agents/*.md "$DEST_AGENTS/"
 
+  # The shell aliases (tkb, tkv, tkhelp, …) — code, so overwritten like the libraries.
+  cp "$SRC/shell/ticket-aliases.sh" "$DEST_SKILLS/ticket-aliases.sh"
+  echo "installed: $DEST_SKILLS/ticket-aliases.sh"
+
   # A skill installs as a self-contained directory, so the shared libraries go one
   # level up — the same place config/models.env has always gone — where every
   # installed skill's scripts find them. Unlike that config, these are code:
@@ -62,6 +66,20 @@ for DEST in "${DESTS[@]}"; do
 
   echo "installed: $DEST_SKILLS/{small-ticket,ticket,implement-tickets,sweep-tickets} and $DEST_AGENTS/ticket-*.md"
 done
+
+# Load the aliases from ~/.bashrc: one line, behind a marker, added once. It
+# points at the first config root installed into. TICKET_NO_BASHRC=1 skips it,
+# TICKET_BASHRC names another rc file (e.g. ~/.zshrc).
+RC="${TICKET_BASHRC:-$HOME/.bashrc}"
+ALIASES="${DESTS[0]}/skills/ticket-aliases.sh"
+if [[ "${TICKET_NO_BASHRC:-0}" == 1 ]]; then
+  echo "skipped $RC (TICKET_NO_BASHRC=1) — to load the aliases: . $ALIASES"
+elif grep -qF '# ticket-skill aliases' "$RC" 2>/dev/null; then
+  echo "aliases: already loaded from $RC"
+else
+  printf '\n# ticket-skill aliases — tkhelp lists them\n[ -f %q ] && . %q\n' "$ALIASES" "$ALIASES" >>"$RC"
+  echo "aliases: added a line to $RC — open a new shell or run: . $ALIASES"
+fi
 
 for cmd in herdr git jq gh; do
   command -v "$cmd" >/dev/null || echo "warning: '$cmd' not found in PATH"

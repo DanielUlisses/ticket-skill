@@ -14,6 +14,7 @@
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
+#   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #
@@ -520,8 +521,55 @@ cmd_retro() {
   done
 }
 
+# ---- help ----------------------------------------------------------------------
+# One reference for both ways in: what to type in the board session, and the
+# shell aliases. Static on purpose — the board session prints it verbatim, so
+# it costs no reasoning and can't drift from what's built.
+cmd_help() {
+  cat <<'HELP'
+TICKET BOARD — commands
+
+In the board session (Haiku) — type these as plain messages; there are no slash commands
+  help                          this list
+  start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused)
+  status / what changed?        re-read the board, agents and git; report what moved
+  open a PR for 04 / PR 04      Sonnet PR creator: commit the ticket's files, push, open the PR
+  merge 05                      five gates, then merge, resolve, offer what it unblocked
+                                  conflict -> Sonnet merger resolves; you choose Commit / Abort / Leave
+  merge everything ready        list what passes every gate, ask once, merge in order
+  tell 03 <message>             relay your words to ticket 03's agent, verbatim
+  ask 03 <question>             the same, as a question
+  show 03                       summarise what ticket 03's agent is doing
+  resolve 02                    mark a ticket resolved (only if it really landed)
+  retro                         mattpocock retro over the board: memory diff + environment fixes
+  change the plan (split, re-scope, new ticket)
+                                -> /ticket <board> ... in an Opus planning session; it appends here
+
+In the tickets tab (status board)
+  q quit   r refresh now   resize redraws   card hints (-> merge 05) say what to type next
+
+In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
+  tkuse <board>      set this shell's board (TK_BOARD); tkuse alone shows it
+  tkb  [board]       start the board session (opens the tickets tab)
+  tkbp [board]       print the board session's claude command, start nothing
+  tkv  [board] [s]   status board, full-screen, refresh every s seconds (default 30)
+  tkvv [board]       status board, printed once
+  tkd  [board]       digest: board, agents, git in one read
+  tkr  [board]       every ticket whose PR passes all gates
+  tkg  [board] NN    the five merge gates for one ticket
+  tks  [board] NN    what one ticket's agent is doing
+  tk <verb> ...      tk.sh directly (digest, view, gates, ready, helpers, retro, help)
+  tkhelp             this list
+
+Elsewhere
+  /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command
+  /small-ticket <task>       one ad-hoc ticket (a document deliverable launches in --doc mode)
+  /sweep-tickets             after the retro: list and remove leftover worktrees and branches
+HELP
+}
+
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro|view) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
   *) sed -n '2,25p' "$0"; exit 1 ;;
 esac
