@@ -187,3 +187,16 @@ The Azure field names (`mergeStatus`, `reviewers[].vote`, policy evaluations'
 `configuration.type.displayName` and `status`) follow the Azure DevOps REST API that `az repos pr`
 returns; the scripts were exercised against stubs, so the first real Azure board is the check that
 they match.
+
+### 7a. "Has it landed" without the forge
+
+Azure DevOps and GitHub both default to squash merges, which ancestry never sees, so a PR merged in
+the web UI was found only by asking the forge — and an `az` or `gh` that wasn't logged in failed
+silently, leaving the ticket in progress. `landed()` now checks, for the local branch **and** its
+remote-tracking copy (fetched each digest, so a fix pushed to the PR from elsewhere counts):
+ancestry; then whether some commit on the base already contains every change the branch made — each
+candidate commit touching the branch's files is checked itself, so a base that edited those files
+again since still matches (`merge-tree --write-tree` on git 2.38+, a file comparison before). The
+forge is the last resort, for a branch whose content changed after its last fetch and was deleted on
+merge; when it can't be asked, the digest prints one `WARN` with the forge's own error. Resolving a
+squash records the squash commit. `tk.sh why <board> <NN>` (`tkw`) prints every step.

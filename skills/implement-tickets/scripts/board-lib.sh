@@ -124,42 +124,71 @@ ticket_json() {
 # ---- has it landed? --------------------------------------------------------------
 
 # Prints yes:<how> | no | unknown:<why>. Needs ROOT, BASE_BRANCH, BASE_REF and
-# HAS_REMOTE from board_init, and a fetch already done where there is a remote.
-# Asks, in order: is the branch an ancestor of the base (a merge commit or a
-# fast-forward); is everything it changed already on the base (a squash or a
-# rebase — what Azure DevOps and GitHub both default to, and invisible to
-# ancestry); does the forge know a merged PR from it. The first two need no
-# forge at all, so a PR merged in the web UI resolves even where gh or az can't
-# be asked. The empty-branch guard comes first: a freshly launched branch sits
-# *at* the base, and both git checks would call it merged.
+# HAS_REMOTE from board_init, and a fetch already done where there is a remote
+# (fetch_ticket_branches too, for the remote side of each branch).
+# Asks, in order, of the local branch and of its remote-tracking copy (a PR
+# pushed or fixed from elsewhere ends up only there): is it an ancestor of the
+# base (a merge commit or a fast-forward); is everything it changed already in a
+# commit on the base (a squash or a rebase — what Azure DevOps and GitHub both
+# default to, and invisible to ancestry). Then the forge: a merged PR from the
+# branch. The git checks need no forge, so a PR merged in the web UI resolves
+# even where gh or az can't be asked. A branch with nothing committed sits *at*
+# the base, where both git checks would call it merged, so it is "no".
+# LANDED_TRACE=1 explains each step on stderr (tk.sh why); LANDED_ERRS names a
+# file the forge's errors are appended to (tk.sh digest warns once from it).
 landed() {
-  local branch="$1" base_sha="$2" count pr="" tip
+  local branch="$1" base_sha="$2" count pr="" t err sha
+  local -a tips=() refs=()
+  _lt() { [[ "${LANDED_TRACE:-0}" == 1 ]] && echo "  $*" >&2; return 0; }
   [[ -n "$branch" ]] || { echo "-"; return; }
-  git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" || {
-    # A deleted local branch can still have a merged PR.
-    forge_ok && pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
-    [[ -n "${pr:-}" ]] && echo "yes:pr#$pr" || echo "unknown:no-local-branch"; return; }
-  tip="$branch"
-  [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "$branch" "$BASE_REF" 2>/dev/null || true)"
-  if ! count="$(git -C "$ROOT" rev-list --count "$base_sha..$branch" 2>/dev/null)"; then
-    echo "unknown:base-unresolvable"; return
+  git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" && refs+=("$branch")
+  (( HAS_REMOTE )) && git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$branch" && refs+=("$REMOTE/$branch")
+  _lt "branch $branch: ${refs[*]:-no local or remote-tracking ref}"
+  if [[ -z "$base_sha" && ${#refs[@]} -gt 0 ]]; then
+    base_sha="$(git -C "$ROOT" merge-base "${refs[0]}" "$BASE_REF" 2>/dev/null || true)"
   fi
-  # Nothing committed locally, but the work may have been committed and pushed
-  # from elsewhere: the remote branch is then the one that was merged.
-  if [[ "$count" -eq 0 ]] && git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$branch"; then
-    tip="$REMOTE/$branch"; count="$(git -C "$ROOT" rev-list --count "$base_sha..$tip" 2>/dev/null || echo 0)"
+  _lt "base: ${base_sha:-?} → $BASE_REF ($(git -C "$ROOT" rev-parse --short "$BASE_REF" 2>/dev/null || echo ?))"
+  for t in "${refs[@]}"; do
+    if ! count="$(git -C "$ROOT" rev-list --count "$base_sha..$t" 2>/dev/null)"; then
+      _lt "$t: base unresolvable"; continue
+    fi
+    _lt "$t: $count commit(s) since base, tip $(git -C "$ROOT" rev-parse --short "$t")"
+    (( count > 0 )) && tips+=("$t")
+  done
+  for t in "${tips[@]}"; do
+    if git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_REF" 2>/dev/null \
+       || git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_BRANCH" 2>/dev/null; then
+      _lt "$t: an ancestor of $BASE_REF — merged"; echo "yes:ancestry"; return
+    fi
+    _lt "$t: not an ancestor of $BASE_REF"
+    sha="$(landing_commit "$t" "$BASE_REF" "$base_sha")"
+    if [[ -n "$sha" ]]; then _lt "$t: every change is in $sha — squashed or rebased"; echo "yes:squash:$sha"; return; fi
+    _lt "$t: no commit on $BASE_REF contains all its changes"
+  done
+  if (( ${#tips[@]} > 0 || ${#refs[@]} == 0 )) && forge_ok; then
+    if pr="$(forge_merged_pr "$branch" 2>>"${LANDED_ERRS:-/dev/null}")"; then
+      _lt "$(forge_name): ${pr:+merged PR #$pr}${pr:-no merged PR from $branch}"
+      [[ -n "$pr" ]] && { echo "yes:pr#$pr"; return; }
+    else
+      _lt "$(forge_name) couldn't be asked${LANDED_ERRS:+ — see the WARN}"
+    fi
+  elif (( HAS_REMOTE )); then
+    _lt "$(forge_name): not asked ($( ((${#tips[@]})) && echo "its CLI isn't available" || echo "nothing committed"))"
   fi
-  if [[ "$count" -eq 0 ]]; then echo "no"; return; fi
-  if git -C "$ROOT" merge-base --is-ancestor "$tip" "$BASE_REF" 2>/dev/null \
-     || git -C "$ROOT" merge-base --is-ancestor "$tip" "$BASE_BRANCH" 2>/dev/null; then
-    echo "yes:ancestry"; return
-  fi
-  if [[ -n "$(landing_commit "$tip" "$BASE_REF" "$base_sha")" ]]; then echo "yes:squash"; return; fi
-  if forge_ok; then
-    pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
-    [[ -n "$pr" ]] && { echo "yes:pr#$pr"; return; }
-  fi
+  (( ${#refs[@]} )) || { echo "unknown:no-local-branch"; return; }
+  (( ${#tips[@]} )) || { [[ -n "$base_sha" ]] && echo "no" || echo "unknown:base-unresolvable"; return; }
   echo "no"
+}
+
+# Brings each in-progress ticket's remote branch up to date, best effort — one
+# deleted after its merge just keeps its last-fetched copy.
+fetch_ticket_branches() {
+  (( HAS_REMOTE )) || return 0
+  local b
+  while IFS= read -r b; do
+    [[ -n "$b" ]] || continue
+    run_git_net fetch "$REMOTE" "+refs/heads/$b:refs/remotes/$REMOTE/$b" --quiet 2>/dev/null || true
+  done < <(jq -r '.[] | select(.status == "in-progress") | .branch' <<<"$BOARD_JSON")
 }
 
 # Is every change on <tip> already in commit <c>? True at a squash commit, or the
@@ -185,6 +214,7 @@ landing_commit() {
   local tip="$1" ref="$2" base="$3" c files
   files="$(git -C "$ROOT" diff --name-only "$base" "$tip" 2>/dev/null)" && [[ -n "$files" ]] || return 0
   mapfile -t LANDING_FILES <<<"$files"
+  [[ "${LANDED_TRACE:-0}" == 1 ]] && echo "  $tip: ${#LANDING_FILES[@]} file(s) changed; $(git -C "$ROOT" rev-list --count --max-count=300 "$base..$ref" -- "${LANDING_FILES[@]}" 2>/dev/null || echo ?) commit(s) on $ref touch them; $(git -C "$ROOT" merge-tree --write-tree "$ref" "$ref" >/dev/null 2>&1 && echo "merge-tree check" || echo "file-compare check (git < 2.38)")" >&2
   while IFS= read -r c; do
     contained "$tip" "$c" "$base" && { git -C "$ROOT" rev-parse --short "$c"; return; }
   done < <(git -C "$ROOT" rev-list --reverse --max-count=300 "$base..$ref" -- "${LANDING_FILES[@]}" 2>/dev/null)

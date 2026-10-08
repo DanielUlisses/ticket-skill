@@ -10,6 +10,7 @@
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates
 #   tk.sh merge   <board> <NN>           gates, then merge on the forge (GitHub or Azure DevOps), then resolve
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
+#   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
@@ -44,8 +45,10 @@ cmd_digest() {
   if (( HAS_REMOTE )); then
     run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || echo "WARN fetch of $REMOTE/$BASE_BRANCH failed — landed answers use the last fetch"
   fi
+  fetch_ticket_branches
   local agents facts="" t nn status branch base agent st tab l
   local herdr_ok=1
+  export LANDED_ERRS; LANDED_ERRS="$(mktemp)"
   agents="$(agent_states)" || { herdr_ok=0; echo "WARN Herdr didn't answer — agent states unknown"; }
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
@@ -62,6 +65,10 @@ cmd_digest() {
     fi
     facts+="$(jq -cn --arg nn "$nn" --arg l "$l" --arg s "$st" --arg tab "${tab:--}" '{nn:$nn, landed:$l, state:$s, tab:$tab}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
+  # The forge failing makes a squash merge whose content changed in review look
+  # unmerged — say so once, with its own words, rather than per ticket or never.
+  [[ -s "$LANDED_ERRS" ]] && echo "WARN $(forge_name) couldn't be asked whether PRs merged: $(grep -v '^[[:space:]]*$' "$LANDED_ERRS" | sort -u | tail -1)"
+  rm -f "$LANDED_ERRS"; unset LANDED_ERRS
 
   local state_file prev="{}"
   state_file="$(board_state_dir)/$BOARD_SLUG.digest.json"
@@ -270,6 +277,7 @@ resolve_ticket() {
   local t="$1" nn branch l sha line
   nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
   (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
+  (( HAS_REMOTE )) && [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null || true; }
   local base err; base="$(jq -r .base <<<"$t")"
   l="$(landed "$branch" "$base")"
   if [[ "$l" != yes:* ]]; then
@@ -279,14 +287,12 @@ resolve_ticket() {
     if forge_ok && ! err="$(forge_merged_pr "$branch" 2>&1 >/dev/null)"; then
       die "ticket $nn hasn't landed by git ($l), and $(forge_name) couldn't be asked: $(tail -1 <<<"$err")"
     fi
-    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_name) reports no merged PR from it — not resolving it"
+    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_name) reports no merged PR from it — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
   fi
   if [[ "$l" == yes:pr#* ]]; then
     sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
-  elif [[ "$l" == yes:squash ]]; then
-    local tip="$branch"
-    [[ "$(git -C "$ROOT" rev-list --count "$base..$branch" 2>/dev/null || echo 0)" -gt 0 ]] || tip="$REMOTE/$branch"
-    sha="$(landing_commit "$tip" "$BASE_REF" "$base")"
+  elif [[ "$l" == yes:squash:* ]]; then
+    sha="${l#yes:squash:}"
   else
     sha="$(git -C "$ROOT" rev-parse --short "$branch")"
   fi
@@ -295,6 +301,25 @@ resolve_ticket() {
   awk -v line="$line" '/^\*\*Status:\*\*/ { print line; next } /^\*\*Agent:\*\*/ { next } { print }' "$f" >"$tmp"
   mv "$tmp" "$f"
   echo "RESOLVED $nn ($l) — /sweep-tickets lists its worktree and branch for cleanup"
+}
+
+# Every step landed() takes for one ticket, for when the board disagrees with
+# what the developer merged.
+cmd_why() {
+  board_init "${1:-}"; local t nn="${2:?usage: tk.sh why <board> <NN>}" branch l
+  t="$(ticket_json "$nn")"; branch="$(jq -r .branch <<<"$t")"
+  if (( HAS_REMOTE )); then
+    run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || echo "  fetch of $REMOTE/$BASE_BRANCH failed — using the last fetch"
+    [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null \
+      || echo "  $REMOTE has no branch $branch (deleted after the merge, or pushed under another name)"; }
+  fi
+  echo "ticket $nn: $(jq -r .status <<<"$t"), forge $(forge_name)$([[ $FORGE == azure ]] && echo " ($AZ_ORG / $AZ_PROJECT / $AZ_REPO)")"
+  local errs; errs="$(mktemp)"
+  # The trace goes to stderr, straight through; only the verdict is captured.
+  l="$(LANDED_TRACE=1 LANDED_ERRS="$errs" landed "$branch" "$(jq -r .base <<<"$t")")"
+  [[ -s "$errs" ]] && echo "  $(forge_name) said: $(grep -v '^[[:space:]]*$' "$errs" | tail -1)"
+  rm -f "$errs"
+  echo "LANDED $l"
 }
 
 cmd_resolve() {
@@ -548,6 +573,7 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
+  why 02                        every step of "has 02 landed?" — when a merge you did isn't seen
   retro                         mattpocock retro over the board: memory diff + environment fixes
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
@@ -565,7 +591,8 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkr  [board]       every ticket whose PR passes all gates
   tkg  [board] NN    the five merge gates for one ticket
   tks  [board] NN    what one ticket's agent is doing
-  tk <verb> ...      tk.sh directly (digest, view, gates, ready, helpers, retro, help)
+  tkw  [board] NN    why the board thinks a ticket has (or hasn't) landed
+  tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, help)
   tkhelp             this list
 
 Forges (PRs, gates, merge) — picked from the remote URL
@@ -583,6 +610,6 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
   *) sed -n '2,25p' "$0"; exit 1 ;;
 esac

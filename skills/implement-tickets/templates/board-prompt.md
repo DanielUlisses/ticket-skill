@@ -12,7 +12,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh launch {{BOARD}} <NN> --type <feat\|fix\|refactor\|chore\|docs\|test\|perf\|ci> --model <m> --effort <e> [--account <a>] [--research <file>]` | launches one ticket and records it |
 | `tk.sh gates {{BOARD}} <NN>` · `tk.sh ready {{BOARD}}` | merge gates for one ticket · every ticket that passes them |
 | `tk.sh merge {{BOARD}} <NN>` | gates, merge, resolve |
-| `tk.sh resolve {{BOARD}} <NN>` | marks a landed ticket resolved |
+| `tk.sh resolve {{BOARD}} <NN>` · `tk.sh why {{BOARD}} <NN>` | marks a landed ticket resolved · why it does or doesn't count as landed |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
 | `tk.sh help` | every command the developer can use |
 | `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
@@ -26,6 +26,7 @@ The developer watches the board in a `tickets` tab (`tk.sh view`, a script). You
 Report from that output only, never from memory. Act on each `ACTION` line:
 
 - `resolve NN` → `tk.sh resolve {{BOARD}} NN`, then say what it unblocked.
+- The developer says they merged NN but it isn't resolved → `tk.sh why {{BOARD}} NN` and show its output as printed.
 - `review NN` → tell the developer the ticket is ready for review, once.
 - `dialog NN`, `orphan NN`, `check NN` → tell the developer, as printed. Never answer an agent's dialog.
 
