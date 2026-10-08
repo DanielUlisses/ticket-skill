@@ -270,10 +270,23 @@ resolve_ticket() {
   local t="$1" nn branch l sha line
   nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
   (( HAS_REMOTE )) && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
-  l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
-  [[ "$l" == yes:* ]] || die "ticket $nn hasn't landed ($l) — not resolving it"
+  local base err; base="$(jq -r .base <<<"$t")"
+  l="$(landed "$branch" "$base")"
+  if [[ "$l" != yes:* ]]; then
+    # Say why the forge didn't settle it, rather than a bare "no": a merge done
+    # outside the board is only visible to git once it has been fetched, and to
+    # the forge only when its CLI can be asked.
+    if forge_ok && ! err="$(forge_merged_pr "$branch" 2>&1 >/dev/null)"; then
+      die "ticket $nn hasn't landed by git ($l), and $(forge_name) couldn't be asked: $(tail -1 <<<"$err")"
+    fi
+    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_name) reports no merged PR from it — not resolving it"
+  fi
   if [[ "$l" == yes:pr#* ]]; then
     sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
+  elif [[ "$l" == yes:squash ]]; then
+    local tip="$branch"
+    [[ "$(git -C "$ROOT" rev-list --count "$base..$branch" 2>/dev/null || echo 0)" -gt 0 ]] || tip="$REMOTE/$branch"
+    sha="$(landing_commit "$tip" "$BASE_REF" "$base")"
   else
     sha="$(git -C "$ROOT" rev-parse --short "$branch")"
   fi

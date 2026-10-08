@@ -124,29 +124,71 @@ ticket_json() {
 # ---- has it landed? --------------------------------------------------------------
 
 # Prints yes:<how> | no | unknown:<why>. Needs ROOT, BASE_BRANCH, BASE_REF and
-# HAS_REMOTE from board_init, and a fetch already done where there is a remote. The empty-branch guard comes first: a freshly launched
-# branch sits *at* the base, and ancestry would call it merged.
+# HAS_REMOTE from board_init, and a fetch already done where there is a remote.
+# Asks, in order: is the branch an ancestor of the base (a merge commit or a
+# fast-forward); is everything it changed already on the base (a squash or a
+# rebase — what Azure DevOps and GitHub both default to, and invisible to
+# ancestry); does the forge know a merged PR from it. The first two need no
+# forge at all, so a PR merged in the web UI resolves even where gh or az can't
+# be asked. The empty-branch guard comes first: a freshly launched branch sits
+# *at* the base, and both git checks would call it merged.
 landed() {
-  local branch="$1" base_sha="$2" count pr=""
+  local branch="$1" base_sha="$2" count pr="" tip
   [[ -n "$branch" ]] || { echo "-"; return; }
   git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" || {
     # A deleted local branch can still have a merged PR.
     forge_ok && pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
     [[ -n "${pr:-}" ]] && echo "yes:pr#$pr" || echo "unknown:no-local-branch"; return; }
+  tip="$branch"
   [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "$branch" "$BASE_REF" 2>/dev/null || true)"
   if ! count="$(git -C "$ROOT" rev-list --count "$base_sha..$branch" 2>/dev/null)"; then
     echo "unknown:base-unresolvable"; return
   fi
+  # Nothing committed locally, but the work may have been committed and pushed
+  # from elsewhere: the remote branch is then the one that was merged.
+  if [[ "$count" -eq 0 ]] && git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$branch"; then
+    tip="$REMOTE/$branch"; count="$(git -C "$ROOT" rev-list --count "$base_sha..$tip" 2>/dev/null || echo 0)"
+  fi
   if [[ "$count" -eq 0 ]]; then echo "no"; return; fi
-  if git -C "$ROOT" merge-base --is-ancestor "$branch" "$BASE_REF" 2>/dev/null \
-     || git -C "$ROOT" merge-base --is-ancestor "$branch" "$BASE_BRANCH" 2>/dev/null; then
+  if git -C "$ROOT" merge-base --is-ancestor "$tip" "$BASE_REF" 2>/dev/null \
+     || git -C "$ROOT" merge-base --is-ancestor "$tip" "$BASE_BRANCH" 2>/dev/null; then
     echo "yes:ancestry"; return
   fi
+  if [[ -n "$(landing_commit "$tip" "$BASE_REF" "$base_sha")" ]]; then echo "yes:squash"; return; fi
   if forge_ok; then
     pr="$(forge_merged_pr "$branch" 2>/dev/null || true)"
     [[ -n "$pr" ]] && { echo "yes:pr#$pr"; return; }
   fi
   echo "no"
+}
+
+# Is every change on <tip> already in commit <c>? True at a squash commit, or the
+# last commit of a rebase: merging the branch there changes nothing — the merged
+# tree is <c>'s own (git 2.38+, merge-tree --write-tree). Older git: every file
+# the branch touched since <base> reads the same at <c>.
+contained() {
+  local tip="$1" c="$2" base="$3" tree
+  if tree="$(git -C "$ROOT" merge-tree --write-tree --no-messages "$c" "$tip" 2>/dev/null)"; then
+    [[ "$tree" == "$(git -C "$ROOT" rev-parse "$c^{tree}")" ]]; return
+  fi
+  git -C "$ROOT" merge-tree --write-tree "$c" "$c" >/dev/null 2>&1 && return 1   # new git: a real conflict
+  git -C "$ROOT" diff --quiet "$tip" "$c" -- "${LANDING_FILES[@]}"
+}
+
+# The short sha on <ref> where <tip>'s changes arrived, or nothing: the oldest
+# commit after <base> that contains them all. Each candidate is checked itself,
+# not <ref>'s head, because the base may have moved on and edited the same files
+# since — a merge against the head would then re-apply the branch's change and
+# miss the squash. Only commits touching the branch's files can be it, which
+# keeps this to a handful of merge-tree runs.
+landing_commit() {
+  local tip="$1" ref="$2" base="$3" c files
+  files="$(git -C "$ROOT" diff --name-only "$base" "$tip" 2>/dev/null)" && [[ -n "$files" ]] || return 0
+  mapfile -t LANDING_FILES <<<"$files"
+  while IFS= read -r c; do
+    contained "$tip" "$c" "$base" && { git -C "$ROOT" rev-parse --short "$c"; return; }
+  done < <(git -C "$ROOT" rev-list --reverse --max-count=300 "$base..$ref" -- "${LANDING_FILES[@]}" 2>/dev/null)
+  return 0
 }
 
 # name<TAB>state<TAB>tab for every Herdr agent. Fails when Herdr can't be asked,
@@ -215,14 +257,20 @@ forge_detect() {
   local re_https='^https?://([^@/]+@)?dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/?#]+)'
   local re_vs='^https?://([^@/]+@)?([^./]+)\.visualstudio\.com/(DefaultCollection/)?([^/]+)/_git/([^/?#]+)'
   local re_ssh='^([^@]+@)?(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com):v3/([^/]+)/([^/]+)/([^/]+)$'
-  if [[ "$url" =~ $re_https ]]; then
+  local re_https1='^https?://([^@/]+@)?dev\.azure\.com/([^/]+)/_git/([^/?#]+)'
+  local re_vs1='^https?://([^@/]+@)?([^./]+)\.visualstudio\.com/(DefaultCollection/)?_git/([^/?#]+)'
+  if [[ "$url" =~ $re_https1 ]]; then   # no project in the URL: it is named after the repo
+    AZ_ORG="https://dev.azure.com/${BASH_REMATCH[2]}"; AZ_PROJECT="${BASH_REMATCH[3]}"; AZ_REPO="${BASH_REMATCH[3]}"
+  elif [[ "$url" =~ $re_vs1 ]]; then
+    AZ_ORG="https://${BASH_REMATCH[2]}.visualstudio.com"; AZ_PROJECT="${BASH_REMATCH[4]}"; AZ_REPO="${BASH_REMATCH[4]}"
+  elif [[ "$url" =~ $re_https ]]; then
     AZ_ORG="https://dev.azure.com/${BASH_REMATCH[2]}"; AZ_PROJECT="${BASH_REMATCH[3]}"; AZ_REPO="${BASH_REMATCH[4]}"
   elif [[ "$url" =~ $re_vs ]]; then
     AZ_ORG="https://${BASH_REMATCH[2]}.visualstudio.com"; AZ_PROJECT="${BASH_REMATCH[4]}"; AZ_REPO="${BASH_REMATCH[5]}"
   elif [[ "$url" =~ $re_ssh ]]; then
     AZ_ORG="https://dev.azure.com/${BASH_REMATCH[3]}"; AZ_PROJECT="${BASH_REMATCH[4]}"; AZ_REPO="${BASH_REMATCH[5]}"
   fi
-  AZ_PROJECT="${AZ_PROJECT//%20/ }"; AZ_REPO="${AZ_REPO%.git}"; AZ_REPO="${AZ_REPO//%20/ }"
+  AZ_REPO="${AZ_REPO%.git}"; AZ_PROJECT="${AZ_PROJECT%.git}"; AZ_PROJECT="${AZ_PROJECT//%20/ }"; AZ_REPO="${AZ_REPO//%20/ }"
 }
 
 # Quiet: can the forge be asked at all? (The landing check and the status board
