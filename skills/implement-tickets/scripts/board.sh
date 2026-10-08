@@ -20,8 +20,9 @@
 #   TICKET_SESSION_AGENTS     (default: 1) — 0 leaves the dispatched agents on their frontmatter
 #   TICKET_BOARD_VIEW         (default: 30) — seconds between refreshes of the status board the
 #                             session opens beside itself (tk.sh view --watch); 0 opens none
-#   TICKET_BOARD_VIEW_PLACEMENT (default: split) — split: a pane to the right of the board session;
-#                             tab: a `tickets` tab of its own
+#   TICKET_BOARD_VIEW_PLACEMENT (default: tab) — tab: a `tickets` tab of its own, full width;
+#                             right / down: a pane split off the board session (Herdr splits only
+#                             right or down, so a split always sits beside or below it)
 #   TICKET_BOARD_VIEW_RATIO   (optional) — passed to `herdr pane split --ratio` for the split
 set -euo pipefail
 
@@ -86,20 +87,22 @@ cmd=(claude "Run the board ${BOARD_ID}: start with the first turn."
 cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
 
 # The status board beside the board session: tk.sh view, refreshing itself — a
-# script, not a model, so it costs nothing to leave open. By default a pane split
-# to the right of this one (`--current` resolves this pane from HERDR_PANE_ID);
-# TICKET_BOARD_VIEW_PLACEMENT=tab gives it a `tickets` tab instead. Best effort:
-# where this Herdr can't do either, say what to run.
+# script, not a model, so it costs nothing to leave open. By default a `tickets`
+# tab of its own — the full width fits the most columns; TICKET_BOARD_VIEW_PLACEMENT
+# =right or =down splits this pane instead (`--current` resolves it from
+# HERDR_PANE_ID). A refused split falls back to the tab. Best effort: where this
+# Herdr can do neither, say what to run.
 open_view() {
-  local every="${TICKET_BOARD_VIEW:-30}" view_cmd json pane="" how
+  local every="${TICKET_BOARD_VIEW:-30}" view_cmd json pane="" how place="${TICKET_BOARD_VIEW_PLACEMENT:-tab}"
+  [[ "$place" == split ]] && place=right   # the earlier name for it
   [[ "$every" =~ ^[0-9]+$ && "$every" -gt 0 ]] || return 0
   view_cmd="$SCRIPTS/tk.sh view $(printf '%q' "$BOARD_ID") --watch $every"
   if [[ "${HERDR_ENV:-}" == 1 ]] && command -v herdr >/dev/null 2>&1; then
-    if [[ "${TICKET_BOARD_VIEW_PLACEMENT:-split}" == split && -n "${HERDR_PANE_ID:-}" ]]; then
-      local split=(pane split --current --direction right --cwd "$ROOT" --no-focus)
+    if [[ "$place" =~ ^(right|down)$ && -n "${HERDR_PANE_ID:-}" ]]; then
+      local split=(pane split --current --direction "$place" --cwd "$ROOT" --no-focus)
       [[ -n "${TICKET_BOARD_VIEW_RATIO:-}" ]] && split+=(--ratio "$TICKET_BOARD_VIEW_RATIO")
       json="$(herdr "${split[@]}" 2>/dev/null)" && pane="$(jq -r '.result.pane.pane_id // .result.pane.id // empty' <<<"$json")"
-      how="a pane to the right"
+      how="a pane split $place"
     fi
     if [[ -z "$pane" ]]; then
       local create=(tab create --cwd "$ROOT" --label tickets)
