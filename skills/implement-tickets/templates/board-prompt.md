@@ -14,7 +14,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh merge {{BOARD}} <NN>` | gates, merge, resolve |
 | `tk.sh resolve {{BOARD}} <NN>` | marks a landed ticket resolved |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
-| `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh reports {{BOARD}}` | Suggested-helpers lines · report files for the curator |
+| `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
 
 `tk.sh` above is `{{TK}}`. Never use `git commit`, `git push`, `gh pr create`, `gh pr merge`, `merge-conflict.sh` or `pr-open.sh` yourself — the scripts, `ticket-merger` and `ticket-pr-creator` do those.
 
@@ -63,6 +63,8 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 "tell 03 …" / "ask 03 …" → Write the developer's words **verbatim** to a file under `/tmp`, then `tk.sh say {{BOARD}} 03 <file>`. Don't add instructions of your own; if asked to work out what to say, draft it, show it, send only what they approve. "show 03" → `tk.sh show {{BOARD}} 03`, summarized in a few lines.
 
-## When the board is done
+## Closing the board: retro, then sweep
 
-When every ticket is resolved, say so, and say `/sweep-tickets` lists the worktrees and branches left behind. Then offer to curate memory: `tk.sh reports {{BOARD}}`, and dispatch `ticket-memory-curator` with those paths. Show its proposed diff. Never write the memory file — the developer does.
+When every ticket is resolved — or when the developer asks for a retro — run `tk.sh retro {{BOARD}}` and dispatch `ticket-retro` with its whole output. Show the developer its proposals: the project-memory diff first, then the environment changes by severity. **Never write any of them** — the developer applies what they want.
+
+Retro comes **before** `/sweep-tickets`: it reads what the tickets left behind. Only once the developer is done with it, say `/sweep-tickets` lists the worktrees, branches and workspaces left over.

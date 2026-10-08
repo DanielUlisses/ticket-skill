@@ -11,7 +11,7 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 | Coordination | the session each launched ticket runs | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
 | Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
-| Memory curation | `ticket-memory-curator`, dispatched by the board | `haiku` @ `medium` | no — `TICKET_CURATE_*` |
+| Retro | `ticket-retro`, dispatched by the board when it closes | `sonnet` @ `medium` | no — `TICKET_RETRO_*` |
 | Opening PRs | `ticket-pr-creator`, dispatched by the board | `sonnet` @ `low` | no — `TICKET_PR_*` |
 | Review | `ticket-reviewer` | `opus` @ `medium` | no — `TICKET_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |

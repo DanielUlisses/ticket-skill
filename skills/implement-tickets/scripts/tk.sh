@@ -13,7 +13,7 @@
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
-#   tk.sh reports <board>                paths of the ticket reports the memory curator reads
+#   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
 #   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
@@ -331,17 +331,47 @@ cmd_helpers() {
   done
 }
 
-cmd_reports() {
+# Everything ticket-retro reads, gathered so the agent reasons over a few
+# hundred lines instead of raw transcripts (one ticket's can run to megabytes).
+# Per ticket: its saved report, the Claude Code transcripts its worktree left
+# (found under every config root, since an --account ticket logs under its own),
+# and a cheap extract of each — the tool calls that errored, and which tools ran
+# how often. Then the files a retro proposes changes to, and the skills it follows.
+cmd_retro() {
   board_init "${1:-}"
-  local dir branch; dir="$(board_state_dir)/reports"
-  for branch in $(jq -r '.[] | select(.branch != "") | .branch' <<<"$BOARD_JSON"); do
-    [[ -s "$dir/$branch.md" ]] && echo "$dir/$branch.md"
+  local reports="$(board_state_dir)/reports" t nn branch wt enc f roots=() root
+  roots=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}")
+  [[ -d "$HOME/.claude" ]] && roots+=("$HOME/.claude")
+  for root in "$HOME"/.claude-switch/accounts/*; do [[ -d "$root" ]] && roots+=("$root"); done
+  echo "RETRO board $BOARD_ID — $(jq length <<<"$BOARD_JSON") tickets"
+  while IFS= read -r t; do
+    nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
+    [[ -n "$branch" ]] || continue
+    wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+    echo; echo "TICKET $nn $(jq -r .status <<<"$t") $branch — $(jq -r .title <<<"$t")"
+    if [[ -s "$reports/$branch.md" ]]; then echo "  REPORT $reports/$branch.md"; else echo "  REPORT none"; fi
+    enc="$(sed 's/[^A-Za-z0-9]/-/g' <<<"$wt")"
+    for f in $(for root in "${roots[@]}"; do ls "$root/projects/$enc"/*.jsonl 2>/dev/null; done | sort -u); do
+      echo "  TRANSCRIPT $f ($(du -h "$f" | cut -f1))"
+      echo "    tools: $(jq -r 'select(.type=="assistant") | .message.content[]? | select(type=="object" and .type=="tool_use") | .name' "$f" 2>/dev/null \
+                         | sort | uniq -c | sort -rn | awk '{printf "%s×%s ", $2, $1}')"
+      jq -r 'select(.type=="user") | .message.content[]? | select(type=="object" and .type=="tool_result" and .is_error==true)
+             | (.content | tostring | gsub("\\s+"; " "))[0:160]' "$f" 2>/dev/null \
+        | sort | uniq -c | sort -rn | head -12 | sed 's/^ *\([0-9]*\) /    error×\1: /'
+    done
+  done < <(jq -c '.[]' <<<"$BOARD_JSON")
+  echo
+  for f in docs/agents/project-memory.md CLAUDE.md AGENTS.md CODING_STANDARDS.md; do
+    [[ -f "$ROOT/$f" ]] && echo "FILE $ROOT/$f" || echo "FILE $f none"
   done
-  if [[ -f "$ROOT/docs/agents/project-memory.md" ]]; then echo "MEMORY $ROOT/docs/agents/project-memory.md"; else echo "MEMORY none"; fi
+  for f in retro writing-for-agents; do
+    root="$(find "${roots[@]}" -path '*mattpocock*' -path "*/$f/SKILL.md" 2>/dev/null | head -1 || true)"
+    echo "SKILL $f ${root:-none found — update mattpocock-skills to v1.3 or later}"
+  done
 }
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|merge|resolve|say|show|helpers|reports) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|merge|resolve|say|show|helpers|retro) "cmd_$verb" "$@" ;;
   *) sed -n '2,25p' "$0"; exit 1 ;;
 esac

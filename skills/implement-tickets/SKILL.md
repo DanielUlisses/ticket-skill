@@ -37,6 +37,6 @@ Then stop. Don't launch, merge or digest from here.
 - **Merges on request** ("merge 03", "merge everything ready") behind five scripted gates — open PR, ready, mergeable, checks green, review approved. A conflict sends `ticket-merger` (Sonnet), which resolves it in the ticket's worktree and commits and pushes that one merge only after the developer approves.
 - **Relays** the developer's words to a ticket's agent verbatim, never into a dialog.
 - **Resolves** what landed (ancestry or a merged PR, behind the empty-branch guard) and launches what it unblocks.
-- **Curates memory** when the board is done: `ticket-memory-curator` proposes a diff to `docs/agents/project-memory.md` from the tickets' `## Remember` sections. The developer writes it.
+- **Closes the board with a retro**, before `/sweep-tickets`: `ticket-retro` (Sonnet) runs mattpocock's `retro` over the tickets' reports and transcript extracts and proposes a project-memory diff and environment changes. The developer applies what they want.
 
 Its prompt is `templates/board-prompt.md`; its hands are `scripts/tk.sh`, and its two agents that write to git go through `scripts/merge-conflict.sh` and `scripts/pr-open.sh`.

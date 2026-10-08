@@ -85,8 +85,8 @@ yours; deciding what the repo remembers is the developer's.
 
 **Then save the whole report** — everything above, `## Remember` included — to
 `{{REPORT_FILE}}` with the Write tool. It is the one file outside the worktree you
-write: it outlives the worktree, and it is what `ticket-memory-curator` reads when
-the board is done.
+write: it outlives the worktree, and it is what `ticket-retro` reads when the
+board is done.
 
 ## Inviolable rules
 

@@ -62,7 +62,7 @@ tpl="${tpl//'{{PR}}'/"$SCRIPTS/pr-open.sh"}"
 tpl="${tpl//'{{LAUNCHER}}'/"$LAUNCHER_PATH"}"
 printf '%s\n' "$tpl" >"$PROMPT"
 
-build_session_agents ticket-merger ticket-pr-creator ticket-memory-curator ticket-researcher
+build_session_agents ticket-merger ticket-pr-creator ticket-retro ticket-researcher
 
 cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
      # The board itself uses Bash, Read, Write, Agent and AskUserQuestion; the rest

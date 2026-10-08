@@ -422,7 +422,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE CURATE PR; do
+  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR; do
     # Under COORDINATOR=impl the coordinator's own setting is never used.
     [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
@@ -478,7 +478,7 @@ load_ticket_models() {
   REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
   BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
   MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
-  CURATE_MODEL="${TICKET_CURATE_MODEL:-haiku}";    CURATE_EFFORT="${TICKET_CURATE_EFFORT:-medium}"
+  RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
   PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
   TEST_EFFORT="${TICKET_TEST_EFFORT:-low}"
   IMPL_MODEL_SOURCE="$(config_source TICKET_IMPL_MODEL "$exported_model")"
@@ -581,7 +581,7 @@ role_of_agent() {
     ticket-researcher)       echo RESEARCH ;;
     ticket-criteria-checker) echo CHECK ;;
     ticket-merger)           echo MERGE ;;
-    ticket-memory-curator)   echo CURATE ;;
+    ticket-retro)            echo RETRO ;;
     ticket-pr-creator)       echo PR ;;
     *)                       return 1 ;;
   esac
@@ -773,7 +773,7 @@ launcher_main() {
   tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
   tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
   # The one file outside the worktree a ticket writes: its final report, kept
-  # where it outlives the worktree for ticket-memory-curator to read.
+  # where it outlives the worktree for ticket-retro to read.
   REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
   mkdir -p "$(dirname "$REPORT_FILE")"
   tpl="${tpl//'{{REPORT_FILE}}'/"$REPORT_FILE"}"
@@ -925,7 +925,7 @@ launcher_main() {
   # and must not be flattened: /small-ticket starts in plan mode with only
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
-  # A ticket's session uses the ticket-side roster; the merger, the curator and
+  # A ticket's session uses the ticket-side roster; the merger, the retro and
   # the PR creator belong to the board session (scripts/board.sh).
   build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
   local -a agents_arg=()
