@@ -41,7 +41,8 @@ A feature runs in two sessions, not one. `/ticket` is the **planner** — grilli
 
 ### Session launch settings
 
-The account, the implementer's model and its effort a session's tickets run on are asked **once**, at its first launch,
+The implementer's model and its effort a session's tickets run on are asked **once**, at its first launch
+(the account is not asked — each devbox has one; `--account` stays for when the developer names one),
 by whichever launching skill gets there first, and hold for every launch after it — a session
 that launches nothing asks nothing. `launch.sh defaults` is what names the defaults in that
 question, including the account a *new* worktree would inherit, which is not the one the
