@@ -338,25 +338,37 @@ cmd_show() {
 # through its brief ({{PHASE_FILE}}); Herdr alone can't tell implementing from
 # reviewing, since the agent is "working" either way.
 board_rows() {
-  local t nn status branch agent agents herdr_ok=1 st l phase pr phase_dir rows=""
+  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr phase_dir rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    st="-"; l="-"; phase="-"; pr="null"
+    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"
     if [[ "$status" == in-progress ]]; then
       l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
       if [[ -n "$agent" ]]; then
-        if (( herdr_ok )); then st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$agents")"; st="${st:-gone}"; else st="?"; fi
+        if (( herdr_ok )); then
+          st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$agents")"; st="${st:-gone}"
+          tab="$(awk -F'\t' -v a="$agent" '$1 == a {print $3}' <<<"$agents")"; tab="${tab:--}"
+        else st="?"; fi
       fi
-      [[ -s "$phase_dir/$branch" ]] && phase="$(head -1 "$phase_dir/$branch" | tr -cd 'a-z-')"
+      if [[ -s "$phase_dir/$branch" ]]; then
+        # Line 1 "<phase> [rN]", line 2 "tests=… criteria=m/n review=…" — both written by
+        # the ticket's coordinator; anything unexpected is dropped, not trusted.
+        read -r phase round < <(head -1 "$phase_dir/$branch" | tr -cd 'a-z0-9 -'; echo)
+        [[ "$round" =~ ^r[0-9]+$ ]] || round=""
+        checks="$(sed -n 2p "$phase_dir/$branch" | tr -cd 'a-z0-9=/ -')"
+        phase="${phase:--}"
+      fi
       if (( HAS_REMOTE )) && command -v gh >/dev/null 2>&1 && [[ -n "$branch" ]]; then
         pr="$(gh pr list --head "$branch" --state open --json number,isDraft,mergeable,reviewDecision,statusCheckRollup --jq '.[0] // null' 2>/dev/null || echo null)"
         [[ -n "$pr" ]] || pr="null"
       fi
     fi
-    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --argjson pr "$pr" '$t + {state:$st, landed:$l, phase:$ph, pr:$pr}')"$'\n'
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" \
+      '$t + {state:$st, landed:$l, phase:$ph, round:$rd, tab:$tab, pr:$pr,
+             checks: ($ck | split(" ") | map(select(test("^[a-z]+=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s '
     (map({key: .nn, value: .status}) | from_entries) as $st |
@@ -383,7 +395,17 @@ board_rows() {
        elif $t.state == "gone" then {col: "needs", note: "no live agent"}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: "agent finished"}
        elif ($t.phase | IN("verifying", "reviewing", "fixing", "reporting")) then {col: "review", note: $t.phase}
-       else {col: "working", note: (if $t.phase != "-" then $t.phase else $t.state end)} end))'
+       else {col: "working", note: (if $t.phase != "-" then $t.phase else $t.state end)} end))
+    # What to type into the board session to move the card on, where there is something.
+    | map(. + {hint: (
+        if .col == "backlog" then "start \(.nn)"
+        elif .col == "human" then "open a PR for \(.nn)"
+        elif .col == "pr" and (.note | test("ready to merge")) then "merge \(.nn)"
+        elif .col == "pr" and (.note | test("conflict")) then "merge \(.nn) — sends the merger"
+        elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
+        elif .col == "needs" and .state == "gone" then "show \(.nn)"
+        elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
+        else "" end)})'
 }
 
 cmd_view() {

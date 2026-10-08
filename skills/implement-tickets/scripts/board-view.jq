@@ -72,16 +72,31 @@ def slug: (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | sub("^-+"; "") | 
 #   NN · slug        the ticket and the branch's slug
 #   Title            bold, up to two lines
 #   note             where it stands, in the column's colour
+#   [tests] [3/4] [rev 2!]  the coordinator's last checks as chips — tests,
+#                    criteria met/total, review (✓ or blocking count) — green
+#                    pass, yellow partial, red failing; the review round (R1, R2)
+#                    rides on the note line
 #   branch           dim, once launched
 #   [model] [effort] what implements it — `~` before the chips when it's the
 #                    ticket's suggestion (or the default), not a launched run
+#   → hint           what to type into the board session to move the card on
 def card($cw; $col):
   ($cw - 4) as $iw
   | (if $col.c == "needs" then $col.k else "90" end) as $bk
   | . as $t
   | [ [seg($t.nn; "1;" + $col.k), seg(" · " + ($t | slug); "2")] ]
     + [ $t.title | wrap($iw; 2)[] | [seg(.; "1")] ]
-    + (if $t.note != "" then [[seg($t.note; $col.k)]] else [] end)
+    + (if $t.note != "" then
+         [[seg($t.note; $col.k)] + (if ($t.round // "") != "" then [seg(" · " + ($t.round | ascii_upcase); "2")] else [] end)]
+       else [] end)
+    + (($t.checks // {}) as $c
+       | if ($c | length) == 0 then [] else
+         [ (if $c.tests then [chip("tests"; if $c.tests == "pass" then "30;42" elif $c.tests == "fail" then "30;41" else "30;47" end), seg(" "; null)] else [] end)
+           + (if $c.criteria then ($c.criteria | split("/")) as $m
+                | [chip($c.criteria; if ($m | length) == 2 and $m[0] == $m[1] then "30;42" else "30;43" end), seg(" "; null)] else [] end)
+           + (if $c.review then [chip(if $c.review == "ok" then "rev ✓" else "rev " + ($c.review | sub("-blocking"; "!")) end;
+                                     if $c.review == "ok" then "30;42" else "30;41" end)] else [] end) ]
+         end)
     + (if $t.branch != "" then [[seg($t.branch; "2")]] else [] end)
     + (if $t.model != "" then
          [[chip($t.model; model_k($t.model)), seg(" "; null),
@@ -92,6 +107,7 @@ def card($cw; $col):
          | [[seg("~ "; "2"), chip($m; model_k($m)), seg(" "; null),
              chip(if $t.seffort != "" then $t.seffort else $de end; "30;47")]]
        end)
+    + (if ($t.hint // "") != "" then [[seg("→ " + $t.hint; $col.k)]] else [] end)
   | [ [seg("╭" + ("─" * ($cw - 2)) + "╮"; $bk)] ]
     + map([seg("│ "; $bk)] + fit($iw) + [seg(" │"; $bk)])
     + [ [seg("╰" + ("─" * ($cw - 2)) + "╯"; $bk)] ];
@@ -119,7 +135,11 @@ def card($cw; $col):
              + (if $col.c == "done" and $count > 3 then [ [seg("  + \($count - 3) more"; "2")] | fit($cw) ] else [] end)
          end) ] as $blocks
 | [ range(0; $n; $k) as $i | $blocks[$i:($i + $k)] ] as $lanes
-| ([ [seg($head; "2")] | fit($W) | render ] + [""]
+| ($rows | map(select(.col | IN("working", "review"))) | length) as $active
+| ($rows | map(select(.col == "needs")) | length) as $needs
+| ([ [seg("● "; if $needs > 0 then "1;31" elif $active > 0 then "32" else "90" end), seg($head; "2"),
+      seg("  ·  \($active) active"; "2"),
+      (if $needs > 0 then seg("  ·  \($needs) need you"; "1;31") else seg(""; null) end)] | fit($W) | render ] + [""]
    + [ $lanes[] | . as $lane
        | ([$lane[] | length] | max) as $h
        | (range(0; $h) as $r

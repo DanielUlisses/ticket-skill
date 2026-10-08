@@ -133,3 +133,12 @@ bordered card per ticket carrying its number and title, where it stands, and **w
 the run's model · effort once launched, or `~` and the ticket's suggestion (else the launcher's
 default) before. Empty columns are left out; columns that don't fit side by side wrap into further
 rows, so the half-width pane beside the board session still reads. DONE shows three cards and a count.
+
+The layout borrows from **herdr-board**'s TUI — and only its layout; its engine (cards as agent runs,
+columns as prompts, a SQLite store) was looked at and passed over, for the reasons 0001 passed over
+herdr-projects. Two of its ideas came across: a **check-chip row** — the coordinator now writes a
+second line to its phase file (`tests=pass criteria=3/4 review=2-blocking`) and the round on the
+first (`reviewing r2`), shown as `reviewing · R2` and `[tests] [3/4] [rev 2!]`, green / yellow / red —
+and an **action hint** on cards waiting on the developer, phrased as what to type into the board
+session (`→ open a PR for 04`, `→ merge 05`, `→ start 07`, `→ answer its dialog`). The header gains a
+live dot (red when anything needs the developer) and the active and needs-you counts.
