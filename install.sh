@@ -81,7 +81,22 @@ else
   # A managed rc (a symlink into a dotfiles repo or the Nix store, a root-owned
   # file) can't be appended to: say so and print the line, never fail the install
   # over it — the skills are already in place.
-  if { printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$RC"; } 2>/dev/null; then
+  # A managed rc usually loads a per-user hook for exactly this: a ~/.bashrc.d/
+  # directory or a ~/.bashrc.local-style file. Use the one it names.
+  hook=""
+  if [[ -z "${TICKET_BASHRC:-}" && -f "$RC" && ! -w "$(readlink -f "$RC" 2>/dev/null || echo "$RC")" ]]; then
+    if grep -qE 'bashrc\.d' "$RC" 2>/dev/null; then hook="$HOME/.bashrc.d/ticket-skill.sh"
+    else
+      for f in .bashrc.local .bashrc_local .bash_local .bashrc.user .bashrc.custom .bash_aliases .aliases; do
+        grep -qF "$f" "$RC" 2>/dev/null && { hook="$HOME/$f"; break; }
+      done
+    fi
+  fi
+  if [[ -n "$hook" ]] && grep -qF '# ticket-skill aliases' "$hook" 2>/dev/null; then
+    echo "aliases: already loaded from $hook (sourced by $RC)"
+  elif [[ -n "$hook" ]] && { mkdir -p "$(dirname "$hook")" && printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$hook"; } 2>/dev/null; then
+    echo "aliases: $RC isn't writable but loads $hook — added the line there; open a new shell or run: . $ALIASES"
+  elif { printf '\n# ticket-skill aliases — tkhelp lists them\n%s\n' "$LINE" >>"$RC"; } 2>/dev/null; then
     echo "aliases: added a line to $RC — open a new shell or run: . $ALIASES"
   else
     target="$RC"; [[ -L "$RC" ]] && target="$RC -> $(readlink -f "$RC" 2>/dev/null || readlink "$RC")"
