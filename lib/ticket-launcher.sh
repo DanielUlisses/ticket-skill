@@ -431,7 +431,7 @@ require_valid_effort() {
     [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
     effort_valid "${!var}" \
-      || die "invalid effort '${!var}' for TICKET_${role}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
+      || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
   done
 }
 
@@ -673,6 +673,7 @@ launcher_main() {
   # run, and a fifth positional would make the call site a row of bare words
   # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
+  DOC=0   # only the --doc flag sets it; never inherited from the environment
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in

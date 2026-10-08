@@ -3,7 +3,7 @@
 You're in a worktree dedicated to this ticket:
 
 - Worktree: `{{WORKTREE}}`
-- Branch: `{{BRANCH}}` (created from `{{BASE_BRANCH}}` at `{{BASE_COMMIT}}`, updated from the remote just before)
+- Branch: `{{BRANCH}}` (created from `{{BASE_BRANCH}}` at `{{BASE_COMMIT}}`)
 
 The plan behind this ticket was already settled with the developer before this session started. You are not here to re-open it, interview anyone, or propose a different approach — get it turned into working code, reviewed, left unstaged.
 

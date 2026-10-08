@@ -130,9 +130,9 @@ GH_REPO="$(git -C "$ROOT" config --get "remote.$REMOTE.url" 2>/dev/null \
 [[ "$GH_REPO" == */* ]] || { GH_REPO=""; HAVE_GH=0; }
 
 # The digests the board session's `tk.sh digest` writes, narrowed to this repo:
-# they are named implement-tickets-digest-<repo>-<board>.txt. `*.txt` alone would also pick up the
-# `.new.txt` that skill writes and `mv`s mid-round, and a round killed between
-# the two leaves one behind.
+# they are named implement-tickets-digest-<repo>-<board>.txt. (The `.new.txt` the
+# skill's older, prose digest wrote mid-round is still skipped, in case one is
+# left on a machine from before.)
 DIGEST_GLOB="${TICKET_DIGEST_GLOB:-/tmp/implement-tickets-digest-*${REPO_NAME}*.txt}"
 
 resolve_base_branch

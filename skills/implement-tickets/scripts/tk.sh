@@ -127,7 +127,8 @@ record_run_state() {
     /^\*\*What to build:\*\*/ { body = 1 }
     !body && /^[[:space:]]*$/ && blank { next }
     { blank = /^[[:space:]]*$/; print }
-    /^# [0-9]+:/ && !done { print ""; print block; blank = 0; done = 1 }' "$f" >"$tmp"
+    /^# [0-9]+:/ && !done { print ""; print block; blank = 0; done = 1 }
+    END { exit !done }' "$f" >"$tmp" || { rm -f "$tmp"; die "couldn't record run state in $f — no '# NN:' heading"; }
   mv "$tmp" "$f"
 }
 
@@ -150,6 +151,9 @@ cmd_launch() {
   [[ "$status" == open ]] || die "ticket $nn is $status, not open"
   open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] | join(",")' <<<"$t")"
   [[ -z "$open" ]] || die "ticket $nn is blocked by $open — not on the frontier"
+  # Run state is written under the `# NN: Title` heading; a file without one
+  # would launch and then stay `open` on the board, and launch again.
+  grep -qE '^# [0-9]+:' "$(jq -r .file <<<"$t")" || die "ticket $nn has no '# $nn: <Title>' heading — add one, then launch"
 
   # Names, mechanically: the same shape /ticket documents.
   local title slug branch label nn2
@@ -184,7 +188,7 @@ cmd_launch() {
       "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent")"
     echo "RECORDED $nn2 in-progress on $branch"
   fi
-  rm -f "$out"
+  rm -f "$out" "$brief"
   return $rc
 }
 
@@ -302,8 +306,9 @@ cmd_say() {
   t="$(ticket_json "$2")"; [[ -s "$file" ]] || die "message file is empty: $file"
   agent_of "$t"
   case "$AGENT_STATE" in
-    blocked) echo "NOT SENT — $AGENT is at a dialog; a message typed there could answer it"; return 20 ;;
-    gone)    echo "NOT SENT — $AGENT isn't running"; return 21 ;;
+    idle|done|working) ;;
+    gone) echo "NOT SENT — $AGENT isn't running"; return 21 ;;
+    *)    echo "NOT SENT — $AGENT is '$AGENT_STATE'; a message typed at a dialog could answer it"; return 20 ;;
   esac
   herdr agent prompt "$AGENT" "$(printf 'Message from the developer, via the board session:\n\n%s' "$(cat "$file")")" >/dev/null
   [[ "$AGENT_STATE" == working ]] && echo "SENT to $AGENT — it's working; Claude Code queues the message until its current step ends" \

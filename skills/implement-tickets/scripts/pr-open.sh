@@ -43,13 +43,7 @@ preflight() {
   [[ -n "$BRANCH" && -d "$WT" ]] || die "ticket $nn has no worktree at ${WT:-?}"
   [[ "$(g rev-parse --abbrev-ref HEAD)" == "$BRANCH" ]] || die "$WT is not on $BRANCH"
   ! g rev-parse -q --verify MERGE_HEAD >/dev/null || die "a merge is in progress in $WT"
-  local agent st
-  agent="$(jq -r .agent <<<"$t")"
-  if [[ -n "$agent" ]]; then
-    st="$( (agent_states || true) | awk -F'\t' -v a="$agent" '$1 == a {print $2}')"
-    [[ "$st" != working ]] || die "$agent is still working — open the PR once it's idle"
-    [[ "$st" != blocked ]] || die "$agent is waiting at a dialog — the developer answers it first"
-  fi
+  require_agent_quiet "$(jq -r .agent <<<"$t")" "opening a PR"
   local pr; pr="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')"
   [[ -z "$pr" ]] || die "$BRANCH already has an open PR: $pr"
 }
@@ -96,9 +90,13 @@ case "$verb" in
       grep -qxF "$p" <<<"$files" || die "'$p' is not a changed file in $WT — refusing"
     done
     r="$(printf '%s\n' "${want[@]}" | risky)"; [[ -z "$r" ]] || die "refusing to commit: $r"
+    # The index must hold nothing but what this call stages: a file staged
+    # earlier would otherwise ride into the commit without being named or checked.
+    staged="$(g diff --cached --name-only)"
+    [[ -z "$staged" ]] || die "files are already staged in $WT — refusing, since they'd be committed unnamed: $(tr '\n' ' ' <<<"$staged")"
     if [[ ${#want[@]} -gt 0 ]]; then
       g add -- "${want[@]}"
-      g commit -q -F "$msg"
+      g commit -q -F "$msg" -- "${want[@]}"
     elif [[ "$(g rev-list --count "$REMOTE/$BASE_BRANCH..HEAD" 2>/dev/null || echo 0)" -eq 0 ]]; then
       die "no paths named and no commits on $BRANCH — nothing to push"
     fi

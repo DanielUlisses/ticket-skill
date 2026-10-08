@@ -64,7 +64,10 @@ printf '%s\n' "$tpl" >"$PROMPT"
 
 build_session_agents ticket-merger ticket-pr-creator ticket-retro ticket-researcher
 
-cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
+# The prompt goes first: --tools and --allowedTools take lists, and a positional
+# after either is swallowed as one more entry — the session would open idle.
+cmd=(claude "Run the board ${BOARD_ID}: start with the first turn."
+     --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
      # The board itself uses Bash, Read, Write, Agent and AskUserQuestion; the rest
      # are there because the agents it dispatches need them (the merger edits,
      # the researcher fetches) and a session's tool set may bound its subagents'.
@@ -76,7 +79,6 @@ cmd=(claude --model "$BOARD_MODEL" --effort "$BOARD_EFFORT"
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # The board's own scripts run without a prompt each time; anything else asks.
 cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
-cmd+=("Run the board ${BOARD_ID}: start with the first turn.")
 
 log "board $BOARD_ID on $BOARD_MODEL @ $BOARD_EFFORT — subagents: $SESSION_AGENTS_STATUS"
 if (( print )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi

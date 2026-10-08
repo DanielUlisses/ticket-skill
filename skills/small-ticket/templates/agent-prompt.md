@@ -3,7 +3,7 @@
 You're in a worktree dedicated to this ticket:
 
 - Worktree: `{{WORKTREE}}`
-- Branch: `{{BRANCH}}` (created from `{{BASE_BRANCH}}` at `{{BASE_COMMIT}}`, updated from the remote just before)
+- Branch: `{{BRANCH}}` (created from `{{BASE_BRANCH}}` at `{{BASE_COMMIT}}`)
 
 {{PROJECT_MEMORY}}
 

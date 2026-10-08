@@ -28,7 +28,7 @@ Two facts make Haiku worth the work of moving that prose into code:
    - `tk.sh` — the board's one tool: `digest` (prints only what changed, plus `FRONTIER`,
      `ACTION` and `WARN` lines the model acts on), `launch` (names, brief, launcher, run state),
      `gates` / `ready` / `merge` (the five gates; exit 10 = conflict, 11 = checks pending,
-     12 = another gate), `resolve`, `say` (refuses a `blocked` agent), `show`, `helpers`, `reports`.
+     12 = another gate), `resolve`, `say` (refuses a `blocked` agent), `show`, `helpers`, and — since 0005 — `retro`.
    - `merge-conflict.sh` — `ticket-merger`'s guard rails (below).
 2. **The board session is started by `board.sh`, never inside the planning session.** It runs
    `claude --model haiku --effort low` with an ~870-word appended prompt, `--strict-mcp-config`

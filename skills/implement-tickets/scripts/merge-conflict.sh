@@ -10,7 +10,8 @@
 #   merge-conflict.sh finish <board> <NN>   commit the resolved merge and push it — only after the developer said yes
 #   merge-conflict.sh abort  <board> <NN>   undo the merge in progress
 #
-# Exit codes: 0 ok | 1 error/refused | 2 start: conflicts to resolve | 4 finish: still unresolved
+# Exit codes: 0 ok (incl. UP TO DATE) | 1 error/refused | 2 start: conflicts to resolve
+#             4 finish: still unresolved, or unstaged changes outside the merge
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,14 +54,12 @@ case "$verb" in
     in_merge && die "a merge is already in progress in $WT — use status, finish or abort"
     # The ticket's own agent works in this same directory; two agents editing one
     # worktree is how a resolution gets silently overwritten.
-    agent="$(jq -r .agent <<<"$t")"
-    if [[ -n "$agent" ]]; then
-      st="$( (agent_states || true) | awk -F'\t' -v a="$agent" '$1 == a {print $2}')"
-      [[ "$st" != working ]] || die "$agent is working in $WT — wait until it's idle"
-    fi
+    require_agent_quiet "$(jq -r .agent <<<"$t")" "merging into $WT"
     [[ -z "$(g status --porcelain)" ]] || die "$WT has uncommitted changes — the merge needs a clean worktree; the developer commits or discards them first"
     GIT_TERMINAL_PROMPT=0 g fetch "$REMOTE" "$BASE_BRANCH" --quiet
     if g merge --no-ff --no-commit "$REMOTE/$BASE_BRANCH" >/dev/null 2>&1; then
+      # "Already up to date" also exits 0, and leaves no merge to finish.
+      in_merge || { echo "UP TO DATE — $BRANCH already contains $REMOTE/$BASE_BRANCH; nothing to merge or push"; exit 0; }
       echo "CLEAN — $REMOTE/$BASE_BRANCH merged into $BRANCH without conflicts, not committed yet"
       echo "WORKTREE $WT"
       exit 0
@@ -81,7 +80,12 @@ case "$verb" in
       echo "STILL UNRESOLVED — not committing"; [[ -n "$u" ]] && sed 's/^/  unmerged: /' <<<"$u"; [[ -n "$m" ]] && sed 's/^/  marker: /' <<<"$m"
       exit 4
     fi
-    g add -u
+    # Only what the merge and its resolution staged goes in. Anything else changed
+    # in the worktree since `start` — the ticket's agent, a stray edit — refuses,
+    # rather than riding out inside a merge commit nobody reviewed it in.
+    require_agent_quiet "$(jq -r .agent <<<"$t")" "committing the merge"
+    stray="$(g diff --name-only)"
+    [[ -z "$stray" ]] || { echo "UNSTAGED CHANGES — not committing; they aren't part of the merge:"; sed 's/^/  /' <<<"$stray"; exit 4; }
     g commit --no-edit >/dev/null
     # Plain push to the same branch: never --force, never another ref.
     GIT_TERMINAL_PROMPT=0 g push "$REMOTE" "HEAD:refs/heads/$BRANCH"

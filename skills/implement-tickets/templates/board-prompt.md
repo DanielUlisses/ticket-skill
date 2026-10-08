@@ -30,7 +30,7 @@ A turn where nothing changed is one line saying so.
 
 ## First turn
 
-1. `tk.sh digest {{BOARD}} --full`. A `die` naming several boards: ask which (AskUserQuestion) and run it again with that one. Show the board as a short table, any `WARN` lines, and ask the developer to confirm the blockers read right.
+1. `tk.sh digest {{BOARD}} --full`. Show the board as a short table, any `WARN` lines, and ask the developer to confirm the blockers read right.
 2. Ask which `FRONTIER` tickets to start — all, some, or none.
 
 ## Launching a wave

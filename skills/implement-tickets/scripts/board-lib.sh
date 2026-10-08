@@ -105,7 +105,7 @@ load_board() {
       . as $t |
       (if ($t.blocked_raw | test("[0-9]") | not)   # "None (can start immediately)", empty
        then []
-       else [ $t.blocked_raw | scan("[0-9]+") | {ref: ., nn: $by_num[norm]} ]
+       else [ $t.blocked_raw | gsub("\\([^)]*\\)"; "") | scan("[0-9]+") | {ref: ., nn: $by_num[norm]} ]
        end) as $refs |
       . + { blockers: [ $refs[] | select(.nn) | .nn ] | unique,
             unknown_refs: [ $refs[] | select(.nn | not) | .ref ] }
@@ -155,6 +155,22 @@ agent_states() {
   command -v herdr >/dev/null 2>&1 || return 1
   local j; j="$(herdr agent list 2>/dev/null)" || return 1
   jq -r '.result.agents[]? | select(.name) | "\(.name)\t\(.agent_status // "unknown")\t\(.tab_id // "-")"' <<<"$j" 2>/dev/null
+}
+
+# The gate for anything that writes in a ticket's worktree: only when its agent
+# is idle, done or gone (or none was recorded). Fails closed — working, at a
+# dialog, a state Herdr didn't classify, or Herdr not answering all refuse.
+require_agent_quiet() {
+  local agent="$1" what="$2" states st
+  [[ -n "$agent" ]] || return 0
+  states="$(agent_states)" || die "Herdr didn't answer — can't tell whether $agent is working; not $what"
+  st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$states")"
+  case "${st:-gone}" in
+    idle|done|gone) return 0 ;;
+    working) die "$agent is working — wait until it's idle before $what" ;;
+    blocked) die "$agent is waiting at a dialog — the developer answers it before $what" ;;
+    *)       die "$agent is in state '$st' — not $what until it's idle" ;;
+  esac
 }
 
 # Every board script starts the same way.

@@ -21,7 +21,7 @@ for DEST in "${DESTS[@]}"; do
   DEST_AGENTS="$DEST/agents"
   mkdir -p "$DEST_SKILLS" "$DEST_AGENTS"
 
-  # /implement-tickets ships no scripts or templates of its own — it reuses /ticket's launcher
+  # /implement-tickets ships the board session's scripts and prompt; its launches reuse /ticket's launcher
   for skill in small-ticket ticket implement-tickets sweep-tickets; do
     mkdir -p "$DEST_SKILLS/$skill"
     cp "$SRC/skills/$skill/SKILL.md" "$DEST_SKILLS/$skill/"
