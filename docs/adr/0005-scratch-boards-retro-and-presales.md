@@ -240,7 +240,8 @@ saying where the time went.
 Opening a PR is writing a commit message and a PR body — no design judgement — yet it ran on a Claude
 subagent (Sonnet) billed to the subscription the tickets need. It now runs on the **Cursor CLI**:
 `tk.sh pr <board> <NN>` (the board's "open a PR for NN") runs `pr-cursor.sh`, which takes
-`pr-open.sh check`'s refusals first, then sends `cursor-agent -p` one prompt — the check output, recent
+`pr-open.sh check`'s refusals first, then sends `cursor-agent -p --trust` one prompt (`--trust`, or the CLI stalls on its
+workspace-trust prompt in a fresh ticket worktree) — the check output, recent
 commit subjects, the ticket, its report, the PR template, the `pr` skill (Cursor's own install, else the
 mattpocock one) and the capped diff — and asks for one JSON object: title, commit message, body, paths,
 left-out paths. Cursor runs no command and writes no file; its answer goes to `pr-open.sh open`, so the
