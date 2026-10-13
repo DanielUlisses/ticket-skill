@@ -101,7 +101,10 @@ EOF
 } >"${PROMPT:=$(mktemp)}"
 trap 'rm -f "$PROMPT"' EXIT
 
-args=(-p "$(cat "$PROMPT")" --output-format json)
+# --trust: headless, the CLI otherwise stops at its "trust this workspace?" prompt on
+# a fresh ticket worktree, which no one is there to answer — the run hangs until the
+# timeout. Cursor runs no command and writes no file here, so trusting it is safe.
+args=(-p "$(cat "$PROMPT")" --output-format json --trust)
 [[ -n "${TICKET_PR_CURSOR_MODEL:-}" ]] && args+=(--model "$TICKET_PR_CURSOR_MODEL")
 # shellcheck disable=SC2206
 [[ -n "${TICKET_CURSOR_ARGS:-}" ]] && args+=(${TICKET_CURSOR_ARGS})
@@ -109,7 +112,7 @@ rc=0
 out="$(cd "$WT" && TICKET_NET_TIMEOUT="${TICKET_CURSOR_TIMEOUT:-300}" quiet_net "$CURSOR" "${args[@]}" 2>"$PROMPT.err")" || rc=$?
 if (( rc != 0 )); then
   cat "$PROMPT.err" >&2; rm -f "$PROMPT.err"
-  (( rc == 124 )) && die "the Cursor CLI timed out after ${TICKET_CURSOR_TIMEOUT:-300}s — run '$CURSOR -p hello' in a shell: it may need 'cursor-agent login', or to trust the folder"
+  (( rc == 124 )) && die "the Cursor CLI timed out after ${TICKET_CURSOR_TIMEOUT:-300}s — run '$CURSOR -p hello' in a shell: it may need 'cursor-agent login'"
   die "the Cursor CLI failed (exit $rc) — nothing was committed"
 fi
 rm -f "$PROMPT.err"
