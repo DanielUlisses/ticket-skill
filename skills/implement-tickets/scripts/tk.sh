@@ -287,6 +287,8 @@ cmd_merge() {
 # exit 5 tells the board session to dispatch ticket-pr-creator instead.
 cmd_pr() {
   load_models_env
+  # Refuse up front (git-only mode, no remote, no forge CLI) so no agent is dispatched for nothing.
+  board_init "${1:-}"; need_pr_remote
   if [[ "${TICKET_PR_RUNNER:-cursor}" == claude ]]; then
     echo "RUNNER claude — dispatch ticket-pr-creator for ticket ${2:-?}"; return 5
   fi
@@ -308,7 +310,7 @@ resolve_ticket() {
     if forge_ok && ! err="$(forge_merged_pr "$branch" 2>&1 >/dev/null)"; then
       die "ticket $nn hasn't landed by git ($l), and $(forge_name) couldn't be asked: $(tail -1 <<<"$err")"
     fi
-    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_name) reports no merged PR from it — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
+    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_off && echo 'the forge was not asked (TICKET_FORGE=none)' || echo "$(forge_name) reports no merged PR from it") — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
   fi
   if [[ "$l" == yes:pr#* ]]; then
     sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
@@ -334,7 +336,8 @@ cmd_why() {
     [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null \
       || echo "  $REMOTE has no branch $branch (deleted after the merge, or pushed under another name)"; }
   fi
-  echo "ticket $nn: $(jq -r .status <<<"$t"), forge $(forge_name)$([[ $FORGE == azure ]] && echo " ($AZ_ORG / $AZ_PROJECT / $AZ_REPO)")"
+  if forge_off; then echo "ticket $nn: $(jq -r .status <<<"$t"), forge: none (TICKET_FORGE=none) — git log only"
+  else echo "ticket $nn: $(jq -r .status <<<"$t"), forge $(forge_name)$([[ $FORGE == azure ]] && echo " ($AZ_ORG / $AZ_PROJECT / $AZ_REPO)")"; fi
   local errs; errs="$(mktemp)"
   # The trace goes to stderr, straight through; only the verdict is captured.
   l="$(LANDED_TRACE=1 LANDED_ERRS="$errs" landed "$branch" "$(jq -r .base <<<"$t")")"
@@ -349,6 +352,7 @@ cmd_why() {
       else echo "OPEN PR none — $(forge_name) lists no active PR from $branch"; fi
     else echo "OPEN PR unknown — $(forge_name) said: $(grep -v '^[[:space:]]*$' "$perr" | tail -1)"; fi
     rm -f "$perr"
+  elif forge_off; then echo "OPEN PR not asked — forge: none (TICKET_FORGE=none) — git log only"
   else echo "OPEN PR not asked — $(forge_name) CLI unavailable"; fi
 }
 
@@ -509,7 +513,7 @@ cmd_view() {
     local errs; errs="$(mktemp)"
     VIEW_ERRS="$errs" board_rows | jq -r --argjson W "$cols" --arg mode "$mode" --arg theme "$theme" \
       --arg board "$BOARD_ID" --arg base "$BASE_REF" --arg clock "$(date +%H:%M:%S)" \
-      --arg dm "$dm" --arg de "$de" --arg forge "$(case $FORGE in azure) echo azure ;; github) echo github ;; *) echo local ;; esac)" -f "$SKILL_DIR/scripts/board-view.jq"
+      --arg dm "$dm" --arg de "$de" --arg forge "$(case $FORGE in azure) echo azure ;; github) echo github ;; *) forge_off && echo none || echo local ;; esac)" -f "$SKILL_DIR/scripts/board-view.jq"
     # The forge's last error, once, so a PR that never reaches the PR column says why.
     [[ -s "$errs" ]] && printf '%s(%s: %s)%s\n' "${dim:-}" "$(forge_name)" "$(grep -v '^[[:space:]]*$' "$errs" | sort -u | tail -1 | cut -c1-$(( cols > 20 ? cols - 20 : 60 )))" "${off:-}"
     rm -f "$errs"
@@ -649,6 +653,8 @@ Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
   Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
   TICKET_FORGE=github|azure       override the detection
+  TICKET_FORGE=none               git only: no gh/az call; digest/view/why/resolve read the git log,
+                                  pr/gates/ready/merge refuse — merge on the forge yourself
   TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)
   TICKET_PR_RUNNER=cursor|claude  who writes PR words: the Cursor CLI (default; cursor-agent login)
                                   or the Claude ticket-pr-creator agent
