@@ -40,6 +40,9 @@ board="${1:-}"; nn="${2:-}"
 [[ -n "$nn" ]] || { sed -n '2,24p' "$0"; exit 1; }
 PR_OPEN="$SKILL_DIR/scripts/pr-open.sh"
 
+# Refusals (agent working, PR already open, nothing changed, wrong repo) end here.
+check="$("$PR_OPEN" check "$board" "$nn")" || exit 1
+
 # The Cursor CLI: cursor-agent, or `agent` where it installed under that name.
 CURSOR="${TICKET_CURSOR_BIN:-}"
 if [[ -z "$CURSOR" ]]; then
@@ -48,8 +51,6 @@ if [[ -z "$CURSOR" ]]; then
   else die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). Or TICKET_PR_RUNNER=claude to open PRs with the Claude agent"; fi
 fi
 
-# Refusals (agent working, PR already open, nothing changed, wrong repo) end here.
-check="$("$PR_OPEN" check "$board" "$nn")" || exit 1
 echo "STEP checked — asking Cursor ($CURSOR) for the commit message and PR body" >&2
 
 field() { sed -n "s/^$1 //p" <<<"$check" | head -1; }

@@ -210,6 +210,8 @@ landed() {
     else
       _lt "$(forge_name) couldn't be asked${LANDED_ERRS:+ — see the WARN}"
     fi
+  elif forge_off; then
+    _lt "forge: none (TICKET_FORGE=none) — git log only"
   elif (( HAS_REMOTE )); then
     _lt "$(forge_name): not asked ($( ((${#tips[@]})) && echo "its CLI isn't available" || echo "nothing committed"))"
   fi
@@ -310,7 +312,7 @@ board_init() {
 
 # ---- the forge: where PRs live ---------------------------------------------------
 # GitHub (gh) or Azure DevOps (az + its azure-devops extension), picked from the
-# remote's URL; TICKET_FORGE=github|azure overrides it. Every caller reads one PR
+# remote's URL; TICKET_FORGE=github|azure overrides it; none = git only, never ask a forge. Every caller reads one PR
 # shape, whichever forge answered:
 #   {number, url, isDraft, base, mergeable: MERGEABLE|CONFLICTING|UNKNOWN,
 #    review: APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|"", checks: [{n, s: ok|pending|bad}]}
@@ -325,8 +327,9 @@ forge_detect() {
   local url; url="$(git -C "$ROOT" remote get-url "$REMOTE")"
   case "${TICKET_FORGE:-}" in
     github|azure) FORGE="$TICKET_FORGE" ;;
+    none) FORGE=none ;;   # git only: no gh/az call anywhere; the developer merges on the forge
     "") if [[ "$url" =~ (dev\.azure\.com|visualstudio\.com) ]]; then FORGE=azure; else FORGE=github; fi ;;
-    *) die "TICKET_FORGE is '$TICKET_FORGE' — github or azure" ;;
+    *) die "TICKET_FORGE is '$TICKET_FORGE' — github, azure or none" ;;
   esac
   [[ "$FORGE" == azure ]] || return 0
   local re_https='^https?://([^@/]+@)?dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/?#]+)'
@@ -347,6 +350,10 @@ forge_detect() {
   fi
   AZ_REPO="${AZ_REPO%.git}"; AZ_PROJECT="${AZ_PROJECT%.git}"; AZ_PROJECT="${AZ_PROJECT//%20/ }"; AZ_REPO="${AZ_REPO//%20/ }"
 }
+
+# Git-only mode: TICKET_FORGE=none on a repo that has a remote. (No remote is a
+# different, already-reported case.)
+forge_off() { [[ "${TICKET_FORGE:-}" == none ]] && (( HAS_REMOTE )); }
 
 # Quiet: can the forge be asked at all? (The landing check and the status board
 # just skip it when not.)
@@ -369,7 +376,10 @@ forge_need() {
       local rc=0; quiet_net az extension show --name azure-devops --only-show-errors >/dev/null 2>&1 || rc=$?
       (( rc != 124 )) || die "az timed out after ${TICKET_NET_TIMEOUT:-90}s just checking its extensions — run any az command in a shell to see what it's waiting on"
       (( rc == 0 )) || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
-    *) die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
+    *) if forge_off; then
+         die "no forge access here (TICKET_FORGE=none) — merge the PR in Azure DevOps / on the forge yourself, and the next digest resolves the ticket from the git log"
+       fi
+       die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
   esac
 }
 
