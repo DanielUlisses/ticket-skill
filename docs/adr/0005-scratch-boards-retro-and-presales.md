@@ -235,6 +235,18 @@ request. It now makes one `ls-remote` and one fetch for the whole board, and one
 PRs (the status board: one of open PRs too) answers every ticket; a digest over 15 s prints a `WARN`
 saying where the time went.
 
+### 7c. `resolve --no-code`
+
+A ticket can deliver nothing committable — internal validation in gitignored files — so its branch
+sits at the base and `landed()` answers `no` forever. `tk.sh resolve <board> <NN> --no-code "<reason>"`
+resolves it on the developer's word, writing `**Status:** resolved — no code (<reason>) on <date>`.
+It refuses when the branch (local or remote-tracking) has commits not on the base, or the worktree
+has uncommitted tracked changes, and it only takes a launched, unresolved ticket. Ignored and
+untracked files don't block it, but `/sweep-tickets` removes the worktree with them — `dirty_count`
+ignores them and `git worktree remove` deletes them — so the deliverable must live outside the
+worktree (the root checkout, or a path the ticket names); a WARN lists any ignored files left. The
+status starts with `resolved`, so blockers, the digest and the status board treat it as any resolved ticket.
+
 ## 9. The Cursor CLI writes PRs; nothing carries attribution
 
 Opening a PR is writing a commit message and a PR body — no design judgement — yet it ran on a Claude

@@ -11,6 +11,7 @@
 #   tk.sh pr      <board> <NN>           commit the ticket's work, push, open its PR — the words by the Cursor CLI
 #   tk.sh merge   <board> <NN>           gates, then merge the PR on the forge (GitHub or Azure DevOps), then resolve
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
+#   tk.sh resolve <board> <NN> --no-code "<reason>"   resolve a ticket that delivers nothing committable
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
@@ -352,8 +353,59 @@ cmd_why() {
   else echo "OPEN PR not asked — $(forge_name) CLI unavailable"; fi
 }
 
+# A ticket whose deliverable is not code (gitignored files, say): resolved on the
+# developer's word, but never over lost work — commits ahead of the base mean the
+# normal PR/merge path, tracked changes in the worktree would be thrown away.
+resolve_no_code() {
+  local t="$1" reason="$2" nn branch wt ref n f tmp line st l ign
+  nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"; wt="$(jq -r '.worktree // ""' <<<"$t")"
+  st="$(jq -r .status <<<"$t")"
+  case "$st" in
+    in-progress) ;;
+    resolved) die "ticket $nn is already resolved" ;;
+    *) die "ticket $nn was never launched (status $st) — nothing to resolve" ;;
+  esac
+  require_agent_quiet "$(jq -r .agent <<<"$t")" "resolving it with --no-code"
+  (( HAS_REMOTE )) && [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "$BASE_BRANCH" --quiet 2>/dev/null || true; }
+  (( HAS_REMOTE )) && [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null || true; }
+  l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
+  [[ "$l" == yes:* ]] && die "ticket $nn landed ($l) — it has code; use plain resolve, not --no-code"
+  if [[ -n "$branch" ]]; then
+    for ref in "$branch" "$REMOTE/$branch"; do
+      git -C "$ROOT" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 || continue
+      [[ "$ref" == "$branch" ]] && ! git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" && continue
+      n="$(git -C "$ROOT" rev-list --count "$BASE_REF..$ref" 2>&1)" || die "ticket $nn: can't compare $ref with $BASE_REF: $n"
+      (( n > 0 )) && die "ticket $nn has code: $ref has $n commit(s) not on $BASE_REF — send it through the normal PR/merge path, not --no-code"
+    done
+  fi
+  if [[ -n "$wt" && -d "$wt" ]]; then
+    n="$(git -C "$wt" status --porcelain --untracked-files=no 2>&1)" || die "ticket $nn: can't read the worktree $wt: $n"
+    [[ -z "$n" ]] || die "ticket $nn has uncommitted tracked changes in $wt — resolving would lose them (commit them, or discard them first):"$'\n'"$n"
+  fi
+  line="**Status:** resolved — no code ($reason) on $(date +%F)"
+  f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+  LINE="$line" awk '/^\*\*Status:\*\*/ { print ENVIRON["LINE"]; next } /^\*\*Agent:\*\*/ { next } { print }' "$f" >"$tmp"
+  mv "$tmp" "$f"
+  grep -qF -- "$line" "$f" || die "ticket $nn: the status line was not written to $f"
+  echo "RESOLVED $nn (no code) — /sweep-tickets lists its worktree and branch for cleanup"
+  if [[ -n "$wt" && -d "$wt" ]]; then
+    ign="$(git -C "$wt" status --porcelain --ignored 2>/dev/null | grep '^!!' || true)"
+    [[ -z "$ign" ]] || echo "WARN ignored files in $wt are deleted when /sweep-tickets removes the worktree — move what you want to keep:"$'\n'"$ign"
+  fi
+}
+
 cmd_resolve() {
-  board_init "${1:-}"; resolve_ticket "$(ticket_json "${2:?usage: tk.sh resolve <board> <NN>}")"
+  local usage='usage: tk.sh resolve <board> <NN> [--no-code "<reason>"]'
+  board_init "${1:-}"; local nn="${2:?$usage}" mode="${3:-}"
+  case "$mode" in
+    "") resolve_ticket "$(ticket_json "$nn")" ;;
+    --no-code)
+      (( $# <= 4 )) || die "quote the reason: $usage"
+      [[ -n "${4:-}" && -n "${4//[[:space:]]/}" ]] || die "--no-code needs a reason: $usage"
+      [[ "$4" != *$'\n'* && "$4" != *$'\r'* ]] || die "the reason must be one line"
+      resolve_no_code "$(ticket_json "$nn")" "$4" ;;
+    *) die "$usage" ;;
+  esac
 }
 
 # ---- talking to a ticket ------------------------------------------------------------
@@ -622,6 +674,14 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
+  resolve 02 --no-code "<reason>"
+                                for a ticket that delivers nothing committable (gitignored
+                                  files, say) — only on the developer's word. Refused if its
+                                  branch has commits not on the base (use the PR path) or its
+                                  worktree has uncommitted tracked changes. Ignored files do not
+                                  block it, but /sweep-tickets DELETES them with the worktree:
+                                  keep the deliverable OUTSIDE the worktree (the root checkout,
+                                  or a path the ticket names); a WARN lists any ignored files left
   why 02                        every step of "has 02 landed?" — when a merge you did isn't seen
   retro                         mattpocock retro over the board: memory diff + environment fixes
   change the plan (split, re-scope, new ticket)
