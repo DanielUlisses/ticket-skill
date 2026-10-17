@@ -38,6 +38,7 @@ resolve_board() {
   elif [[ -e "$ROOT/$arg" ]]; then BOARD_PATH="$ROOT/$arg"
   else BOARD_PATH="$ROOT/.scratch/$arg"
   fi
+  [[ "$BOARD_PATH" == / ]] || BOARD_PATH="${BOARD_PATH%/}"
   [[ -e "$BOARD_PATH" ]] || die "no board '$arg': looked for $BOARD_PATH"
   # A bare .scratch holds one directory per feature; a board is one of them.
   if [[ -d "$BOARD_PATH" && "$(basename "$BOARD_PATH")" == .scratch ]]; then
@@ -91,7 +92,7 @@ parse_ticket_file() {
 load_file_board() {
   local f files
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -name '*.md' -type f | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   while IFS= read -r f; do parse_ticket_file "$f"; done <<<"$files" | jq -s '.'
 }
