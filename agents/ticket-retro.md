@@ -29,14 +29,27 @@ changes to and the `SKILL` paths.
    repo, deduplicated against `docs/agents/project-memory.md` and `CLAUDE.md`, checked against the
    repo where cheap. Contradicting bullets: keep neither, list the pair.
 
-Return, ordered by severity within each part:
+Return one block per proposal, each with a stable id the developer answers by. Order by severity
+within each part. Your output is saved verbatim as `retro/proposals.md`, so write nothing before the
+first heading that isn't part of it. Use exactly three parts, as `##` headings in this order:
+`## Project memory`, `## Environment`, `## Dropped`.
 
-- **Project memory** — a fenced `diff` against `docs/agents/project-memory.md` (the whole file if
-  there is none), one line per fact.
-- **Environment** — each candidate: the category, what happened (ticket and evidence:
-  `transcript:line` or the report's words), the change you propose (the file, and the exact text or
-  check), and why it would have prevented it. Prefer a deterministic check over a steering line.
-- **Dropped** — one line each for what you considered and left out, and why.
+- **Project memory** — `M1`, `M2`… one fact per block, against `docs/agents/project-memory.md`.
+- **Environment** — `E1`, `E2`… one change per block: the category in the heading, then what to
+  change. Prefer a deterministic check over a steering line.
+- **Dropped** — one line each for what you considered and left out, and why. No id.
+
+Each proposal heading matches `^### [ME][0-9]+ — ` (an em dash between id and title), and each block reads:
+
+    ### M1 — <short title>
+    **Source:** <ticket> and `transcript:line`, or the report's words
+    **Why:** what happened and why the change would have prevented it
+    **Change:** the file, and the exact text to add or the exact check to run
+
+    ### E1 — <category>: <title>
+    **Source:** <ticket> and `transcript:line`, or the report's words
+    **Why:** what happened and why the change would have prevented it
+    **Change:** the file, and the exact text to add or the exact check to run
 
 Bash is read-only: `grep`, `wc`, `jq`, `ls`, `git log`/`show`/`diff`. Nothing that writes, installs or
 changes git state.

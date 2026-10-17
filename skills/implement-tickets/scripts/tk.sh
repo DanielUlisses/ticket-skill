@@ -20,6 +20,7 @@
 #   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
+#   tk.sh retro-save <board>             save ticket-retro's output (stdin) as retro/proposals.md; the previous one is archived
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
 #   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
@@ -652,6 +653,30 @@ cmd_retro() {
   done
 }
 
+# Saves ticket-retro's output (stdin) to <board>/retro/proposals.md, so the
+# proposals outlive the board session's context and can be answered by id. A
+# previous proposals.md is moved to proposals.<timestamp>.md first, never lost.
+cmd_retro_save() {
+  local dir out ts text
+  [[ -t 0 ]] && die "retro-save: stdin is a terminal — pipe ticket-retro's whole output in (tk.sh retro-save <board> < file); nothing written"
+  text="$(cat)"   # before board_init: its jq calls would otherwise eat stdin
+  [[ -n "${text//[[:space:]]/}" ]] || die "retro-save: empty input — pipe ticket-retro's whole output in on stdin; nothing written"
+  grep -qE '^### [ME][0-9]+' <<<"$text" || echo "WARN: no '### M<n>' / '### E<n>' heading in the input — saving anyway; the proposals can't be answered by id" >&2
+  board_init "${1:-}"
+  [[ -d "$BOARD_PATH" ]] || die "board path is not a directory: $BOARD_PATH"
+  dir="$BOARD_PATH/retro"
+  out="$dir/proposals.md"
+  mkdir -p "$dir"
+  if [[ -e "$out" ]]; then
+    ts="$(date +%Y%m%d-%H%M%S)"
+    while [[ -e "$dir/proposals.$ts.md" ]]; do ts="${ts}x"; done
+    mv "$out" "$dir/proposals.$ts.md"
+    echo "ARCHIVED $dir/proposals.$ts.md"
+  fi
+  printf '%s\n' "$text" > "$out"
+  echo "SAVED $out"
+}
+
 # ---- help ----------------------------------------------------------------------
 # One reference for both ways in: what to type in the board session, and the
 # shell aliases. Static on purpose — the board session prints it verbatim, so
@@ -687,7 +712,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   keep the deliverable OUTSIDE the worktree (the root checkout,
                                   or a path the ticket names); a WARN lists any ignored files left
   why 02                        every step of "has 02 landed?" — when a merge you did isn't seen
-  retro                         mattpocock retro over the board: memory diff + environment fixes
+  retro                         mattpocock retro over the board: id'd memory (M1..) and environment (E1..)
+                                  proposals, saved to <board>/retro/proposals.md (tk.sh retro-save)
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
 
@@ -706,7 +732,7 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tks  [board] NN    what one ticket's agent is doing
   tkw  [board] NN    why the board thinks a ticket has (or hasn't) landed
   tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
-  tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, help)
+  tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, retro-save, help)
   tkhelp             this list
 
 Forges (PRs, gates, merge) — picked from the remote URL
@@ -731,5 +757,6 @@ HELP
 verb="${1:-}"; shift || true
 case "$verb" in
   digest|launch|gates|ready|pr|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
-  *) sed -n '2,25p' "$0"; exit 1 ;;
+  retro-save) cmd_retro_save "$@" ;;
+  *) sed -n '2,26p' "$0"; exit 1 ;;
 esac
