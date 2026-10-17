@@ -21,6 +21,7 @@
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #   tk.sh retro-save <board>             save ticket-retro's output (stdin) as retro/proposals.md; the previous one is archived
+#   tk.sh retro-apply <board> [approve|reject|defer <id>...]...  mark proposals by id, regenerate retro-results.md
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
 #   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
@@ -677,6 +678,171 @@ cmd_retro_save() {
   echo "SAVED $out"
 }
 
+# Records the developer's answers to the saved proposals and regenerates
+# <board>/retro-results.md from them. Args are mark words, each followed by ids:
+#   approve E1 M2 reject E2 defer M1
+# Each named block in retro/proposals.md gets one **Mark:** line (replacing an
+# earlier one); no args reads the marks already there, so marking by hand works
+# too. Everything is validated before any file is written. Never touches
+# docs/agents/project-memory.md: an approved M item is a todo for the developer.
+cmd_retro_apply() {
+  board_init "${1:-}"; shift || true
+  local props="$BOARD_PATH/retro/proposals.md" out="$BOARD_PATH/retro-results.md"
+  [[ -f "$props" ]] || die "retro-apply: no $props — run the retro and tk.sh retro-save first; nothing written"
+  local known="" mark="" a id assign="" tmp_p="" tmp_o="" bad="" multi="" kind rest
+  local -A seen=()
+  # Every awk pass below treats a ``` or ~~~ line as a fence toggle: inside a
+  # fenced block (code in a **Change:**, say) nothing is a heading or a field.
+  # One scan of the file: its ids, mark words this script doesn't know, and
+  # blocks with more than one **Mark:** line.
+  while read -r kind rest; do
+    case "$kind" in
+      ID)    known+=" $rest" ;;
+      BAD)   bad+="$rest"$'\n' ;;
+      MULTI) multi+="$rest"$'\n' ;;
+    esac
+  done < <(awk '
+    /^[ \t]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^##/ { id = "" }
+    /^### [ME][0-9]+ / { id = $2; print "ID " id; next }
+    id && /^\*\*Mark:\*\*/ {
+      cnt[id]++; m = tolower($0); sub(/^\*\*mark:\*\*[ \t]*/, "", m); sub(/[ \t]+$/, "", m)
+      if (m !~ /^(approved?|reject(ed)?|defer(red)?)$/) print "BAD " id " (\"" m "\")"
+    }
+    END { for (i in cnt) if (cnt[i] > 1) print "MULTI " i " " cnt[i] }' "$props")
+  known+=" "
+  [[ -n "${known// /}" ]] || die "retro-apply: no '### M<n>' / '### E<n>' block in $props — nothing to mark; nothing written"
+  for a in "$@"; do
+    while [[ "$a" == *[,.\;] ]]; do a="${a%?}"; done   # "approve E1 M2, reject E2."
+    [[ -n "$a" ]] || continue
+    case "${a,,}" in
+      approve|approved) mark=approved; continue ;;
+      reject|rejected)  mark=rejected; continue ;;
+      defer|deferred)   mark=deferred; continue ;;
+    esac
+    id="${a^^}"
+    [[ "$id" =~ ^[ME][0-9]+$ ]] || die "retro-apply: unknown mark word or id '$a' — use approve|reject|defer followed by ids (M1, E2…); nothing written"
+    [[ -n "$mark" ]] || die "retro-apply: '$a' comes before any mark word — say approve, reject or defer first; nothing written"
+    [[ "$known" == *" $id "* ]] || die "retro-apply: unknown id '$id' — $props has:${known% }; nothing written"
+    [[ -z "${seen[$id]:-}" || "${seen[$id]}" == "$mark" ]] || die "retro-apply: $id is marked both ${seen[$id]} and $mark; nothing written"
+    seen[$id]="$mark"; assign+="$id=$mark "
+  done
+  [[ $# -eq 0 || -n "$assign" ]] || die "retro-apply: '$*' names no id; nothing written"
+
+  # Marks already in the file must be words this script knows, one per block, or
+  # the results lie. A block named in the args has all its marks replaced, so
+  # only the others count.
+  local -a left=()
+  for a in bad multi; do
+    left=()
+    while IFS= read -r rest; do
+      [[ -n "$rest" && " $assign" != *" ${rest%% *}="* ]] && left+=("$rest")
+    done <<<"${!a}"
+    printf -v "$a" '%s' "${left[*]:+$(printf '%s; ' "${left[@]}")}"
+  done
+  [[ -z "$bad" ]] || die "retro-apply: unknown mark word in $props: ${bad%; } — use approve(d), reject(ed) or defer(red); nothing written"
+  if [[ -n "$multi" ]]; then
+    multi="$(sed -E 's/([ME][0-9]+) ([0-9]+)/\1 has \2 **Mark:** lines/g' <<<"${multi%; }")"
+    die "retro-apply: $multi in $props — keep one; nothing written"
+  fi
+
+  trap 'rm -f "${tmp_p:-}" "${tmp_o:-}"' EXIT
+  if [[ -n "$assign" ]]; then
+    # One **Mark:** line right under each named heading; any earlier one goes.
+    tmp_p="$(mktemp "$props.XXXXXX")"
+    chmod --reference="$props" "$tmp_p"
+    awk -v assign="$assign" '
+      BEGIN { n = split(assign, a, " "); for (i = 1; i <= n; i++) { split(a[i], kv, "="); want[kv[1]] = kv[2] } }
+      /^[ \t]*(```|~~~)/ { fence = !fence; print; next }
+      fence { print; next }
+      /^##/ { id = "" }
+      /^### [ME][0-9]+ / { print; id = $2; if (id in want) print "**Mark:** " want[id]; next }
+      id in want && /^\*\*Mark:\*\*/ { next }
+      { print }' "$props" > "$tmp_p"
+    mv "$tmp_p" "$props"; tmp_p=""
+    echo "MARKED $assign"
+  fi
+
+  local results pending
+  results="$(awk -v board="$BOARD_ID" -v when="$(date '+%Y-%m-%d %H:%M')" '
+    function flush() {
+      if (!id) return
+      n++; ids[n] = id; ttl[n] = title; src[n] = f["Source"]; why[n] = f["Why"]; chg[n] = f["Change"]
+      mk[n] = (m ~ /^approve/) ? "approved" : (m ~ /^reject/) ? "rejected" : (m ~ /^defer/) ? "deferred" : ""
+      id = ""
+    }
+    # Continuation lines go under a list item: indent them, but leave blank ones blank.
+    function indent(s,   k, p, r, i) {
+      k = split(s, p, "\n"); r = p[1]
+      for (i = 2; i <= k; i++) r = r "\n" (p[i] == "" ? "" : "    " p[i])
+      return r
+    }
+    # Fenced lines (and the fences) are kept verbatim, blank lines and indentation included.
+    /^[ \t]*(```|~~~)/ { fence = !fence; if (id && cur) f[cur] = f[cur] "\n" $0; next }
+    fence { if (id && cur) f[cur] = f[cur] "\n" $0; next }
+    /^##/ { flush() }
+    /^### [ME][0-9]+ / {
+      id = $2; title = $0; sub(/^### [ME][0-9]+[ \t]*(—|--?)?[ \t]*/, "", title)
+      m = ""; cur = ""; split("", f); next
+    }
+    !id { next }
+    /^\*\*[A-Za-z]+:\*\*/ {
+      k = $0; sub(/^\*\*/, "", k); sub(/:\*\*.*/, "", k)
+      v = $0; sub(/^\*\*[A-Za-z]+:\*\*[ \t]*/, "", v)
+      if (k == "Mark") { m = tolower(v); cur = ""; next }
+      cur = k; f[k] = v; next
+    }
+    cur && NF { l = $0; sub(/^[ \t]+/, "", l); f[cur] = f[cur] "\n" l }
+    END {
+      flush()
+      print "# Retro results — " board
+      print ""
+      print "Generated by `tk.sh retro-apply` from `retro/proposals.md` (" when "), and regenerated from its"
+      print "`**Mark:**` lines on every run — change a mark there, not here. Guidance for every ticket and a"
+      print "todo for the developer, who turns open items into work. Agents never tick these boxes; project"
+      print "memory is applied by hand (docs/agents/memory.md)."
+      print ""
+      print "## Approved"
+      print ""
+      c = 0
+      for (i = 1; i <= n; i++) if (mk[i] == "approved") {
+        c++
+        head = (ids[i] ~ /^M/) ? "add to docs/agents/project-memory.md: " ttl[i] : ttl[i]
+        print "- [ ] " ids[i] " " head
+        if (chg[i] != "") print "  - Change: " indent(chg[i])
+        if (src[i] != "") print "  - Source: " indent(src[i])
+        if (why[i] != "") print "  - Reason: " indent(why[i])
+      }
+      if (!c) print "None."
+      for (s = 1; s <= 2; s++) {
+        want = (s == 1) ? "deferred" : "rejected"
+        print ""
+        print (s == 1) ? "## Deferred" : "## Rejected"
+        print ""
+        print (s == 1) ? "Not now — a later retro may pick these up again." : "Declined — the next retro should not propose these again."
+        print ""
+        c = 0
+        for (i = 1; i <= n; i++) if (mk[i] == want) { c++; print "- " ids[i] " — " ttl[i] }
+        if (!c) print "None."
+      }
+      for (i = 1; i <= n; i++) if (mk[i] == "") pend = pend " " ids[i]
+      print "\x1fPENDING" pend
+    }' "$props")"
+  pending="${results##*$'\x1f'}"; results="${results%$'\n'$'\x1f'*}"
+
+  tmp_o="$(mktemp "$out.XXXXXX")"
+  # mktemp makes it 0600; the results file is read like any other in the repo.
+  if [[ -f "$out" ]]; then chmod --reference="$out" "$tmp_o"
+  else chmod "$(printf '%o' $(( 0666 & ~0$(umask) )))" "$tmp_o"; fi
+  printf '%s\n' "$results" > "$tmp_o"
+  mv "$tmp_o" "$out"; tmp_o=""
+  trap - EXIT
+  echo "WROTE $out"
+  if [[ "$pending" == PENDING ]]; then echo "PENDING none"
+  else echo "$pending — unmarked, not in the results; mark them (args or by hand) and run again"; fi
+}
+
 # ---- help ----------------------------------------------------------------------
 # One reference for both ways in: what to type in the board session, and the
 # shell aliases. Static on purpose — the board session prints it verbatim, so
@@ -714,6 +880,11 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   why 02                        every step of "has 02 landed?" — when a merge you did isn't seen
   retro                         mattpocock retro over the board: id'd memory (M1..) and environment (E1..)
                                   proposals, saved to <board>/retro/proposals.md (tk.sh retro-save)
+  approve E1 M2, reject E2, defer M1
+                                mark the saved proposals (tk.sh retro-apply) and regenerate
+                                  <board>/retro-results.md: approved items as a checklist for you
+                                  and future tickets, then Deferred and Rejected. Unmarked ids are
+                                  reported as pending; project-memory.md is never written
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
 
@@ -732,7 +903,8 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tks  [board] NN    what one ticket's agent is doing
   tkw  [board] NN    why the board thinks a ticket has (or hasn't) landed
   tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
-  tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, retro-save, help)
+  tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, retro-save,
+                     retro-apply, help)
   tkhelp             this list
 
 Forges (PRs, gates, merge) — picked from the remote URL
@@ -758,5 +930,6 @@ verb="${1:-}"; shift || true
 case "$verb" in
   digest|launch|gates|ready|pr|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
-  *) sed -n '2,26p' "$0"; exit 1 ;;
+  retro-apply) cmd_retro_apply "$@" ;;
+  *) sed -n '2,28p' "$0"; exit 1 ;;
 esac

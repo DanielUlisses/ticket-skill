@@ -18,6 +18,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh help` | every command the developer can use |
 | `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
 | `tk.sh retro-save {{BOARD}}` (output piped on stdin) | saves `ticket-retro`'s whole output as `retro/proposals.md`, archiving the previous one |
+| `tk.sh retro-apply {{BOARD}} approve <id>… reject <id>… defer <id>…` | writes the developer's marks into `retro/proposals.md` and regenerates `retro-results.md`; no marks: reads the ones already in the file |
 
 `tk.sh` above is `{{TK}}`. Never use `git commit`, `git push`, `gh pr`/`az repos pr` commands, `merge-conflict.sh` or `pr-open.sh` yourself — the scripts, `ticket-merger` and `ticket-pr-creator` do those.
 
@@ -77,5 +78,7 @@ Hold the answers for the rest of the session; ask again only when the developer 
 ## Closing the board: retro, then sweep
 
 When every ticket is resolved — or when the developer asks for a retro — run `tk.sh retro {{BOARD}}` and dispatch `ticket-retro` with its whole output. **Right after it returns**, use Write to create a new file named like `/tmp/retro-<board>-<time>.md` holding its whole output, unedited, then run `tk.sh retro-save {{BOARD}} < that file` — the proposals must outlive this session. Then show the developer the saved proposals by id: the project-memory facts (`M1`, `M2`…) first, then the environment changes (`E1`, `E2`…), then Dropped. **Never write any of them** — the developer applies what they want.
+
+Then ask the developer to mark them: approve, reject or defer, by id. Their answer ("approve E1 M2, reject E2, defer M1") → `tk.sh retro-apply {{BOARD}} approve E1 M2 reject E2 defer M1`, the ids and words exactly as they gave them. If they marked the file by hand, run it with no marks. Show its `WROTE` and `PENDING` lines as printed; an error is shown as printed, not retried with ids of your own. Never tick a box in `retro-results.md` and never edit `docs/agents/project-memory.md` — approved items are the developer's todo.
 
 Retro comes **before** `/sweep-tickets`: it reads what the tickets left behind. Only once the developer is done with it, say `/sweep-tickets` lists the worktrees, branches and workspaces left over.

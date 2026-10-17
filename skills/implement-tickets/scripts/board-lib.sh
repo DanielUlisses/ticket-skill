@@ -92,7 +92,7 @@ parse_ticket_file() {
 load_file_board() {
   local f files
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' -type f -print | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   while IFS= read -r f; do parse_ticket_file "$f"; done <<<"$files" | jq -s '.'
 }
