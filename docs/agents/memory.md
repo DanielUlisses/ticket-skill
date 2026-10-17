@@ -155,6 +155,21 @@ If you'd rather the ticket's own agent make the edit, ask it to — the edit the
 that ticket's diff and you review it like any other change. What it must not do is decide
 on its own.
 
+## Retro results
+
+Approved lessons from past retros live in `.scratch/<board>/retro-results.md`, written by
+the retro, not by this file's curator. They reach a ticket by **pointer**, never by copy:
+at launch `resolve_retro_results` (`lib/ticket-launcher.sh`) globs
+`<main checkout>/.scratch/*/retro-results.md` — the main checkout, as for project memory,
+since a worktree has no `.scratch/` — and the `{{RETRO_RESULTS}}` placeholder (beside
+`{{PROJECT_MEMORY}}` in all three templates: `/ticket`, `/small-ticket`, `--doc`) becomes a
+`## Retro results` block with one absolute-path line per file, telling the agent to read it
+if it exists, follow approved items that bear on its work, and never edit it. The `/ticket`
+coordinator passes the relevant items on to the implementer; the `/ticket` planner reads the
+files before grilling. No file found: the placeholder and its blank line vanish, the prompt is
+unchanged, and one log line says so. The launch summary reports `RETRO_RESULTS=<n> file(s)` or
+`none (...)`.
+
 ## Adding memory to a repo that has none
 
 Write `docs/agents/project-memory.md` (the path above, not the repo root) with three

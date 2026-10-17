@@ -216,6 +216,37 @@ $memory"
   fi
 }
 
+# ---- approved retro lessons (pointers) ---------------------------------------
+# Sets RETRO_BLOCK (what {{RETRO_RESULTS}} becomes) and RETRO_STATUS (the
+# summary's RETRO_RESULTS= line). One pointer line per
+# $ROOT/.scratch/*/retro-results.md — $ROOT is the main checkout, where the
+# .scratch/ boards live (a worktree has none). Pointers only: the agent reads the
+# file itself, so nothing is copied and an edit lands on the next read. None found
+# means the placeholder vanishes and the prompt is what it was before.
+resolve_retro_results() {
+  local f lines="" n=0
+  RETRO_BLOCK=""
+  RETRO_STATUS="none (.scratch/*/retro-results.md)"
+  for f in "$ROOT"/.scratch/*/retro-results.md; do
+    [[ -f "$f" && -r "$f" ]] || continue
+    lines+="- \`$f\`"$'\n'
+    n=$((n + 1))
+  done
+  if (( n == 0 )); then
+    log "retro results: none under $ROOT/.scratch/*/ — launching without them"
+    return 0
+  fi
+  RETRO_STATUS="$n file(s)"
+  RETRO_BLOCK="## Retro results
+
+Lessons the developer approved from past retros live in the file(s) below. Read
+each one if it exists; follow approved items that bear on your work; never edit
+them.
+
+${lines%$'\n'}"
+  log "retro results: $RETRO_STATUS"
+}
+
 # ---- mise trust ---------------------------------------------------------------
 # A ticket's worktree is a brand-new directory, and a path mise has never seen is
 # an untrusted one — so in a repo with a mise config the pane's `mise` either
@@ -797,6 +828,7 @@ launcher_main() {
   fi
 
   resolve_project_memory
+  resolve_retro_results
 
   # ---- render the prompt (outside the worktree, so it doesn't dirty git status) -------
   RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/$RUN_NAME"; mkdir -p "$RUN_DIR"
@@ -824,10 +856,15 @@ launcher_main() {
   PHASE_FILE="$(dirname "$(dirname "$REPORT_FILE")")/phase/$BRANCH"
   mkdir -p "$(dirname "$PHASE_FILE")"
   tpl="${tpl//'{{PHASE_FILE}}'/"$PHASE_FILE"}"
-  # The two prose payloads go last, so the replacements above can't reach inside
-  # them — and TICKET before PROJECT_MEMORY, because the memory placeholder sits
-  # above the ticket in the template, so filling it first would let a `{{TICKET}}`
-  # written inside the memory file win over the template's own.
+  # The prose payloads go last, so the replacements above can't reach inside
+  # them. RETRO_RESULTS goes first of them: its content is built by the launcher
+  # (paths only), so it is safe to fill early, and filling it before TICKET keeps
+  # a literal `{{RETRO_RESULTS}}` inside a ticket body (a ticket about this very
+  # placeholder) from being rewritten. TICKET goes before PROJECT_MEMORY, because
+  # the memory placeholder sits above the ticket in the template, so filling it
+  # first would let a `{{TICKET}}` written inside the memory file win over the
+  # template's own.
+  fill_prose '{{RETRO_RESULTS}}' "$RETRO_BLOCK"
   fill_prose '{{TICKET}}' "$ticket"
   fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
   printf '%s\n' "$tpl" > "$PROMPT_FILE"
@@ -1010,6 +1047,7 @@ REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (docum
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
+RETRO_RESULTS=$RETRO_STATUS
 REPORT_FILE=${REPORT_FILE:-?}
 PROMPT_FILE=$PROMPT_FILE
 SUMMARY

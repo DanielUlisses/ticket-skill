@@ -7,6 +7,8 @@ You're in a worktree dedicated to this document:
 
 {{PROJECT_MEMORY}}
 
+{{RETRO_RESULTS}}
+
 ## Task
 
 {{TICKET}}
