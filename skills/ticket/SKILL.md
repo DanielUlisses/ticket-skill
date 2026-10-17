@@ -32,6 +32,8 @@ If the task is empty — including a task that was only an id — ask for a desc
 
 ## Phase 1 — Grill the idea
 
+Before grilling, read every `<root>/.scratch/*/retro-results.md` that exists (`<root>` is this repo's main checkout) and let the approved items inform the interview — a lesson already approved is a question you need not ask again, and one that bears on the plan is worth raising. None found: say nothing and go on.
+
 Call the Skill tool with `mattpocock-skills:grilling`, using the task above as the plan under interview, and follow its process as loaded. Stop only once the frontier is empty **and** the developer has confirmed you've reached a shared understanding — don't move to Phase 2 before that confirmation. A shared understanding, not a hunch, is what Phase 2 slices up.
 
 ## Phase 2 — Break into tickets

@@ -20,6 +20,8 @@ printf '%s\n%s\n' "reviewing r1" "tests=pass criteria=3/4 review=2-blocking" > {
 
 {{PROJECT_MEMORY}}
 
+{{RETRO_RESULTS}}
+
 ## Ticket
 
 {{TICKET}}
@@ -41,6 +43,7 @@ Delegate the whole ticket to `ticket-implementer` (`model: {{IMPL_MODEL}}`) in o
 - the worktree path and the base commit `{{BASE_COMMIT}}`;
 - Phase 0's findings — the facts, with their `path:line`, not the scouts' prose;
 - whatever in a **Project memory** section above bears on the files it will touch — you are the only one in this workflow who was given it;
+- the approved items from any **Retro results** file named above that bear on those files — read the file yourself and pass the items on, not the path alone;
 - the verification rules below, and the inviolable rules at the end.
 
 **With a suite**, tell it to drive TDD with `mattpocock-skills:tdd` at the seams the ticket names under **Seams under test** — that line is the developer's confirmation, already given — to typecheck and run single test files as it goes, and **not** to run the full suite (Phase 2 does). Where a named seam turns out to be the wrong boundary, it uses the nearest one that observes the same real behaviour and says so. `None` on that line is the developer's answer: verify by direct exercise.

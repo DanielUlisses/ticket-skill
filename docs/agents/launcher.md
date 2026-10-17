@@ -9,7 +9,7 @@ on its own.
 |---|---|---|
 | `lib/ticket-git-repo.sh` | `die`/`log`/`need`, `resolve_repo_root`, `resolve_base_branch`, `run_git_net` | all three scripts |
 | `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, the account names to choose between, reading the links file back for entries claude-acc can no longer reach, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
-| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory resolution, `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `print_launch_defaults`, `launcher_main` | the two launchers |
+| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory and retro-results resolution (`docs/agents/memory.md`), `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `print_launch_defaults`, `launcher_main` | the two launchers |
 
 `ticket-account.sh` is shared three ways for the same reason the git half is: the launchers
 write the links and `/sweep-tickets` takes them away again, and both halves have to agree on
