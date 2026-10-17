@@ -158,7 +158,8 @@ on its own.
 ## Retro results
 
 Approved lessons from past retros live in `.scratch/<board>/retro-results.md`, written by
-the retro, not by this file's curator. They reach a ticket by **pointer**, never by copy:
+`tk.sh retro-apply` from the developer's marks, not by this file's curator (the flow:
+`docs/agents/retro.md`). They reach a ticket by **pointer**, never by copy:
 at launch `resolve_retro_results` (`lib/ticket-launcher.sh`) globs
 `<main checkout>/.scratch/*/retro-results.md` — the main checkout, as for project memory,
 since a worktree has no `.scratch/` — and the `{{RETRO_RESULTS}}` placeholder (beside
