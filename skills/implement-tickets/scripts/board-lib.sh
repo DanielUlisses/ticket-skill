@@ -94,7 +94,9 @@ load_file_board() {
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
   else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
-  while IFS= read -r f; do parse_ticket_file "$f"; done <<<"$files" | jq -s '.'
+  # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
+  # tickets — decisions.md from the planner — not a ticket.
+  while IFS= read -r f; do parse_ticket_file "$f"; done <<<"$files" | jq -s 'map(select(.nn != ""))'
 }
 
 # Sets BOARD_JSON: the parsed board with blockers resolved to ticket numbers and
