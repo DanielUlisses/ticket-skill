@@ -16,6 +16,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh resolve {{BOARD}} <NN>` · `tk.sh resolve {{BOARD}} <NN> --no-code "<reason>"` · `tk.sh why {{BOARD}} <NN>` | marks a landed ticket resolved · resolves a ticket with nothing to commit · why it does or doesn't count as landed |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
 | `tk.sh policy {{BOARD}}` · `tk.sh policy-set {{BOARD}} key=value…` | this board's rules, as JSON · change them for this board, on the developer's word only |
+| `tk.sh boards` · `tk.sh export {{BOARD}}` | JSON for tools (tk-hub): the repo's boards · one board with every ticket — not for the developer's eyes |
 | `tk.sh help` | every command the developer can use |
 | `tk.sh helpers {{BOARD}} <NN>…` · `tk.sh retro {{BOARD}}` | Suggested-helpers lines · everything `ticket-retro` reads |
 | `tk.sh retro-save {{BOARD}}` (output piped on stdin) | saves `ticket-retro`'s whole output as `retro/proposals.md`, archiving the previous one |

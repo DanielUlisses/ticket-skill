@@ -17,6 +17,10 @@
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
+#   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
+#                                        [{slug, path, tickets}] — machine-readable, nothing else on stdout
+#   tk.sh export  <board>                one JSON object: board info, board.md, retro-results.md and every
+#                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub
 #   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
@@ -466,7 +470,7 @@ cmd_show() {
 # reviewing, since the agent is "working" either way.
 board_rows() {
   forge_cache_begin
-  board_rows_ "$@"
+  board_rows_
   local rc=$?; forge_cache_end; return $rc
 }
 
@@ -542,6 +546,56 @@ board_rows_() {
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
+}
+
+# ---- boards, export: the board as JSON, for tk-hub ------------------------------
+# Machine-readable and nothing else on stdout (jq -e must parse it); logs and
+# errors go to stderr. No fetch (fetch_board_refs, which prints WARNs to stdout,
+# is not called). PR state comes from the forge (gh/az) for in-progress tickets,
+# as the status board does; TICKET_FORGE=none keeps it offline. Forge errors go
+# to stderr.
+cmd_boards() {
+  need git; need jq
+  resolve_repo_root
+  local d slug n out=""
+  if [[ -d "$ROOT/.scratch" ]]; then
+    while IFS= read -r slug; do
+      [[ -n "$slug" ]] || continue
+      d="$ROOT/.scratch/$slug"
+      # load_file_board dies on a directory with no ticket files — that is a count of 0.
+      n="$(BOARD_PATH="$d" load_file_board 2>/dev/null | jq 'length' 2>/dev/null)" || n=0
+      out+="$(jq -cn --arg slug "$slug" --arg path "$d" --argjson n "${n:-0}" '{slug:$slug, path:$path, tickets:$n}')"$'\n'
+    done < <(find "$ROOT/.scratch" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  fi
+  printf '%s' "$out" | jq -s '.'
+}
+
+cmd_export() {
+  (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
+  need git; need jq
+  resolve_repo_root
+  # A board name wins over a repo directory of the same name (a board called
+  # `docs`), and is not lowercased like a Jira id: .scratch/ITM-12 is ITM-12.
+  local arg="$1"
+  [[ -d "$ROOT/.scratch/$arg" ]] && arg="$ROOT/.scratch/$arg"
+  board_init "$arg" allow-empty
+  local md="$BOARD_PATH/board.md" rr="$BOARD_PATH/retro-results.md"
+  [[ -f "$md" ]] || md=""; [[ -f "$rr" ]] || rr=""
+  errs="$(mktemp)"   # global, not local: the EXIT trap runs after the function returns
+  trap 'rm -f "${errs:-}"' EXIT
+  # Forge complaints go to a file, then to stderr once: a 2>>/dev/stderr
+  # reopen fails when stderr is a socket.
+  VIEW_ERRS="$errs" LANDED_ERRS="$errs" board_rows | jq \
+    --arg board_id "$BOARD_ID" --arg slug "$BOARD_SLUG" --arg repo "$REPO_NAME" --arg root "$ROOT" \
+    --arg base "$BASE_BRANCH" --arg forge "$FORGE" --argjson has_remote "$( ((HAS_REMOTE)) && echo true || echo false )" \
+    --arg board_path "$BOARD_PATH" \
+    '{board_id:$board_id, slug:$slug, repo:$repo, root:$root, base:$base, has_remote:$has_remote, forge:$forge, board_path:$board_path,
+      board_md: null, retro_results_md: null, tickets: .}' \
+    | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
+    | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi
+  local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
+  [[ -s "$errs" ]] && sort -u "$errs" >&2
+  return "$rc"
 }
 
 cmd_view() {
@@ -955,8 +1009,16 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkw  [board] NN    why the board thinks a ticket has (or hasn't) landed
   tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
   tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, helpers, retro, retro-save,
-                     retro-apply, policy, policy-set, help)
+                     retro-apply, policy, policy-set, boards, export, help)
   tkhelp             this list
+
+For tools (JSON on stdout, logs on stderr — tk-hub reads these)
+  tk.sh boards            every board under .scratch/: [{slug, path, tickets}]
+  tk.sh export <board>    board info, board.md, retro-results.md and every ticket as the status
+                          board sees it, as one object (slug or boards[].path; `base` is the base
+                          branch name, not a sha; `has_remote` tells forge none from no remote).
+                          No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
+                          keeps it offline
 
 Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
@@ -987,10 +1049,10 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|pr|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|pr|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   retro-apply) cmd_retro_apply "$@" ;;
   policy) cmd_policy "$@" ;;
   policy-set) cmd_policy_set "$@" ;;
-  *) sed -n '2,30p' "$0"; exit 1 ;;
+  *) sed -n '2,34p' "$0"; exit 1 ;;
 esac
