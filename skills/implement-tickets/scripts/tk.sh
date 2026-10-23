@@ -6,6 +6,7 @@
 # Usage (<board> is a Jira id or slug under .scratch/, a path, or "" for the only one there):
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
+#                                        (a **Kind:** doc ticket launches as a document, branch type docs)
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates
 #   tk.sh pr      <board> <NN>           commit the ticket's work, push, open its PR — the words by the Cursor CLI
@@ -181,10 +182,21 @@ cmd_launch() {
       --research) research="$2"; shift 2 ;; *) die "unknown argument: $1" ;;
     esac
   done
-  [[ "$type" =~ ^(feat|fix|refactor|chore|docs|test|perf|ci)$ ]] || die "--type must be one of feat fix refactor chore docs test perf ci"
+  [[ -z "$type" || "$type" =~ ^(feat|fix|refactor|chore|docs|test|perf|ci)$ ]] || die "--type must be one of feat fix refactor chore docs test perf ci"
   [[ -n "$model" && -n "$effort" ]] || die "--model and --effort are required (the session's settings, or this ticket's suggestion)"
-  local t status open
+  local t status open kind doc_args=()
   t="$(ticket_json "$nn")"
+  # **Kind:** picks the brief. No line is `code` and launches exactly as before;
+  # `doc` is a document — /ticket's doc brief, the doc reviewer, branch type
+  # `docs` whatever --type said, and **Doc type:** (default `other`) for the
+  # launcher to check. Anything else is refused before anything is created.
+  kind="$(jq -r '.kind // ""' <<<"$t")"; kind="${kind:-code}"
+  case "$kind" in
+    code) ;;
+    doc)  type="docs"; doc_args=(--doc --doc-type "$(jq -r '.doc_type // "" | if . == "" then "other" else . end' <<<"$t")") ;;
+    *)    die "ticket $nn has an unknown **Kind:** '$kind' — known kinds: $TICKET_KINDS (no line means code)" ;;
+  esac
+  [[ -n "$type" ]] || die "--type is required for a code ticket — one of feat fix refactor chore docs test perf ci"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == open ]] || die "ticket $nn is $status, not open"
   local foreign; foreign="$(foreign_repo "$t")"
@@ -215,11 +227,13 @@ cmd_launch() {
 
   local args=() out rc
   [[ -n "$account" ]] && args+=(--account "$account")
-  args+=(--effort "$effort" "$label" "$branch" "$brief" "$model")
+  args+=(${doc_args[@]+"${doc_args[@]}"} --effort "$effort" "$label" "$branch" "$brief" "$model")
   out="$(mktemp)"
   set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
   cat "$out"
-  if [[ $rc -eq 0 || $rc -eq 3 ]]; then
+  if [[ $rc -eq 0 && "${TICKET_DRY_RUN:-0}" == 1 ]]; then
+    echo "DRY RUN $nn2 — nothing launched, nothing recorded"
+  elif [[ $rc -eq 0 || $rc -eq 3 ]]; then
     local wt agent base
     wt="$(sed -n 's/^WORKTREE=//p' "$out")"; agent="$(sed -n 's/^AGENT=\([^ ]*\).*/\1/p' "$out")"
     base="$(git -C "$wt" rev-parse HEAD 2>/dev/null || echo "?")"
@@ -983,7 +997,8 @@ TICKET BOARD — commands
 
 In the board session (Haiku) — type these as plain messages; there are no slash commands
   help                          this list
-  start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused)
+  start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused); a ticket whose
+                                  body says **Kind:** doc launches as a document (branch docs)
   status / what changed?        re-read the board, agents and git; report what moved
   open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
                                   DevOps — the Cursor CLI writes message and body (no Claude
@@ -1087,5 +1102,5 @@ case "$verb" in
   retro-apply) cmd_retro_apply "$@" ;;
   policy) cmd_policy "$@" ;;
   policy-set) cmd_policy_set "$@" ;;
-  *) sed -n '2,35p' "$0"; exit 1 ;;
+  *) sed -n '2,36p' "$0"; exit 1 ;;
 esac

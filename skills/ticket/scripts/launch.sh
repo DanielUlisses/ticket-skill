@@ -10,7 +10,7 @@
 # ticket must land unstaged for review.
 #
 # Usage:
-#   launch.sh [--account <name>] [--effort <level>] <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <ead|tdd|other>]] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #   launch.sh defaults
 #
@@ -51,6 +51,13 @@
 #   TICKET_ACCOUNT         — the claude-acc account this ticket runs on; --account beats it. Unset means inherit whatever the worktree's parent directory is linked to, which writes no link at all. See docs/agents/accounts.md
 #   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
 #   TICKET_ACCOUNT_LOCK_WAIT (default: 10) — seconds to wait for the lock on ~/.claude-switch/links before refusing to write it
+#   TICKET_SKILLS_DIR      (default: ~/.claude/skills) — where a `--doc-type` ead/tdd skill is looked for (<dir>/<type>/SKILL.md and scripts/check_<type>.py)
+#   TICKET_DRY_RUN         (default: 0) — 1 renders the prompt and prints the summary, then stops: no pull, no worktree, no agent, no Herdr needed
+#
+# `--doc` is a document ticket — a board ticket whose body says `**Kind:** doc`;
+# `tk.sh launch` passes it, with the ticket's `**Doc type:**`. It renders
+# templates/ticket-doc-prompt.md (unattended: the ticket's `## Outline` is the
+# plan) and puts ticket-doc-reviewer in place of ticket-reviewer.
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 
@@ -85,6 +92,9 @@ load_ticket_models
 
 # ---- what makes this /ticket and not /small-ticket ---------------------------
 TEMPLATE="$SKILL_DIR/templates/ticket-agent-prompt.md"
+# `--doc`: a board ticket whose deliverable is a document (`**Kind:** doc`) —
+# drafted from its outline, humanized, reviewed and validated, never interviewed.
+DOC_TEMPLATE="$SKILL_DIR/templates/ticket-doc-prompt.md"
 RUN_NAME="ticket"
 PERMISSION_MODE="${TICKET_IMPL_PERMISSION_MODE:-bypassPermissions}"
 PERMISSION_LABEL="$PERMISSION_MODE"

@@ -24,6 +24,10 @@
 #                     a ticket whose deliverable is a document (presales scope,
 #                     proposal, estimate), not code. Unset means the launcher has
 #                     no document mode and `--doc` is refused. ADR 0005.
+#                     `--doc-type <ead|tdd|other>` (with `--doc`) fills the
+#                     template's {{DOC_GUIDANCE}}: for ead/tdd, a pointer to the
+#                     installed skill and its validator; for `other`, or a skill
+#                     that isn't installed, nothing — the generic doc brief.
 #   COORDINATOR       `config` — the session runs on TICKET_COORD_MODEL/EFFORT and
 #                     only the ticket-implementer subagent gets the ticket's model
 #                     and effort (/ticket, whose plan is already settled); or
@@ -245,6 +249,52 @@ them.
 
 ${lines%$'\n'}"
   log "retro results: $RETRO_STATUS"
+}
+
+# ---- a document ticket's type ------------------------------------------------
+# The doc types a `--doc-type` may name. One list, so the check and the message
+# that names the valid values can't drift apart.
+DOC_TYPES="ead tdd other"
+
+# Sets DOC_GUIDANCE_BLOCK (what {{DOC_GUIDANCE}} becomes) and KIND_STATUS (the
+# summary's KIND= line). `ead` and `tdd` are skills of their own, installed
+# beside this one: the brief points the drafter at the skill and its validator.
+# A skill counts as installed only with both its SKILL.md and its
+# scripts/check_<type>.py — a directory of the same name holding some other
+# skill (mattpocock's `tdd` is test-driven development, not a design document)
+# would otherwise send the drafter to the wrong rules. Missing means one WARN
+# line and the generic brief, never a refusal: the generic brief still writes
+# the document. TICKET_SKILLS_DIR overrides where to look.
+resolve_doc_guidance() {
+  DOC_GUIDANCE_BLOCK=""
+  if (( ! ${DOC:-0} )); then KIND_STATUS="code"; return 0; fi
+  if [[ -z "$DOC_TYPE" ]]; then KIND_STATUS="doc"; return 0; fi
+  KIND_STATUS="doc $DOC_TYPE"
+  [[ "$DOC_TYPE" == other ]] && return 0
+  local dir="${TICKET_SKILLS_DIR:-$HOME/.claude/skills}/$DOC_TYPE"
+  local check="$dir/scripts/check_${DOC_TYPE}.py"
+  if [[ ! -f "$dir/SKILL.md" || ! -f "$check" ]]; then
+    echo "WARN doc type '$DOC_TYPE': the $DOC_TYPE skill isn't installed (no SKILL.md and scripts/check_${DOC_TYPE}.py under $dir) — launching with the generic doc brief" >&2
+    KIND_STATUS="doc $DOC_TYPE (skill missing — generic brief)"
+    return 0
+  fi
+  DOC_GUIDANCE_BLOCK="## Document type: \`$DOC_TYPE\`
+
+The ticket's doc type is **$DOC_TYPE**, and the \`$DOC_TYPE\` skill is installed at
+\`$dir\`. Its rules are the house rules for this document:
+
+- Tell \`ticket-implementer\` to call the Skill tool with \`$DOC_TYPE\` before it
+  writes a line, and to follow it for structure, sections, wording rules and
+  estimates. The ticket's \`## Outline\` still decides what is in scope; where the
+  skill and the outline disagree, the outline wins and the hand-off says so.
+  Where the skill would stop to ask the user something, the unattended rule
+  above applies instead: a marked assumption, listed in the hand-off.
+- Its validator is \`$check\` — the skill's SKILL.md says how to call it. The
+  implementer runs it before handing back; the Phase 4 tester runs it again,
+  alongside whatever the ticket's **Seams under test** line names; the reviewer
+  gets its output.
+- Pass the reviewer the skill's path too, so it can check the document against
+  the skill's own section rules."
 }
 
 # ---- mise trust ---------------------------------------------------------------
@@ -690,8 +740,15 @@ launcher_main() {
   # read between the two, and it may set either of these.
   resolve_account_env
 
-  [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1)"
-  need herdr; need git; need jq
+  # TICKET_DRY_RUN=1 does every check and renders the prompt, then prints the
+  # summary and stops: no pull, no worktree, no tabs, no agent — so it needs
+  # no Herdr pane. For checking what a ticket would launch as.
+  DRY_RUN=0; [[ "${TICKET_DRY_RUN:-0}" == 1 ]] && DRY_RUN=1
+  if (( ! DRY_RUN )); then
+    [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1)"
+    need herdr
+  fi
+  need git; need jq
 
   # ---- flags, ahead of the positionals -----------------------------------------
   # --account is a flag rather than a fifth positional because it is the rare
@@ -708,6 +765,7 @@ launcher_main() {
   # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
   DOC=0   # only the --doc flag sets it; never inherited from the environment
+  DOC_TYPE=""
   REVIEW_EFFORT_FLAG=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
@@ -719,6 +777,9 @@ launcher_main() {
                    IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
       --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
       --doc)       DOC=1; shift ;;
+      --doc-type)  [[ $# -ge 2 ]] || die "--doc-type needs a type — one of: $DOC_TYPES"
+                   DOC_TYPE="$2"; shift 2 ;;
+      --doc-type=*) DOC_TYPE="${1#--doc-type=}"; shift ;;
       --review-effort) [[ $# -ge 2 ]] || die "--review-effort needs a level — one of: $EFFORT_LEVELS"
                    REVIEW_EFFORT_FLAG="$2"; shift 2 ;;
       --review-effort=*) REVIEW_EFFORT_FLAG="${1#--review-effort=}"; shift ;;
@@ -742,10 +803,14 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--review-effort <level>] [--doc] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--review-effort <level>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   if (( ${DOC:-0} )); then
     [[ -n "${DOC_TEMPLATE:-}" ]] || die "--doc: this launcher has no document mode — use /small-ticket"
     TEMPLATE="$DOC_TEMPLATE"
+  fi
+  if [[ -n "$DOC_TYPE" ]]; then
+    (( ${DOC:-0} )) || die "--doc-type is only for a --doc launch"
+    [[ " $DOC_TYPES " == *" $DOC_TYPE "* ]] || die "unknown doc type '$DOC_TYPE' — one of: $DOC_TYPES"
   fi
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
@@ -754,12 +819,13 @@ launcher_main() {
   # None: no suite, or infra that only runs live — is reviewed at
   # TICKET_REVIEW_EFFORT_UNTESTED, since that review is the last check before a
   # real environment. --review-effort (the /small-ticket skill passes it when the
-  # plan-to-be has no suite) beats both.
+  # plan-to-be has no suite) beats both. A document has no code to test, so its
+  # `None` says nothing about risk: its review stays at TICKET_DOC_REVIEW_*.
   REVIEW_EFFORT_WHY="config"
   if [[ -n "$REVIEW_EFFORT_FLAG" ]]; then
     effort_valid "$REVIEW_EFFORT_FLAG" || die "invalid --review-effort '$REVIEW_EFFORT_FLAG' — one of: $EFFORT_LEVELS"
     REVIEW_EFFORT="$REVIEW_EFFORT_FLAG"; REVIEW_EFFORT_WHY="the --review-effort flag"
-  elif grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
+  elif (( ! ${DOC:-0} )) && grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
     REVIEW_EFFORT="$REVIEW_EFFORT_UNTESTED"; REVIEW_EFFORT_WHY="untested: the ticket's Seams line says None"
   fi
   [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
@@ -799,7 +865,10 @@ launcher_main() {
   [[ "$CURRENT" == "$BASE_BRANCH" ]] \
     || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
 
-  if (( HAS_REMOTE )); then
+  if (( HAS_REMOTE && DRY_RUN )); then
+    log "dry run — not pulling '$BASE_BRANCH'; branching point is the local '$BASE_BRANCH' as it stands"
+    BASE_SOURCE="dry run, not pulled"
+  elif (( HAS_REMOTE )); then
     log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
     run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
       || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
@@ -811,7 +880,7 @@ launcher_main() {
 
   BASE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
   REMOTE_COMMIT=""
-  (( HAS_REMOTE )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
+  (( HAS_REMOTE && ! DRY_RUN )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
   if [[ -n "$REMOTE_COMMIT" && "$BASE_COMMIT" != "$REMOTE_COMMIT" ]]; then
     if git -C "$ROOT" merge-base --is-ancestor "$REMOTE_COMMIT" "$BASE_COMMIT"; then
       log "warning: local '$BASE_BRANCH' has commits not yet pushed to $REMOTE"
@@ -823,12 +892,13 @@ launcher_main() {
 
   # ---- agent name -----------------------------------------------------------
   AGENT="tk-${BRANCH}"; AGENT="${AGENT:0:32}"; AGENT="${AGENT%-}"
-  if herdr agent list 2>/dev/null | grep -q "\"${AGENT}\""; then
+  if (( ! DRY_RUN )) && herdr agent list 2>/dev/null | grep -q "\"${AGENT}\""; then
     AGENT="${AGENT:0:28}-$((RANDOM % 900 + 100))"
   fi
 
   resolve_project_memory
   resolve_retro_results
+  resolve_doc_guidance
 
   # ---- render the prompt (outside the worktree, so it doesn't dirty git status) -------
   RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/$RUN_NAME"; mkdir -p "$RUN_DIR"
@@ -863,11 +933,52 @@ launcher_main() {
   # placeholder) from being rewritten. TICKET goes before PROJECT_MEMORY, because
   # the memory placeholder sits above the ticket in the template, so filling it
   # first would let a `{{TICKET}}` written inside the memory file win over the
-  # template's own.
+  # template's own. DOC_GUIDANCE is launcher-built too (paths only), so it goes
+  # with RETRO_RESULTS, ahead of the ticket.
   fill_prose '{{RETRO_RESULTS}}' "$RETRO_BLOCK"
+  fill_prose '{{DOC_GUIDANCE}}' "$DOC_GUIDANCE_BLOCK"
   fill_prose '{{TICKET}}' "$ticket"
   fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
   printf '%s\n' "$tpl" > "$PROMPT_FILE"
+
+  # The roster this session gets, settled before anything is created so a bad
+  # agent definition costs no worktree. A ticket's session uses the ticket-side
+  # roster; the merger, the retro and the PR creator belong to the board session
+  # (scripts/board.sh). A document swaps the code reviewer for the doc reviewer.
+  if (( ${DOC:-0} )); then
+    build_session_agents ticket-implementer ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  else
+    build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  fi
+
+  summary() {
+    cat <<SUMMARY
+WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
+BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
+KIND=$KIND_STATUS
+WORKTREE=$WT
+TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
+REVIEW=${REVIEW_SOURCE:-?}
+AGENT=$AGENT (pane ${AGENT_PANE:-?})
+MODEL=$IMPL_MODEL
+EFFORT=$IMPL_EFFORT
+COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
+REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
+SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
+ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
+PROJECT_MEMORY=$MEMORY_STATUS
+RETRO_RESULTS=$RETRO_STATUS
+REPORT_FILE=${REPORT_FILE:-?}
+PROMPT_FILE=$PROMPT_FILE
+SUMMARY
+  }
+
+  if (( DRY_RUN )); then
+    log "dry run (TICKET_DRY_RUN=1) — prompt rendered; nothing created, no agent started"
+    summary
+    echo "DRY_RUN=1"
+    exit 0
+  fi
 
   # ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
   # One call either returns the worktree or fails with Herdr's own error. `--path`
@@ -1009,13 +1120,7 @@ launcher_main() {
   # and must not be flattened: /small-ticket starts in plan mode with only
   # commit/push blocked, because a developer approves the plan in the pane;
   # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
-  # A ticket's session uses the ticket-side roster; the merger, the retro and
-  # the PR creator belong to the board session (scripts/board.sh).
-  if (( ${DOC:-0} )); then
-    build_session_agents ticket-implementer ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
-  else
-    build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
-  fi
+  # The roster (SESSION_AGENTS_JSON) was settled before the worktree was made.
   local -a agents_arg=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
@@ -1030,28 +1135,6 @@ launcher_main() {
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
   set -e
-
-  summary() {
-    cat <<SUMMARY
-WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
-BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
-KIND=$( (( ${DOC:-0} )) && echo document || echo code )
-WORKTREE=$WT
-TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
-REVIEW=${REVIEW_SOURCE:-?}
-AGENT=$AGENT (pane ${AGENT_PANE:-?})
-MODEL=$IMPL_MODEL
-EFFORT=$IMPL_EFFORT
-COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
-REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
-SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
-ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
-PROJECT_MEMORY=$MEMORY_STATUS
-RETRO_RESULTS=$RETRO_STATUS
-REPORT_FILE=${REPORT_FILE:-?}
-PROMPT_FILE=$PROMPT_FILE
-SUMMARY
-  }
 
   # Before the exit-3 branch as well as the happy path: an agent stopped at the
   # folder-trust dialog is a started process with an environment to read, and the
