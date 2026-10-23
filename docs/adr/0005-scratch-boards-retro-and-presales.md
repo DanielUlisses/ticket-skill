@@ -165,6 +165,7 @@ review but never open, gate or merge a PR. They now go through a small **forge l
   has no access to: `forge_ok` is false, so `landed`, `resolve`, `digest`, `view` and `why` read the
   git log alone and never call `gh`/`az` (no WARN, no timeout); `pr`, `gates`, `ready` and `merge`
   refuse — merge on the forge yourself and the next digest resolves the ticket. Fetching is unchanged.
+  A board policy's `forge: none` also selects git-only mode — see `docs/agents/policy.md`.
   For Azure the organization, project and repository are parsed from the URL and passed to every `az`
   call, so a remote not named `origin` works and nothing depends on `az devops configure`.
 - **One PR shape.** Each forge's PR is normalized to `{number, url, isDraft, base, mergeable, review,
