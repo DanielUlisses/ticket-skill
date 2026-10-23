@@ -12,6 +12,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh launch {{BOARD}} <NN> --type <feat\|fix\|refactor\|chore\|docs\|test\|perf\|ci> --model <m> --effort <e> [--research <file>]` | launches one ticket and records it (`--account <a>` only when the developer names one) |
 | `tk.sh gates {{BOARD}} <NN>` · `tk.sh ready {{BOARD}}` | merge gates for one ticket · every ticket that passes them |
 | `tk.sh pr {{BOARD}} <NN>` | commit the ticket's work, push, open its PR (the Cursor CLI writes the words) |
+| `tk.sh push {{BOARD}} <NN>` | the same commit and push, **no PR** — how a ticket ships under `TICKET_FORGE=none`; the developer merges on the forge |
 | `tk.sh merge {{BOARD}} <NN>` | gates, then merges the **PR on the forge** (not a local merge), resolve |
 | `tk.sh resolve {{BOARD}} <NN>` · `tk.sh resolve {{BOARD}} <NN> --no-code "<reason>"` · `tk.sh why {{BOARD}} <NN>` | marks a landed ticket resolved · resolves a ticket with nothing to commit · why it does or doesn't count as landed |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
@@ -44,6 +45,7 @@ Report from that output only, never from memory. Act on each `ACTION` line:
 - `resolve NN` → `tk.sh resolve {{BOARD}} NN`, then say what it unblocked. Use `--no-code "<reason>"` only when the developer says the ticket has no code to land — never on your own; if it refuses, show why.
 - The developer says they merged NN but it isn't resolved → `tk.sh why {{BOARD}} NN` and show its output as printed.
 - `review NN` → tell the developer the ticket is ready for review, once.
+- `pushed NN` → tell the developer, once, that its branch is pushed and waits on their merge on the forge; the digest resolves it once it lands.
 - `dialog NN`, `orphan NN`, `check NN` → tell the developer, as printed. Never answer an agent's dialog.
 
 A turn where nothing changed is one line saying so.
@@ -82,7 +84,11 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 ## Opening a PR — only when the developer names it
 
-"open a PR for 03" / "PR 03" → `tk.sh policy {{BOARD}}`: with `forge: none`, run `tk.sh pr {{BOARD}} 03` only to show its refusal, as above; otherwise the developer naming 03 is all `require_human_before_pr` needs, so go straight on. Say "Opening the PR for 03." **before** anything else, and run `tk.sh pr {{BOARD}} 03` — the Cursor CLI writes the commit message and body, the script commits, pushes and opens the PR. Show the developer its `OPENED` URL and any `LEFT OUT` lines; a refusal or error is reported as printed, and not retried. **Exit 5** means this repo opens PRs with the Claude agent instead: dispatch `ticket-pr-creator` with the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title, and report the same way. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
+"open a PR for 03" / "PR 03" → `tk.sh policy {{BOARD}}`: with `forge: none`, run `tk.sh pr {{BOARD}} 03` only to show its refusal, as above (it names `push 03` as how a ticket ships there — don't run that unasked); otherwise the developer naming 03 is all `require_human_before_pr` needs, so go straight on. Say "Opening the PR for 03." **before** anything else, and run `tk.sh pr {{BOARD}} 03` — the Cursor CLI writes the commit message and body, the script commits, pushes and opens the PR. Show the developer its `OPENED` URL and any `LEFT OUT` lines and any `LEFT UNCOMMITTED` lines (files still in the worktree, not in the commit); a refusal or error is reported as printed, and not retried. **Exit 5** means this repo opens PRs with the Claude agent instead: dispatch `ticket-pr-creator` with the script `{{PR}}`, the board `{{BOARD}}`, the ticket number and title, and report the same way. Never on your own initiative — `ACTION review` only means it's ready for the developer to look at.
+
+## Pushing — only when the developer names it
+
+"push 03" → say "Pushing 03." **before** anything else, then run `tk.sh push {{BOARD}} 03` — the Cursor CLI writes the commit message, the script commits the named files and pushes the branch, and opens no PR. Show the developer its `PUSHED` line, any `LEFT OUT` lines and any `LEFT UNCOMMITTED` lines (files still in the worktree, not in the commit); a refusal or error is reported as printed, and not retried. There is no Claude-agent fallback: exit 5 never comes from `push`.
 
 ## Talking to a ticket
 
