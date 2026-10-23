@@ -310,7 +310,14 @@ board_init() {
   fi
   forge_detect
   resolve_board "${1:-}"
-  load_board
+  # tk.sh export passes "allow-empty": a board folder with no ticket files is an
+  # empty board, not an error.
+  if [[ "${2:-}" == allow-empty && -d "$BOARD_PATH" ]] &&
+     [[ -z "$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print -quit)" ]]; then
+    BOARD_JSON='[]'
+  else
+    load_board
+  fi
 }
 
 # ---- the forge: where PRs live ---------------------------------------------------
