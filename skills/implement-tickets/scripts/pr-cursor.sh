@@ -61,7 +61,7 @@ fi
 CURSOR="${TICKET_CURSOR_BIN:-}"
 if [[ -z "$CURSOR" ]]; then
   if command -v cursor-agent >/dev/null 2>&1; then CURSOR=cursor-agent
-  elif command -v agent >/dev/null 2>&1 && agent --help 2>&1 | grep -qi cursor; then CURSOR=agent
+  elif command -v agent >/dev/null 2>&1 && agent --help 2>&1 | grep -i cursor >/dev/null; then CURSOR=agent
   elif (( PUSH )); then die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). tk.sh push has no Claude fallback"
   else die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). Or TICKET_PR_RUNNER=claude to open PRs with the Claude agent"; fi
 fi
@@ -75,7 +75,10 @@ BASE="$(sed -n 's/^READY ticket [0-9]* on [^ ]* (base \([^)]*\)).*/\1/p' <<<"$ch
 REMOTE="${TICKET_REMOTE:-origin}"
 
 # Capped pieces, so the prompt stays one argument (Linux allows 128 KiB per argument).
-cap() { local n="$1"; head -c "$n"; echo; }
+# cap drains what it doesn't keep: head alone exits at the cap, the writer then dies
+# of SIGPIPE, and under pipefail + set -e that 141 ends this script on any diff over
+# the cap — before Cursor is ever asked.
+cap() { local n="$1"; head -c "$n"; cat >/dev/null; echo; }
 section() { printf '\n=== %s ===\n' "$1"; }
 {
   if (( PUSH )); then
