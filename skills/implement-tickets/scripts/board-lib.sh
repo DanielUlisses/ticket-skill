@@ -223,6 +223,34 @@ landed() {
   echo "no"
 }
 
+# Has <branch> been pushed (tk.sh push, a PR, or by hand)? Its remote-tracking
+# copy holds commits past <base_sha> (the ticket's recorded base, else its
+# merge-base with BASE_REF). Prints that copy's short sha when everything is
+# pushed — the local branch is at it and the worktree (<wt>, else the default
+# path) has no tracked changes — "<sha> more" when work sits beside it unpushed,
+# and nothing when it isn't pushed; either line ends with the worktree's count of
+# untracked files (not ignored), for the card to show. Untracked files don't make
+# it "more": one a push rightly left out (a debug log) would otherwise keep the
+# card "more unpushed", its hint a push that can only refuse. Read from git alone, so it needs no state file
+# and no forge; landed() still decides done.
+pushed_sha() {
+  local branch="$1" base_sha="$2" wt="${3:-}" ref sha local_sha untracked=0
+  (( HAS_REMOTE )) && [[ -n "$branch" ]] || return 0
+  ref="refs/remotes/$REMOTE/$branch"
+  git -C "$ROOT" show-ref --verify --quiet "$ref" || return 0
+  [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "$ref" "$BASE_REF" 2>/dev/null)" || return 0
+  [[ "$(git -C "$ROOT" rev-list --count "$base_sha..$ref" 2>/dev/null || echo 0)" -gt 0 ]] || return 0
+  sha="$(git -C "$ROOT" rev-parse --short "$ref")"
+  [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  local_sha="$(git -C "$ROOT" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ -n "$local_sha" && "$local_sha" != "$(git -C "$ROOT" rev-parse "$ref")" ]] \
+     || { [[ -d "$wt" ]] && [[ -n "$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null)" ]]; }; then
+    sha+=" more"
+  fi
+  [[ -d "$wt" ]] && untracked="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c '^??' || true)"
+  echo "$sha ${untracked:-0}"
+}
+
 # One round trip for the whole board: the base and every in-progress ticket's
 # remote branch that still exists (one ls-remote, one fetch) — not a fetch per
 # ticket, which on a slow or credential-managed remote is what made every turn
@@ -380,7 +408,7 @@ forge_need() {
       (( rc != 124 )) || die "az timed out after ${TICKET_NET_TIMEOUT:-90}s just checking its extensions — run any az command in a shell to see what it's waiting on"
       (( rc == 0 )) || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
     *) if forge_off; then
-         die "no forge access here (TICKET_FORGE=none) — merge the PR in Azure DevOps / on the forge yourself, and the next digest resolves the ticket from the git log"
+         die "no forge access here (TICKET_FORGE=none) — \`tk.sh push <board> <NN>\` ships a ticket without a PR; merge it on the forge yourself (Azure DevOps, GitHub) and the next digest resolves it from the git log"
        fi
        die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
   esac

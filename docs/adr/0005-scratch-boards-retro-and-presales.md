@@ -164,7 +164,8 @@ review but never open, gate or merge a PR. They now go through a small **forge l
   overrides it. `TICKET_FORGE=none` is git-only mode, for a repo whose remote is on a forge the box
   has no access to: `forge_ok` is false, so `landed`, `resolve`, `digest`, `view` and `why` read the
   git log alone and never call `gh`/`az` (no WARN, no timeout); `pr`, `gates`, `ready` and `merge`
-  refuse — merge on the forge yourself and the next digest resolves the ticket. Fetching is unchanged.
+  refuse — `tk.sh push` ships the ticket (§9), merge on the forge yourself and the next digest
+  resolves the ticket. Fetching is unchanged.
   For Azure the organization, project and repository are parsed from the URL and passed to every `az`
   call, so a remote not named `origin` works and nothing depends on `az devops configure`.
 - **One PR shape.** Each forge's PR is normalized to `{number, url, isDraft, base, mergeable, review,
@@ -265,6 +266,26 @@ commit is still exactly the named paths, on the ticket's branch, without force. 
 a script rather than dispatching an agent. `TICKET_PR_RUNNER=claude` keeps `ticket-pr-creator` (`tk.sh pr`
 exits 5 and the board dispatches it). Cursor needs `cursor-agent login` or `CURSOR_API_KEY`;
 `TICKET_PR_CURSOR_MODEL` picks its model.
+
+**Push without a PR.** Under `TICKET_FORGE=none` the board can't open a PR, but the ticket still has
+to reach the remote. `tk.sh push <board> <NN>` (the board's "push NN") runs `pr-cursor.sh --push`:
+`pr-open.sh check --push`, then Cursor is asked for the commit message and paths only, then
+`pr-open.sh push` — the same preflight (agent quiet, no merge in progress, the ticket's own branch),
+the same named-paths, risky-file and already-staged guards, the same `strip_attribution`, the same
+`git push -u` — with no forge call at all: no open-PR lookup, no `forge_pr_create`. It refuses when
+nothing is uncommitted and the remote already has every commit — asked with `ls-remote`, since a
+remote-tracking ref outlives a branch deleted after its merge. Commits waiting to be pushed (a push
+that failed) go out even when Cursor names no paths, the files left beside them staying uncommitted;
+with nothing uncommitted at all Cursor isn't asked. "Pushed" is read from git, not a state file: an
+in-progress ticket whose remote-tracking branch has commits past its base, with the local branch at
+that commit and no tracked changes in the worktree (untracked files, which a push may rightly leave
+out, don't count), carries `pushed: <sha>` in `board_rows` — the human-review card's
+note becomes `pushed <sha>` (`· <n> untracked` when untracked files remain beside it — a fix that only
+adds new files is not "more unpushed", so the count is what shows it); under `none` the digest line gains `pushed:<sha>` and `ACTION pushed NN`
+(other forges' digests are unchanged) — until `landed()` sees the merge and the ticket moves to done
+as before. Work added after the push reads `agent finished (pushed <sha>, more unpushed)`, hint
+`push NN`, and the digest's `ACTION review`. It works on any forge; it is the only shipping verb under `none`, and
+always the Cursor CLI (`TICKET_PR_RUNNER` doesn't apply).
 
 No commit message or PR body the workflow makes carries tool attribution — no `Co-authored-by`
 trailer, no "Generated with" line, no session link. `pr-open.sh` strips them from whatever it is given,
