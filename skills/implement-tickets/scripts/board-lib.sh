@@ -91,8 +91,10 @@ parse_ticket_file() {
 
 load_file_board() {
   local f files
+  # .scratch/project-memory.md is repo memory, not a board or a ticket: never load it.
+  [[ "$(basename "$BOARD_PATH")" != project-memory.md ]] || die "$BOARD_PATH is project memory, not a board"
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
   # tickets — board.md and other notes — not a ticket.

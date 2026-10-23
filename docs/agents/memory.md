@@ -15,33 +15,39 @@ Two halves, and they are deliberately asymmetric:
 ## Where it lives
 
 ```
-<main repo root>/docs/agents/project-memory.md
+<main repo root>/.scratch/project-memory.md
 ```
 
-One file, per repo, in the repo — plain Markdown, no schema, read and edited by hand.
+One file, per repo, plain Markdown, no schema, read and edited by hand. `.scratch/` is
+gitignored, so the file is **never committed**: memory is never written inside tracked
+code (ADR `0006-project-memory-in-scratch.md`).
 
-Three things follow from that path, and each was the reason for choosing it:
+Three things follow from that path:
 
 - **It is read from the *main checkout*, never from the ticket's worktree.** The
   launchers already resolve the main repo root (`git worktree list --porcelain`, first
   entry) to decide where to branch from, and memory is read from the same place. So every
   ticket — including one launched from inside another ticket's worktree — is briefed with
   the same, canonical memory.
-- **`/sweep-tickets` cannot take it with it.** That skill removes worktrees and branches.
-  The main checkout is not either of those, so memory survives every sweep by
-  construction rather than by a rule someone has to remember.
-- **The developer gate is the merge.** The file is tracked by git like anything else, so
-  a lesson only reaches future tickets once it has been reviewed and merged into the base
-  branch. That is the same gate every other change in these repos passes through, which
-  is why capture needs no gate of its own.
+- **`/sweep-tickets` cannot take it with it.** That skill removes worktrees and branches
+  and never touches the main checkout's `.scratch`, so memory survives every sweep.
+- **There is no merge gate.** Being ignored, the file is not reviewed in a diff. The
+  developer gate is the approval in `tk.sh retro-apply` (or the hub's memory ticket), and
+  then the developer's own edit. The cost: memory is per clone and per box — it does not
+  travel with the repo, and two clones of one repo keep separate memories.
 
 `TICKET_MEMORY_FILE` overrides the path for one launch — absolute, or relative to the
-main repo root. It exists for trying something out; the default is the convention, and a
-repo that moves its memory permanently should say so in its `CLAUDE.md`.
+main repo root. It exists for trying something out; the default is the convention.
+
+**Transition (one release).** If `.scratch/project-memory.md` is absent and the old
+`docs/agents/project-memory.md` exists, the launcher reads the old file and logs one line
+saying to move it. It never creates or moves files itself. If the repo's `.gitignore`
+doesn't ignore `.scratch/`, the launcher logs a warning that memory there could be
+committed, and does nothing else.
 
 ### Absent is a supported state
 
-A repo with no `docs/agents/project-memory.md` launches **exactly** as it did before this
+A repo with no `.scratch/project-memory.md` launches **exactly** as it did before this
 existed: no heading, no placeholder, no mention of memory anywhere in the prompt. The
 same is true of a file that is empty, whitespace-only, or unreadable. The launcher logs
 one line saying which it found and carries on; nothing fails, and nothing is created for
@@ -70,8 +76,7 @@ Not worth keeping:
 - Aspirations, style opinions and "we should probably…". Facts only.
 
 Headings are free-form. `Layout` / `Conventions` / `Hard-won facts` is what tends to
-appear, and this repo's own `docs/agents/project-memory.md` is the worked example — copy
-its shape rather than inventing one.
+appear, and copy that shape rather than inventing one.
 
 ## How injection works
 
@@ -126,12 +131,10 @@ durable, non-obvious facts about the repo, one line each, phrased as facts about
 rather than as a story about the session. `Nothing durable this ticket.` is an explicitly
 blessed answer — a padded list is worse than an empty one, because a human has to read it.
 
-The agent **reports; it never writes**. It is told not to touch the memory file — and
-because the file is tracked, its worktree does hold a copy, so the real gate isn't the
-instruction: the launcher reads the **main checkout's** copy and never the worktree's.
-An agent that edited its own copy anyway would change nothing for anyone else; that edit
-is simply an ordinary line in the diff you were going to review. What the repo remembers
-is the developer's call, not the agent's, and it takes a merge to become so.
+The agent **reports; it never writes**. It is told not to touch the memory file; the file
+lives in the main checkout's `.scratch`, which a worktree does not have, and the launcher
+reads only that copy. What the repo remembers is the developer's call, not the agent's:
+the approval in `tk.sh retro-apply`, then the developer's own edit.
 
 ### Folding a lesson back in
 
@@ -140,20 +143,16 @@ When you read a ticket's report and a `## Remember` bullet is worth keeping:
 1. Judge it. Most bullets aren't worth keeping — the agent has seen one ticket, and
    "this surprised me" is not the same as "this is true of the repo". Keep what you'd
    want to tell the next person on their first day.
-2. Edit `docs/agents/project-memory.md` — either in the main checkout as an ordinary
-   change, or in that ticket's worktree so it rides along in the diff you are already
-   reviewing. The second is usually less work and keeps the lesson beside the change that
-   taught it. Create the file if it doesn't exist yet; nothing creates it for you.
+2. Edit `.scratch/project-memory.md` in the main checkout. It is ignored, so there is
+   nothing to commit and a ticket's worktree is the wrong place for it. Create the file
+   if it doesn't exist yet; nothing creates it for you.
 3. Rewrite the bullet in the file's voice. An agent's phrasing is aimed at you, once;
    the file is aimed at every future launch. Shorter, flatter, no narrative.
 4. Prune while you're there. This is the only moment anyone looks at the file with fresh
    eyes: delete what has gone stale, and merge what is now said twice. The file is only
    valuable while it stays short.
-5. Commit and merge it. The next launch off that base branch is briefed with it.
 
-If you'd rather the ticket's own agent make the edit, ask it to — the edit then lands in
-that ticket's diff and you review it like any other change. What it must not do is decide
-on its own.
+The next launch is briefed with it. What no agent may do is decide on its own.
 
 ## Retro results
 
@@ -173,11 +172,10 @@ unchanged, and one log line says so. The launch summary reports `RETRO_RESULTS=<
 
 ## Adding memory to a repo that has none
 
-Write `docs/agents/project-memory.md` (the path above, not the repo root) with three
-bullets you are sure of, and commit it to the base branch. Injection needs nothing else —
-no install step, no config, no per-machine file. The next launch's summary line confirms
-it: `PROJECT_MEMORY=docs/agents/project-memory.md (<n> bytes)`, where `none (…)` means the
-file isn't where the launcher looked.
+Write `.scratch/project-memory.md` (in the main checkout) with three bullets you are
+sure of. Injection needs nothing else — no install step, no config. The next launch's
+summary line confirms it: `PROJECT_MEMORY=.scratch/project-memory.md (<n> bytes)`, where
+`none (…)` means the file isn't where the launcher looked.
 
 ## Related
 
