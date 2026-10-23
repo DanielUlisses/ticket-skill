@@ -18,7 +18,8 @@ script in two branches. It is gone:
 - **PRs live on the repo's forge** — GitHub or Azure DevOps (§7). That is about where the code
   goes, not where the board is.
 - **A repo with no remote is supported.** The board scripts take the local base as the merge
-  target, skip the fetch and the PR leg, and the PR verbs say to merge locally instead.
+  target and skip the fetch and the PR leg; `tk.sh merge` commits the ticket and merges it into the
+  local base (§9), and the PR and push verbs refuse, pointing at it.
 
 ## 2. Retro closes a board, before the sweep
 
@@ -293,8 +294,12 @@ trailer, no "Generated with" line, no session link. `pr-open.sh` strips them fro
 Cursor's answer or the Claude agent's, so no agent's habit can slip one through; the merger's commit
 uses git's own merge message.
 
-`tk.sh merge` merges the **PR on the forge** — what the merge button does — never a local merge; the
-local base is untouched until the developer pulls. In a repo with no remote it refuses: the developer
-merges the branch locally and the next digest resolves it. The merger's conflict resolution merges the
-base *into the ticket's branch* and pushes that branch; the PR is still merged by `tk.sh merge`.
+Where the repo has a remote, `tk.sh merge` merges the **PR on the forge** — what the merge button
+does — and the local base is untouched until the developer pulls. The merger's conflict resolution
+merges the base *into the ticket's branch* and pushes that branch; the PR is still merged by
+`tk.sh merge`. In a repo with no remote it is a local merge instead: four local gates (a root
+checkout that can take the merge, the phase file's review and tests, a trial `git merge-tree`), the
+ticket's work committed through the same guarded path as `tk.sh push`, then `git merge --no-ff` into
+the local base in the root checkout; nothing is pushed. There is no merger there — its script pushes
+— so a conflict is the developer's to resolve by hand in the ticket's worktree.
 
