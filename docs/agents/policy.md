@@ -87,9 +87,11 @@ night shift.
   acting on the latest read. `forge: none` beats every other key: it runs no PR or merge verb on its
   own and dispatches neither `ticket-pr-creator` nor `ticket-merger`, whatever `auto_merge` says.
   Asked for a PR or a merge, it runs `tk.sh pr` / `tk.sh merge` anyway and shows the refusal: both
-  refuse before doing anything, with no remote as `no 'origin' remote … (forge: none) — … merge the
-  branch locally`, and with the policy or env's `none` as `no forge access here (policy)` /
-  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. With
+  refuse before doing anything with the policy or env's `none`, as `no forge access here (policy)` /
+  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. A repo with **no
+  remote** is the exception: `tk.sh merge` is a local merge there (four local gates, the ticket's
+  work committed through the guarded path, `--no-ff` into the local base), run on the developer's
+  word or under `auto_merge` like any merge; only `tk.sh pr` and `push` refuse. With
   `require_human_before_pr` it opens a PR only for a ticket the developer names, and that request
   is the human step — it doesn't ask again. It merges without being asked only when `auto_merge`
   is `true`, and only what `tk.sh ready` lists (`READY none` is nothing to merge), stopping at the
