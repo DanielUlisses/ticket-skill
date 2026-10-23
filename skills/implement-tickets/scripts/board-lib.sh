@@ -95,7 +95,7 @@ load_file_board() {
   else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
-  # tickets — decisions.md from the planner — not a ticket.
+  # tickets — board.md and other notes — not a ticket.
   while IFS= read -r f; do parse_ticket_file "$f"; done <<<"$files" | jq -s 'map(select(.nn != ""))'
 }
 
@@ -214,13 +214,41 @@ landed() {
       _lt "$(forge_name) couldn't be asked${LANDED_ERRS:+ — see the WARN}"
     fi
   elif forge_off; then
-    _lt "forge: none (TICKET_FORGE=none) — git log only"
+    _lt "forge: none ($(forge_off_why)) — git log only"
   elif (( HAS_REMOTE )); then
     _lt "$(forge_name): not asked ($( ((${#tips[@]})) && echo "its CLI isn't available" || echo "nothing committed"))"
   fi
   (( ${#refs[@]} )) || { echo "unknown:no-local-branch"; return; }
   (( ${#tips[@]} )) || { [[ -n "$base_sha" ]] && echo "no" || echo "unknown:base-unresolvable"; return; }
   echo "no"
+}
+
+# Has <branch> been pushed (tk.sh push, a PR, or by hand)? Its remote-tracking
+# copy holds commits past <base_sha> (the ticket's recorded base, else its
+# merge-base with BASE_REF). Prints that copy's short sha when everything is
+# pushed — the local branch is at it and the worktree (<wt>, else the default
+# path) has no tracked changes — "<sha> more" when work sits beside it unpushed,
+# and nothing when it isn't pushed; either line ends with the worktree's count of
+# untracked files (not ignored), for the card to show. Untracked files don't make
+# it "more": one a push rightly left out (a debug log) would otherwise keep the
+# card "more unpushed", its hint a push that can only refuse. Read from git alone, so it needs no state file
+# and no forge; landed() still decides done.
+pushed_sha() {
+  local branch="$1" base_sha="$2" wt="${3:-}" ref sha local_sha untracked=0
+  (( HAS_REMOTE )) && [[ -n "$branch" ]] || return 0
+  ref="refs/remotes/$REMOTE/$branch"
+  git -C "$ROOT" show-ref --verify --quiet "$ref" || return 0
+  [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "$ref" "$BASE_REF" 2>/dev/null)" || return 0
+  [[ "$(git -C "$ROOT" rev-list --count "$base_sha..$ref" 2>/dev/null || echo 0)" -gt 0 ]] || return 0
+  sha="$(git -C "$ROOT" rev-parse --short "$ref")"
+  [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  local_sha="$(git -C "$ROOT" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ -n "$local_sha" && "$local_sha" != "$(git -C "$ROOT" rev-parse "$ref")" ]] \
+     || { [[ -d "$wt" ]] && [[ -n "$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null)" ]]; }; then
+    sha+=" more"
+  fi
+  [[ -d "$wt" ]] && untracked="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c '^??' || true)"
+  echo "$sha ${untracked:-0}"
 }
 
 # One round trip for the whole board: the base and every in-progress ticket's
@@ -295,22 +323,37 @@ require_agent_quiet() {
   esac
 }
 
-# Every board script starts the same way.
-board_init() {
+# The repo half of board_init, shared with tk.sh policy (which needs no base
+# branch): sets REMOTE, ROOT and HAS_REMOTE. A repo with no remote (a presales
+# document repo, say) has only its local base to merge into, and no PRs to ask about.
+repo_init() {
   REMOTE="${TICKET_REMOTE:-origin}"
   need git; need jq
   resolve_repo_root
+  HAS_REMOTE=0
+  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
+  return 0
+}
+
+# Every board script starts the same way.
+board_init() {
+  repo_init
   resolve_base_branch
-  # A repo with no remote (a presales document repo, say) has only its local
-  # base to merge into, and no PRs to ask about.
-  HAS_REMOTE=0; BASE_REF="$BASE_BRANCH"
-  if git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1; then
-    HAS_REMOTE=1
+  BASE_REF="$BASE_BRANCH"
+  if (( HAS_REMOTE )); then
     git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$BASE_BRANCH" && BASE_REF="$REMOTE/$BASE_BRANCH"
   fi
-  forge_detect
   resolve_board "${1:-}"
-  load_board
+  policy_forge_env
+  forge_detect
+  # tk.sh export passes "allow-empty": a board folder with no ticket files is an
+  # empty board, not an error.
+  if [[ "${2:-}" == allow-empty && -d "$BOARD_PATH" ]] &&
+     [[ -z "$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print -quit)" ]]; then
+    BOARD_JSON='[]'
+  else
+    load_board
+  fi
 }
 
 # ---- the forge: where PRs live ---------------------------------------------------
@@ -358,6 +401,10 @@ forge_detect() {
 # different, already-reported case.)
 forge_off() { [[ "${TICKET_FORGE:-}" == none ]] && (( HAS_REMOTE )); }
 
+# Where git-only mode came from, for the messages that report it: a policy file's
+# `forge: none` (FORGE_SRC=policy, set by policy_forge_env) or the env.
+forge_off_why() { [[ "${FORGE_SRC:-}" == policy ]] && echo "policy" || echo "TICKET_FORGE=none"; }
+
 # Quiet: can the forge be asked at all? (The landing check and the status board
 # just skip it when not.)
 forge_ok() {
@@ -380,7 +427,7 @@ forge_need() {
       (( rc != 124 )) || die "az timed out after ${TICKET_NET_TIMEOUT:-90}s just checking its extensions — run any az command in a shell to see what it's waiting on"
       (( rc == 0 )) || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
     *) if forge_off; then
-         die "no forge access here (TICKET_FORGE=none) — merge the PR in Azure DevOps / on the forge yourself, and the next digest resolves the ticket from the git log"
+         die "no forge access here ($(forge_off_why)) — \`tk.sh push <board> <NN>\` ships a ticket without a PR; merge it on the forge yourself (Azure DevOps, GitHub) and the next digest resolves it from the git log"
        fi
        die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
   esac
@@ -609,3 +656,135 @@ load_models_env() {
   return 0
 }
 
+
+# ---- policy: how a board behaves ---------------------------------------------------
+# One JSON object, shared by tk-hub and the board session (docs/agents/policy.md).
+# Layers, later wins, each a JSON object merged with jq's `*` (objects deep, the
+# rest replaced): built-in defaults < box ${TICKET_BOX_POLICY:-~/.config/tk-daemon/policy.json}
+# < repo <ROOT>/.scratch/policy.json < board <BOARD_PATH>/policy.json. Env
+# TICKET_FORGE beats every layer's `forge`, and a repo with no remote has none.
+# A missing or empty file is an empty layer; malformed JSON or a non-object dies
+# naming the file. A known key of the wrong type dies too, but only where the
+# whole policy is asked for (tk.sh policy, policy-set): board_init checks `forge`
+# alone, so a bad unrelated key in the box file can't stop every board.
+# Unknown keys pass through untouched.
+
+# Prints one line per known key in the input object whose value is the wrong type;
+# with --arg only <key>, checks that key alone ("" = all).
+# shellcheck disable=SC2016  # a jq program: its $vars are jq's
+POLICY_CHECK='
+  def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
+              autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object"};
+  def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
+             count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object"};
+  def ok($t; $v):
+    if   $t == "bool"     then ($v | type) == "boolean"
+    elif $t == "forge"    then $v | IN("github", "azure", "none")
+    elif $t == "autonomy" then $v | IN("assist", "auto")
+    elif $t == "count"    then ($v | type) == "number" and $v == ($v | floor) and $v >= 1 and $v <= 1000
+    elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
+    else ($v | type) == "object" end;
+  to_entries[] | select($only == "" or .key == $only)
+  | kinds[.key] as $t | select($t != null) | select(ok($t; .value) | not)
+  | "\(.key) is \(.value | tojson) — want \(want[$t])"'
+
+# The numeric keys as plain integers when they are whole (2.0 prints as 2).
+# shellcheck disable=SC2016  # a jq program: its $vars are jq's
+POLICY_NORM='
+  reduce ("max_parallel", "usage_gate_pct") as $k (.;
+    if (.[$k] | type) == "number" and .[$k] == (.[$k] | floor) then .[$k] |= floor else . end)'
+
+# Sets POLICY_LAYER to the file's object ({} when absent or empty). Dies on
+# malformed JSON or a non-object; on a known key of the wrong type too, unless
+# $2 names the one key to check (forge for board_init) or is - (none).
+policy_read_layer() {
+  local f="$1" only="${2:-}" errs
+  POLICY_LAYER='{}'
+  [[ -e "$f" ]] || return 0
+  POLICY_LAYER="$(jq -cs 'if length == 0 then {} elif length == 1 and (.[0] | type) == "object" then .[0]
+                          else error("not one JSON object") end' "$f" 2>&1)" \
+    || { POLICY_LAYER="${POLICY_LAYER#jq: error (at *): }"; die "policy file $f is malformed: ${POLICY_LAYER#jq: }"; }
+  [[ "$only" == - ]] && return 0
+  errs="$(jq -r --arg only "$only" "$POLICY_CHECK" <<<"$POLICY_LAYER")"
+  [[ -z "$errs" ]] || die "policy file $f: ${errs//$'\n'/; }"
+}
+
+policy_box_file()   { echo "${TICKET_BOX_POLICY:-$HOME/.config/tk-daemon/policy.json}"; }
+policy_board_file() { echo "$BOARD_PATH/policy.json"; }
+
+# Sets POLICY_LAYERS: box * repo * board, no defaults. $1 as policy_read_layer's $2.
+# Needs ROOT and BOARD_PATH (the board layer only when that directory exists).
+policy_layers() {
+  local f only="${1:-}"
+  POLICY_LAYERS='{}'
+  for f in "$(policy_box_file)" "$ROOT/.scratch/policy.json"; do
+    policy_read_layer "$f" "$only"
+    POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * $b' <<<"$POLICY_LAYERS")"
+  done
+  if [[ -d "$BOARD_PATH" ]]; then
+    policy_read_layer "$(policy_board_file)" "$only"
+    POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * $b' <<<"$POLICY_LAYERS")"
+  fi
+}
+
+# A policy `forge` acts as TICKET_FORGE for every script when the env doesn't set
+# one, so `forge: none` stops gh/az calls in digest and view too, not only in
+# what the board session chooses to run. Checks `forge` only (see above). Sets
+# FORGE_SRC: no-remote, env, policy or detect, for the messages. Needs ROOT,
+# HAS_REMOTE and BOARD_PATH.
+# shellcheck disable=SC2034  # FORGE_SRC is read by forge_off_why
+policy_forge_env() {
+  if [[ -n "${TICKET_FORGE:-}" ]]; then FORGE_SRC="env"
+  else
+    policy_layers forge
+    TICKET_FORGE="$(jq -r '.forge // empty' <<<"$POLICY_LAYERS")"
+    FORGE_SRC="$([[ -n "$TICKET_FORGE" ]] && echo policy || echo detect)"
+  fi
+  (( HAS_REMOTE )) || FORGE_SRC=no-remote
+}
+
+# Sets POLICY_JSON: defaults * layers, then forge settled, numbers normalised.
+# Every known key is type-checked, unless $1 is - (as policy_read_layer's $2).
+# Needs ROOT, REMOTE, HAS_REMOTE and BOARD_PATH; runs forge_detect itself (so
+# FORGE is the detected one).
+# shellcheck disable=SC2034  # POLICY_JSON is read by tk.sh
+policy_resolve() {
+  local env_forge="${TICKET_FORGE:-}"
+  case "$env_forge" in github|azure|none|"") ;; *) die "TICKET_FORGE is '$env_forge' — github, azure or none" ;; esac
+  TICKET_FORGE="" forge_detect
+  policy_layers "${1:-}"
+  POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
+    {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
+     autonomy: "auto", max_parallel: 5, usage_gate_pct: 90,
+     synthesis: {backends: ["agy"], timeout: 300}} * .
+    | if $env != "" then .forge = $env else . end
+    | if $remote == 0 then .forge = "none" else . end
+    | '"$POLICY_NORM" <<<"$POLICY_LAYERS")"
+}
+
+# The policy as tk.sh digest prints it, every turn: one POLICY line, then a WARN
+# per known key of the wrong type. Lenient — the layers aren't type-checked, so a
+# bad unrelated key (in the box file, say) can't stop a digest — and in a
+# subshell, so FORGE and TICKET_FORGE stay board_init's.
+policy_digest_lines() {
+  ( policy_resolve - 2>/dev/null
+    jq -r --arg board "$BOARD_ID" --arg only "" '
+      "POLICY forge=\(.forge) require_human_before_pr=\(.require_human_before_pr) auto_merge=\(.auto_merge) autonomy=\(.autonomy)",
+      ([ '"$POLICY_CHECK"' ] | .[] | "WARN policy: \(.) (tk.sh policy \($board) names the file)")' <<<"$POLICY_JSON"
+  ) || echo "POLICY unknown — tk.sh policy $BOARD_ID says why"
+}
+
+# Stdin into <file>, all or nothing: a temp file in the same directory, given the
+# file's own mode (the umask's for a new one — mktemp makes it 0600), then mv. A
+# failure leaves <file> as it was and no temp file behind.
+write_atomic() {
+  local f="$1" tmp
+  tmp="$(mktemp "$f.XXXXXX")" || die "couldn't write $f"
+  # shellcheck disable=SC2064  # the temp file's name, fixed now
+  trap "rm -f $(printf '%q' "$tmp")" EXIT
+  if [[ -f "$f" ]]; then chmod --reference="$f" "$tmp"
+  else chmod "$(printf '%o' $(( 0666 & ~0$(umask) )))" "$tmp"; fi
+  cat >"$tmp" || die "couldn't write $f"
+  mv "$tmp" "$f" || die "couldn't write $f"
+  trap - EXIT
+}
