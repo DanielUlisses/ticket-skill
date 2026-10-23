@@ -57,3 +57,13 @@ run on the same id appends to that board. No id, no change. A plan that changes 
 one board per repo under the same name: each ticket (`**Repo:**`) lives on the board of the repo it
 changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch another repo's ticket
 (ADR 0005 §8). See `docs/agents/jira-parent.md`.
+
+### Board policy
+
+How a board behaves — `forge`, `require_human_before_pr`, `auto_merge`, `night_shift`,
+`autonomy`, `max_parallel`, `usage_gate_pct`, `synthesis` — is one JSON object that tk-hub and the
+board session both read with `tk.sh policy <board>` (`tk.sh digest` prints it as one `POLICY` line), layered (later wins) from built-in defaults, the
+box (`~/.config/tk-daemon/policy.json`), the repo (`.scratch/policy.json`) and the board
+(`.scratch/<board>/policy.json`, written by `tk.sh policy-set`). Env `TICKET_FORGE` beats `forge`, and a
+policy `forge` acts as `TICKET_FORGE` for every `tk.sh` verb when the env sets none. See
+`docs/agents/policy.md`.

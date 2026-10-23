@@ -18,11 +18,17 @@
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
+#   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
+#                                        [{slug, path, tickets}] — machine-readable, nothing else on stdout
+#   tk.sh export  <board>                one JSON object: board info, board.md, retro-results.md and every
+#                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub
 #   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #   tk.sh retro-save <board>             save ticket-retro's output (stdin) as retro/proposals.md; the previous one is archived
 #   tk.sh retro-apply <board> [approve|reject|defer <id>...]...  mark proposals by id, regenerate retro-results.md
+#   tk.sh policy  <board>                the resolved policy as JSON: defaults < box < repo < board, env TICKET_FORGE wins
+#   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
 #   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
@@ -85,13 +91,15 @@ cmd_digest() {
   # Every board turn starts here, so a slow one says where the time went.
   (( t2 - t0 < 15 )) || echo "WARN digest took $((t2 - t0))s: fetch $((t1 - t0))s, landing checks and $(forge_name) $((t2 - t1))s"
 
+  # The policy as of this digest, so the board session needn't ask every turn.
+  local policy; policy="$(policy_digest_lines)"
   local state_file prev="{}"
   state_file="$(board_state_dir)/$BOARD_SLUG.digest.json"
   [[ -f "$state_file" ]] && prev="$(cat "$state_file")"
   local out
   out="$(jq -n --argjson board "$BOARD_JSON" --argjson prev "$prev" --argjson full "$full" \
            --slurpfile facts <(printf '%s' "$facts") \
-           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson off "$(forge_off && echo true || echo false)" '
+           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson off "$(forge_off && echo true || echo false)" --arg policy "$policy" '
     ($facts | map({key: .nn, value: .}) | from_entries) as $f |
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
@@ -113,6 +121,7 @@ cmd_digest() {
       text: ([ "BOARD \($id) base \($base)" +
                  (([$board[].parent | select(. != "")] | unique) as $p |
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
+             + ($policy | split("\n"))
              + [ $rows[] | select($full == 1 or ($prev.lines == null) or ($was[.nn] != .line)) | .line ]
              + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.foreign // "") == "") | .nn ] | join(" ") | dash) ]
              + [ $rows[] | select(.status == "in-progress") |
@@ -260,7 +269,7 @@ run_gates() {
 # PRs need a remote. Without one there is nothing to gate: the developer merges
 # the branch locally and the next digest sees it by ancestry.
 need_pr_remote() {
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — no PRs here; merge the branch locally and the next digest resolves it"
+  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT (forge: none) — no PRs here; merge the branch locally and the next digest resolves it"
   forge_need
 }
 
@@ -334,7 +343,7 @@ resolve_ticket() {
     if forge_ok && ! err="$(forge_merged_pr "$branch" 2>&1 >/dev/null)"; then
       die "ticket $nn hasn't landed by git ($l), and $(forge_name) couldn't be asked: $(tail -1 <<<"$err")"
     fi
-    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_off && echo 'the forge was not asked (TICKET_FORGE=none)' || echo "$(forge_name) reports no merged PR from it") — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
+    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_off && echo "the forge was not asked ($(forge_off_why))" || echo "$(forge_name) reports no merged PR from it") — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
   fi
   if [[ "$l" == yes:pr#* ]]; then
     sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
@@ -360,7 +369,7 @@ cmd_why() {
     [[ -n "$branch" ]] && { run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null \
       || echo "  $REMOTE has no branch $branch (deleted after the merge, or pushed under another name)"; }
   fi
-  if forge_off; then echo "ticket $nn: $(jq -r .status <<<"$t"), forge: none (TICKET_FORGE=none) — git log only"
+  if forge_off; then echo "ticket $nn: $(jq -r .status <<<"$t"), forge: none ($(forge_off_why)) — git log only"
   else echo "ticket $nn: $(jq -r .status <<<"$t"), forge $(forge_name)$([[ $FORGE == azure ]] && echo " ($AZ_ORG / $AZ_PROJECT / $AZ_REPO)")"; fi
   local errs; errs="$(mktemp)"
   # The trace goes to stderr, straight through; only the verdict is captured.
@@ -376,7 +385,7 @@ cmd_why() {
       else echo "OPEN PR none — $(forge_name) lists no active PR from $branch"; fi
     else echo "OPEN PR unknown — $(forge_name) said: $(grep -v '^[[:space:]]*$' "$perr" | tail -1)"; fi
     rm -f "$perr"
-  elif forge_off; then echo "OPEN PR not asked — forge: none (TICKET_FORGE=none) — git log only"
+  elif forge_off; then echo "OPEN PR not asked — forge: none ($(forge_off_why)) — git log only"
   else echo "OPEN PR not asked — $(forge_name) CLI unavailable"; fi
 }
 
@@ -482,7 +491,7 @@ cmd_show() {
 # reviewing, since the agent is "working" either way.
 board_rows() {
   forge_cache_begin
-  board_rows_ "$@"
+  board_rows_
   local rc=$?; forge_cache_end; return $rc
 }
 
@@ -565,6 +574,56 @@ board_rows_() {
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
+}
+
+# ---- boards, export: the board as JSON, for tk-hub ------------------------------
+# Machine-readable and nothing else on stdout (jq -e must parse it); logs and
+# errors go to stderr. No fetch (fetch_board_refs, which prints WARNs to stdout,
+# is not called). PR state comes from the forge (gh/az) for in-progress tickets,
+# as the status board does; TICKET_FORGE=none keeps it offline. Forge errors go
+# to stderr.
+cmd_boards() {
+  need git; need jq
+  resolve_repo_root
+  local d slug n out=""
+  if [[ -d "$ROOT/.scratch" ]]; then
+    while IFS= read -r slug; do
+      [[ -n "$slug" ]] || continue
+      d="$ROOT/.scratch/$slug"
+      # load_file_board dies on a directory with no ticket files — that is a count of 0.
+      n="$(BOARD_PATH="$d" load_file_board 2>/dev/null | jq 'length' 2>/dev/null)" || n=0
+      out+="$(jq -cn --arg slug "$slug" --arg path "$d" --argjson n "${n:-0}" '{slug:$slug, path:$path, tickets:$n}')"$'\n'
+    done < <(find "$ROOT/.scratch" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  fi
+  printf '%s' "$out" | jq -s '.'
+}
+
+cmd_export() {
+  (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
+  need git; need jq
+  resolve_repo_root
+  # A board name wins over a repo directory of the same name (a board called
+  # `docs`), and is not lowercased like a Jira id: .scratch/ITM-12 is ITM-12.
+  local arg="$1"
+  [[ -d "$ROOT/.scratch/$arg" ]] && arg="$ROOT/.scratch/$arg"
+  board_init "$arg" allow-empty
+  local md="$BOARD_PATH/board.md" rr="$BOARD_PATH/retro-results.md"
+  [[ -f "$md" ]] || md=""; [[ -f "$rr" ]] || rr=""
+  errs="$(mktemp)"   # global, not local: the EXIT trap runs after the function returns
+  trap 'rm -f "${errs:-}"' EXIT
+  # Forge complaints go to a file, then to stderr once: a 2>>/dev/stderr
+  # reopen fails when stderr is a socket.
+  VIEW_ERRS="$errs" LANDED_ERRS="$errs" board_rows | jq \
+    --arg board_id "$BOARD_ID" --arg slug "$BOARD_SLUG" --arg repo "$REPO_NAME" --arg root "$ROOT" \
+    --arg base "$BASE_BRANCH" --arg forge "$FORGE" --argjson has_remote "$( ((HAS_REMOTE)) && echo true || echo false )" \
+    --arg board_path "$BOARD_PATH" \
+    '{board_id:$board_id, slug:$slug, repo:$repo, root:$root, base:$base, has_remote:$has_remote, forge:$forge, board_path:$board_path,
+      board_md: null, retro_results_md: null, tickets: .}' \
+    | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
+    | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi
+  local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
+  [[ -s "$errs" ]] && sort -u "$errs" >&2
+  return "$rc"
 }
 
 cmd_view() {
@@ -717,7 +776,7 @@ cmd_retro_apply() {
   board_init "${1:-}"; shift || true
   local props="$BOARD_PATH/retro/proposals.md" out="$BOARD_PATH/retro-results.md"
   [[ -f "$props" ]] || die "retro-apply: no $props — run the retro and tk.sh retro-save first; nothing written"
-  local known="" mark="" a id assign="" tmp_p="" tmp_o="" bad="" multi="" kind rest
+  local known="" mark="" a id assign="" marked bad="" multi="" kind rest
   local -A seen=()
   # Every awk pass below treats a ``` or ~~~ line as a fence toggle: inside a
   # fenced block (code in a **Change:**, say) nothing is a heading or a field.
@@ -775,20 +834,17 @@ cmd_retro_apply() {
     die "retro-apply: $multi in $props — keep one; nothing written"
   fi
 
-  trap 'rm -f "${tmp_p:-}" "${tmp_o:-}"' EXIT
   if [[ -n "$assign" ]]; then
     # One **Mark:** line right under each named heading; any earlier one goes.
-    tmp_p="$(mktemp "$props.XXXXXX")"
-    chmod --reference="$props" "$tmp_p"
-    awk -v assign="$assign" '
+    marked="$(awk -v assign="$assign" '
       BEGIN { n = split(assign, a, " "); for (i = 1; i <= n; i++) { split(a[i], kv, "="); want[kv[1]] = kv[2] } }
       /^[ \t]*(```|~~~)/ { fence = !fence; print; next }
       fence { print; next }
       /^##/ { id = "" }
       /^### [ME][0-9]+ / { print; id = $2; if (id in want) print "**Mark:** " want[id]; next }
       id in want && /^\*\*Mark:\*\*/ { next }
-      { print }' "$props" > "$tmp_p"
-    mv "$tmp_p" "$props"; tmp_p=""
+      { print }' "$props")"
+    write_atomic "$props" <<<"$marked"
     echo "MARKED $assign"
   fi
 
@@ -859,16 +915,62 @@ cmd_retro_apply() {
     }' "$props")"
   pending="${results##*$'\x1f'}"; results="${results%$'\n'$'\x1f'*}"
 
-  tmp_o="$(mktemp "$out.XXXXXX")"
-  # mktemp makes it 0600; the results file is read like any other in the repo.
-  if [[ -f "$out" ]]; then chmod --reference="$out" "$tmp_o"
-  else chmod "$(printf '%o' $(( 0666 & ~0$(umask) )))" "$tmp_o"; fi
-  printf '%s\n' "$results" > "$tmp_o"
-  mv "$tmp_o" "$out"; tmp_o=""
-  trap - EXIT
+  # The results file is read like any other in the repo: write_atomic keeps its mode.
+  write_atomic "$out" <<<"$results"
   echo "WROTE $out"
   if [[ "$pending" == PENDING ]]; then echo "PENDING none"
   else echo "$pending — unmarked, not in the results; mark them (args or by hand) and run again"; fi
+}
+
+# ---- policy ------------------------------------------------------------------------
+# How a board behaves, read by tk-hub and the board session alike
+# (docs/agents/policy.md). Not board_init: it needs only the repo and the board
+# directory, so it answers on a repo with no remote, no base branch or no tickets.
+policy_init() {
+  repo_init
+  resolve_board "${1:-}"
+}
+
+cmd_policy() {
+  policy_init "${1:-}"
+  policy_resolve
+  jq . <<<"$POLICY_JSON"
+}
+
+# key=value... into the board's own policy.json. A value is JSON when it parses
+# (true, 5, "x", {"a":1}), else a string; an empty value removes the key. A dotted
+# key sets inside an object (synthesis.timeout=600). Every known key is checked
+# before anything is written, and the file is replaced through a temp file. The
+# read-merge-write holds a lock (flock on <board>/.policy.lock, when flock is
+# installed) so two writers — tk-hub and the session, say — don't lose a change.
+cmd_policy_set() {
+  local usage="usage: tk.sh policy-set <board> key=value..."
+  policy_init "${1:?$usage}"; shift
+  (( $# )) || die "$usage"
+  [[ -d "$BOARD_PATH" ]] || die "board $BOARD_ID is not a directory ($BOARD_PATH) — no place for its policy.json"
+  local f arg key val obj errs lock lockfd
+  f="$(policy_board_file)"
+  if command -v flock >/dev/null 2>&1; then
+    lock="$BOARD_PATH/.policy.lock"
+    exec {lockfd}>>"$lock" || die "can't open the lock file $lock"
+    flock -w 10 "$lockfd" || die "another policy-set has held $lock for 10s — nothing written; try again"
+  fi
+  # Only malformed JSON stops it here: a bad value already in the file is
+  # checked with the result below, so policy-set can also be what fixes it.
+  policy_read_layer "$f" -; obj="$POLICY_LAYER"
+  for arg in "$@"; do
+    [[ "$arg" == *=* ]] || die "'$arg' is not key=value — $usage"
+    key="${arg%%=*}"; val="${arg#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)*$ ]] || die "'$key' is not a policy key"
+    obj="$(jq -c --arg k "$key" --arg v "$val" '($k | split(".")) as $p
+      | if $v == "" then delpaths([$p]) else setpath($p; ($v | try fromjson catch $v)) end' <<<"$obj" 2>&1)" \
+      || die "can't set '$arg': ${obj#jq: error (at <stdin>:*): }"
+  done
+  errs="$(jq -r --arg only "" "$POLICY_CHECK" <<<"$obj")"
+  [[ -z "$errs" ]] || die "not written — ${errs//$'\n'/; }"
+  obj="$(jq "$POLICY_NORM" <<<"$obj")" || die "couldn't write $f"
+  write_atomic "$f" <<<"$obj"
+  echo "WROTE $f"
 }
 
 # ---- help ----------------------------------------------------------------------
@@ -917,6 +1019,9 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   <board>/retro-results.md: approved items as a checklist for you
                                   and future tickets, then Deferred and Rejected. Unmarked ids are
                                   reported as pending; project-memory.md is never written
+  policy / set auto_merge true  show this board's policy (tk.sh policy), or change it for this
+                                  board only (tk.sh policy-set): forge, require_human_before_pr,
+                                  auto_merge, night_shift, autonomy, max_parallel, usage_gate_pct
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
 
@@ -937,8 +1042,16 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
   tkpu [board] NN    commit and push one ticket's branch, no PR (TICKET_FORGE=none)
   tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, push, helpers, retro,
-                     retro-save, retro-apply, help)
+                     retro-save, retro-apply, policy, policy-set, boards, export, help)
   tkhelp             this list
+
+For tools (JSON on stdout, logs on stderr — tk-hub reads these)
+  tk.sh boards            every board under .scratch/: [{slug, path, tickets}]
+  tk.sh export <board>    board info, board.md, retro-results.md and every ticket as the status
+                          board sees it, as one object (slug or boards[].path; `base` is the base
+                          branch name, not a sha; `has_remote` tells forge none from no remote).
+                          No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
+                          keeps it offline
 
 Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
@@ -951,6 +1064,14 @@ Forges (PRs, gates, merge) — picked from the remote URL
                                   or the Claude ticket-pr-creator agent
   TICKET_NET_TIMEOUT=90           seconds before a push or forge call gives up (they never prompt;
                                   a timeout usually means: sign in once in a shell — az devops login)
+  policy "forge": "none"          the same as TICKET_FORGE=none, set per repo or board in policy.json;
+                                  TICKET_FORGE, when set, beats it
+
+Policy (tk.sh policy <board>) — later wins: defaults < box < repo < board
+  box    $TICKET_BOX_POLICY, default ~/.config/tk-daemon/policy.json
+  repo   <main checkout>/.scratch/policy.json
+  board  .scratch/<board>/policy.json — what policy-set writes (key=value, typed; key= removes)
+  docs/agents/policy.md lists the keys and their defaults
 
 Elsewhere
   /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command
@@ -961,8 +1082,10 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|help) "cmd_$verb" "$@" ;;
+  digest|launch|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   retro-apply) cmd_retro_apply "$@" ;;
-  *) sed -n '2,29p' "$0"; exit 1 ;;
+  policy) cmd_policy "$@" ;;
+  policy-set) cmd_policy_set "$@" ;;
+  *) sed -n '2,35p' "$0"; exit 1 ;;
 esac
