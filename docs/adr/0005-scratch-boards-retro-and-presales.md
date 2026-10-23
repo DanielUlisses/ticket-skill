@@ -12,7 +12,7 @@ Boards could live in two homes: files under `.scratch/<board>/`, or GitHub issue
 second parser, run-state written as issue comments, labels, native dependencies, and every board
 script in two branches. It is gone:
 
-- `/ticket` always writes `.scratch/<board>/issues/<NN>-<slug>.md`, whatever tracker the repo has.
+- `/ticket` always writes `.scratch/<board>/issues/<NN>-<slug>.md`, whatever tracker the repo has, with a `board.md` note (goal, done-when, decisions, ticket table) beside `issues/`.
 - `board-lib.sh` resolves a Jira id, a slug or a path to one folder and parses only files;
   `tk.sh`, `pr-open.sh` and `merge-conflict.sh` lost their GitHub-board branches.
 - **PRs live on the repo's forge** — GitHub or Azure DevOps (§7). That is about where the code

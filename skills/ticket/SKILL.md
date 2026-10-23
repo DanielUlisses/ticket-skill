@@ -53,7 +53,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 
 Present the breakdown as a numbered list — title, repo (when the plan spans more than one), blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
 
-Once approved, write the tickets as files under `.scratch/<board>/issues/` at the project root (*Writing to `.scratch/`*, below). That folder is the board: the durable record the board session reads, and what it composes each ticket's brief from at launch. Boards live nowhere else — not on a GitHub tracker, even where the repo has one (ADR 0005).
+Once approved, write the tickets as files under `.scratch/<board>/issues/` at the project root, and `.scratch/<board>/board.md` beside them (*Writing to `.scratch/`*, below). That folder is the board: the durable record the board session reads, and what it composes each ticket's brief from at launch. Boards live nowhere else — not on a GitHub tracker, even where the repo has one (ADR 0005).
 
 ### The ticket body
 
@@ -133,7 +133,36 @@ With a Jira id, check for that folder first. If `.scratch/<board>/issues/` alrea
 ls <root>/.scratch/<board>/issues/ 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)-.*\.md$/\1/p' | sort -n | tail -1
 ```
 
-Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a file that is already there — appending adds files, nothing else.
+Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a ticket file that is already there — appending adds ticket files, and updates `board.md` (below).
+
+#### Then write `board.md`
+
+Beside `issues/`, write `.scratch/<board>/board.md`: the "why are we doing this and what's left" note a developer returning after a break reads first. It is a note, never a ticket — the board loader skips any file with no `# NN:` heading and no leading-digit name, and takes any line starting `# <digits>:` for a ticket heading, even inside a code block, so **no line in `board.md` may start with `# <digits>:`**. Terse, from the grilling, nothing invented:
+
+```markdown
+# <board> — board
+
+**Goal.** <why this board exists, one or two sentences>
+
+**Done when.** <the definition of done, observable>
+
+## Settled decisions (from the planning interview, <YYYY-MM-DD>)
+
+### <Group, e.g. Shape, Auth, Scope>
+- **<Decision>** — <terse reason or detail>
+
+## Tickets
+
+| NN | Repo | Title | Blocked by |
+|---|---|---|---|
+| 01 | <repo> | <Title> | — |
+| 02 | <repo> | <Title> | 01 |
+```
+
+- **Spanning repos:** write the same content, full ticket list included, to every repo's board; the table's Repo column says where each ticket lives.
+- **Appending to an existing Jira board:** if `board.md` exists, `Read` it and `Write` it back with the new tickets' rows added to the table and the new decisions under a new `## Settled decisions (<YYYY-MM-DD>)` heading below the earlier ones, keeping everything already there; leave goal and done-when alone unless the developer changed them. On a spanning plan every repo's copy gets the new rows and decisions.
+- **No `board.md` yet** (a board made before this step): build the table from every ticket file on the board(s), not only the new ones.
+- **A repo joining an existing multi-repo board:** copy goal, done-when and decisions from another repo's `board.md`, then add the rows.
 
 ## Phase 3 — Hand the board off
 
@@ -148,7 +177,8 @@ In a new Herdr tab at <root>:
   ~/.claude/skills/implement-tickets/scripts/board.sh <board>
 
 It asks which tickets to start and how to run them, then stays on to merge on your word,
-relay messages to ticket agents, and launch what each merge unblocks. Come back to a planning
+relay messages to ticket agents, and launch what each merge unblocks. The board's goal, done-when
+and settled decisions are in .scratch/<board>/board.md. Come back to a planning
 session — `/ticket <jira-id> …` appends to this board — when the plan itself needs to change.
 ```
 
