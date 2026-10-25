@@ -757,7 +757,7 @@ policy_resolve() {
   policy_layers "${1:-}"
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
-     autonomy: "auto", max_parallel: 5, usage_gate_pct: 90,
+     autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
      synthesis: {backends: ["agy"], timeout: 300}} * .
     | if $env != "" then .forge = $env else . end
     | if $remote == 0 then .forge = "none" else . end
