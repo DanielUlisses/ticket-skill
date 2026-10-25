@@ -26,7 +26,7 @@ key-shaped token is just text — and runs exactly as `/ticket` always has.
 The parent line is written on every ticket of the run, always lowercase. The coordinator's brief template is unchanged: the line rides along in the ticket
 body it already receives.
 
-Not changed by the id: branch names, `/small-ticket`, and the coordinator prompt.
+Not changed by the id: branch names and the coordinator prompt.
 
 ## A second run appends
 

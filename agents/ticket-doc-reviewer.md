@@ -1,6 +1,6 @@
 ---
 name: ticket-doc-reviewer
-description: Reviews a document a document ticket wrote (an EAD, a TDD, a presales scope, proposal, estimate or report) against the outline in its ticket and the sources it rests on, without editing. Use only when a document orchestrator or coordinator delegates review.
+description: Reviews a document a document ticket wrote (an EAD, a TDD, a presales scope, proposal, estimate or report) against the outline in its ticket and the sources it rests on, without editing. Use only when a document ticket's coordinator delegates review.
 tools: Read, Grep, Glob, Bash
 model: opus
 effort: medium

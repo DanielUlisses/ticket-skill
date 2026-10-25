@@ -41,7 +41,6 @@ for lib in ticket-git-repo.sh ticket-account.sh ticket-launcher.sh; do
   source "$LIB_DIR/$lib"
 done
 load_ticket_models
-COORDINATOR=config
 require_valid_effort
 
 print=0; [[ "${1:-}" == --print ]] && { print=1; shift; }

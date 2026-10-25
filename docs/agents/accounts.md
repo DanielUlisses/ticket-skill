@@ -34,7 +34,7 @@ section is the knob; that one is when it gets turned.
 beats it — the same order, and the same reason, as the model knob: the skills'
 `allowed-tools` entries are prefix patterns like
 `Bash(~/.claude/skills/ticket/scripts/launch.sh *)`, which a `TICKET_ACCOUNT=x ~/.claude/…`
-prefix would no longer match. Both launchers take it, and the board session gets it
+prefix would no longer match. The launcher takes it, and the board session gets it
 free, since `tk.sh launch` runs `/ticket`'s launcher.
 
 `launch.sh defaults` is how a question states what inheriting would actually mean. It prints
@@ -57,8 +57,8 @@ had landed somewhere else.
 `CLAUDE_CONFIG_DIR` points at a full Claude config directory, and Claude Code reads **that**
 root's `skills/` and `agents/`, not `~/.claude`'s. So a ticket launched on an account this
 repo was never installed into starts an agent with no `ticket-implementer`,
-`ticket-reviewer` or `ticket-tester` — and `/small-ticket`'s orchestrator delegates to all
-three. `install.sh` takes the root as its argument precisely for this:
+`ticket-reviewer` or `ticket-tester` installed, unless the launch's `--agents` definition
+supplies them. `install.sh` takes the root as its argument precisely for this:
 
 ```bash
 ./install.sh ~/.claude ~/.claude-switch/accounts/<name>

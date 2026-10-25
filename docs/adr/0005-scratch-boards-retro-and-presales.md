@@ -42,6 +42,8 @@ access. The curator is replaced by **`ticket-retro`** (Sonnet @ medium), which d
 
 ## 3. `/small-ticket` writes documents: `--doc`, and repos with no remote
 
+> Superseded in part by [0007](0007-doc-tickets-on-the-board.md): document tickets run on the board, and `/small-ticket` is gone.
+
 Presales work is mostly scoping a deliverable and writing it into a repo of documents — often with
 no remote — whose output is a Markdown file or a PDF. Two things stopped `/small-ticket` doing that:
 

@@ -10,7 +10,7 @@ effort. This is about *when the values are decided, and by whom*.
 
 Two half-measures, neither of which fits how a session actually runs:
 
-- `/small-ticket` asked **every** ticket which model should implement it. A session's work
+- The retired one-ticket launcher asked **every** ticket which model should implement it. A session's work
   usually belongs to one model, so the second and third answers are the first one retyped.
 - `/ticket` and `/implement-tickets` asked nothing about the account. It came from whichever
   directory link happened to apply, which made it inherited rather than chosen.
@@ -60,7 +60,7 @@ Three rules follow from "settled once":
 
 - **A session that launches nothing asks nothing.** The question goes immediately before the
   first launch, never on load: the board session asks after the developer has picked a wave,
-  `/small-ticket` after it has a ticket, and a round that starts nothing asks nothing. `/ticket`
+  and a round that starts nothing asks nothing. `/ticket`
   never asks: since ADR 0004 it launches nothing — the board session does.
 - **One launch can override without disturbing the session.** A value the developer names for
   a single ticket goes to that launch alone; the next ticket uses the session's settings again.

@@ -1,6 +1,6 @@
 ---
 name: ticket-criteria-checker
-description: Checks a ticket's uncommitted change against one acceptance criterion (or a short list) and returns met / not met / can't tell with evidence. Read-only, no judgement of code quality. Use when a /small-ticket orchestrator or /ticket coordinator fans out acceptance checks, one checker per criterion.
+description: Checks a ticket's uncommitted change against one acceptance criterion (or a short list) and returns met / not met / can't tell with evidence. Read-only, no judgement of code quality. Use when a /ticket coordinator fans out acceptance checks, one checker per criterion.
 tools: Read, Grep, Glob, Bash
 model: haiku
 effort: low

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Shared launcher mechanics for /ticket and /small-ticket — Herdr worktree,
-# workspace layout, and the Claude Code agent that gets the ticket.
+# Shared launcher mechanics for /ticket — Herdr worktree, workspace layout, and
+# the Claude Code agent that gets the ticket.
 #
-# Sourced, never executed. The two launchers have always been near-identical
-# siblings, so every change had to be made twice and kept byte-compatible by
-# hand. The mechanics live here once and the launchers are parameters, not
-# forks; each sets these before calling launcher_main:
+# Sourced, never executed. The mechanics live here and the launcher is
+# parameters, not a fork; it sets these before calling launcher_main:
 #
 #   SKILL_DIR         the skill's own directory. Two things hang off it: the
 #                     exit-3 hint, which tells the developer to re-run that
@@ -15,28 +13,21 @@
 #   RUN_NAME          subdirectory of ${XDG_RUNTIME_DIR:-/tmp} the rendered
 #                     prompt is written to
 #   PERMISSION_MODE   --permission-mode the agent starts with
-#   PERMISSION_LABEL  how the "starting ..." log line names that mode. Separate
-#                     from PERMISSION_MODE only because /small-ticket's line has
-#                     always read "plan mode" where /ticket's reads the mode
-#                     verbatim, and that output is contractual.
 #   DISALLOWED_TOOLS  array of --disallowedTools patterns
-#   DOC_TEMPLATE      optional: the template a `--doc` launch renders instead —
-#                     a ticket whose deliverable is a document (presales scope,
-#                     proposal, estimate), not code. Unset means the launcher has
-#                     no document mode and `--doc` is refused. ADR 0005.
+#   DOC_TEMPLATE      the template a `--doc` launch renders instead — a board
+#                     ticket whose deliverable is a document (`**Kind:** doc`),
+#                     not code. ADR 0007.
 #                     `--doc-type <ead|tdd|other>` (with `--doc`) fills the
 #                     template's {{DOC_GUIDANCE}}: for ead/tdd, a pointer to the
 #                     installed skill and its validator; for `other`, or a skill
 #                     that isn't installed, nothing — the generic doc brief.
-#   COORDINATOR       `config` — the session runs on TICKET_COORD_MODEL/EFFORT and
-#                     only the ticket-implementer subagent gets the ticket's model
-#                     and effort (/ticket, whose plan is already settled); or
-#                     `impl` — the session itself runs on the ticket's model and
-#                     effort (/small-ticket, whose orchestrator plans with the
-#                     developer). See docs/adr/0002-model-tiers-and-agent-roster.md.
+#
+# The session coordinates on TICKET_COORD_MODEL/EFFORT; only the
+# ticket-implementer subagent gets the ticket's model and effort, since the plan
+# is already settled. See docs/adr/0002-model-tiers-and-agent-roster.md.
 #
 # The caller sets PERMISSION_MODE after calling load_ticket_models, so a value in
-# ticket-models.env still reaches it — the order the launchers have always used.
+# ticket-models.env still reaches it.
 #
 # Requires ticket-git-repo.sh (die/log/need, resolve_repo_root,
 # resolve_base_branch, run_git_net) and ticket-account.sh (the claude-acc
@@ -394,13 +385,12 @@ check_ticket_account() {
   # An account is a whole Claude config root, and Claude Code reads *that* root's
   # skills/ and agents/, not ~/.claude's. A ticket launched on an account this
   # repo was never installed into starts an agent whose ticket-implementer,
-  # ticket-reviewer and ticket-tester subagents simply aren't there —
-  # /small-ticket's orchestrator delegates to all three. A warning rather than a
-  # refusal, because a /ticket run does its work in one session and needs none of
-  # them; install.sh takes the root as its argument, so name it.
+  # ticket-reviewer and ticket-tester subagents simply aren't there unless this
+  # launch's --agents definition supplies them. A warning rather than a refusal;
+  # install.sh takes the root as its argument, so name it.
   ACCOUNT_ROOT="$(account_root_for "$ACCOUNT_REQUESTED")"
   [[ -f "$ACCOUNT_ROOT/agents/ticket-implementer.md" ]] \
-    || log "warning: '$ACCOUNT_REQUESTED' has no agents/ticket-implementer.md under $ACCOUNT_ROOT — this repo was never installed into that account's config root, so a /small-ticket launched there loses its subagents. Fix with: ./install.sh $ACCOUNT_ROOT"
+    || log "warning: '$ACCOUNT_REQUESTED' has no agents/ticket-implementer.md under $ACCOUNT_ROOT — this repo was never installed into that account's config root, so a ticket launched there finds none of its skills or agents installed. Fix with: ./install.sh $ACCOUNT_ROOT"
 }
 
 # Writes the link (only when one was asked for) and resolves what the worktree
@@ -520,8 +510,6 @@ require_valid_effort() {
   # the command line.
   local role var
   for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
-    # Under COORDINATOR=impl the coordinator's own setting is never used.
-    [[ "$role" == COORD && "${COORDINATOR:-impl}" == impl ]] && continue
     var="${role}_EFFORT"
     effort_valid "${!var}" \
       || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
@@ -556,7 +544,7 @@ config_source() {
 # Called by the caller before it sets its own parameters, never from
 # launcher_main: the config file may set any TICKET_* variable, so anything
 # resolved from the environment — PERMISSION_MODE among them — has to be
-# resolved after this has run, which is the order both launchers have always had.
+# resolved after this has run.
 load_ticket_models() {
   MODELS_CONF="${TICKET_MODELS_CONF:-$(dirname "$SKILL_DIR")/ticket-models.env}"
   local exported_model="${TICKET_IMPL_MODEL:-}" exported_effort="${TICKET_IMPL_EFFORT:-}"
@@ -634,11 +622,11 @@ print_launch_defaults() {
   echo "MODEL=$IMPL_MODEL (from $IMPL_MODEL_SOURCE)"
   echo "EFFORT=$IMPL_EFFORT (from $IMPL_EFFORT_SOURCE)"
   echo "EFFORTS=$EFFORT_LEVELS"
-  # Only where the session coordinates on its own setting (/ticket): there MODEL=
-  # and EFFORT= reach the implementer alone, and the question should know it.
-  [[ "${COORDINATOR:-impl}" == config ]] && echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
+  # The session coordinates on its own setting: MODEL= and EFFORT= reach the
+  # implementer alone, and the question should know it.
+  echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
   # What board.sh starts the board session on.
-  [[ "${COORDINATOR:-impl}" == config ]] && echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
+  echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -778,7 +766,6 @@ launcher_main() {
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
   DOC=0   # only the --doc flag sets it; never inherited from the environment
   DOC_TYPE=""
-  REVIEW_EFFORT_FLAG=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -792,9 +779,6 @@ launcher_main() {
       --doc-type)  [[ $# -ge 2 ]] || die "--doc-type needs a type — one of: $DOC_TYPES"
                    DOC_TYPE="$2"; shift 2 ;;
       --doc-type=*) DOC_TYPE="${1#--doc-type=}"; shift ;;
-      --review-effort) [[ $# -ge 2 ]] || die "--review-effort needs a level — one of: $EFFORT_LEVELS"
-                   REVIEW_EFFORT_FLAG="$2"; shift 2 ;;
-      --review-effort=*) REVIEW_EFFORT_FLAG="${1#--review-effort=}"; shift ;;
       -*)          die "unknown flag: $1" ;;
       *)           ARGS+=("$1"); shift ;;
     esac
@@ -815,11 +799,8 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--review-effort <level>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
-  if (( ${DOC:-0} )); then
-    [[ -n "${DOC_TEMPLATE:-}" ]] || die "--doc: this launcher has no document mode — use /small-ticket"
-    TEMPLATE="$DOC_TEMPLATE"
-  fi
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  (( ! ${DOC:-0} )) || TEMPLATE="$DOC_TEMPLATE"
   if [[ -n "$DOC_TYPE" ]]; then
     (( ${DOC:-0} )) || die "--doc-type is only for a --doc launch"
     [[ " $DOC_TYPES " == *" $DOC_TYPE "* ]] || die "unknown doc type '$DOC_TYPE' — one of: $DOC_TYPES"
@@ -830,14 +811,10 @@ launcher_main() {
   # How hard the reviewer thinks. A ticket nothing can test — its Seams line says
   # None: no suite, or infra that only runs live — is reviewed at
   # TICKET_REVIEW_EFFORT_UNTESTED, since that review is the last check before a
-  # real environment. --review-effort (the /small-ticket skill passes it when the
-  # plan-to-be has no suite) beats both. A document has no code to test, so its
-  # `None` says nothing about risk: its review stays at TICKET_DOC_REVIEW_*.
+  # real environment. A document has no code to test, so its `None` says nothing
+  # about risk: its review stays at TICKET_DOC_REVIEW_*.
   REVIEW_EFFORT_WHY="config"
-  if [[ -n "$REVIEW_EFFORT_FLAG" ]]; then
-    effort_valid "$REVIEW_EFFORT_FLAG" || die "invalid --review-effort '$REVIEW_EFFORT_FLAG' — one of: $EFFORT_LEVELS"
-    REVIEW_EFFORT="$REVIEW_EFFORT_FLAG"; REVIEW_EFFORT_WHY="the --review-effort flag"
-  elif (( ! ${DOC:-0} )) && grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
+  if (( ! ${DOC:-0} )) && grep -qiE '^\*\*Seams under test:\*\*[[:space:]]*None' "$TICKET_FILE"; then
     REVIEW_EFFORT="$REVIEW_EFFORT_UNTESTED"; REVIEW_EFFORT_WHY="untested: the ticket's Seams line says None"
   fi
   [[ -f "$TEMPLATE" ]] || die "template not found: $TEMPLATE"
@@ -846,14 +823,8 @@ launcher_main() {
     || die "invalid branch '$BRANCH' — use kebab-case without '/' or '--', up to 40 chars (e.g. fix-webhook-retry)"
   git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "branch name rejected by git: $BRANCH"
   [[ "$IMPL_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid model '$IMPL_MODEL'"
-  # /small-ticket's orchestrator plans with the developer, so it thinks on the
-  # ticket's model and effort; /ticket's coordinator only dispatches a settled
-  # plan, so it runs on its own (cheap) setting from config/models.env.
-  case "${COORDINATOR:-impl}" in
-    impl)   COORD_MODEL="$IMPL_MODEL"; COORD_EFFORT="$IMPL_EFFORT" ;;
-    config) ;;
-    *)      die "internal: COORDINATOR must be 'impl' or 'config', not '$COORDINATOR'" ;;
-  esac
+  # The coordinator only dispatches a settled plan, so it runs on its own (cheap)
+  # setting from config/models.env, not the ticket's.
   [[ "$COORD_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid coordinator model '$COORD_MODEL'"
   check_ticket_account
 
@@ -1128,15 +1099,13 @@ SUMMARY
   fi
 
   # ---- 3. start Claude Code in the 'agent' tab -------------------------------
-  # PERMISSION_MODE and DISALLOWED_TOOLS are where the two launchers part company
-  # and must not be flattened: /small-ticket starts in plan mode with only
-  # commit/push blocked, because a developer approves the plan in the pane;
-  # /ticket starts unattended, so the guardrail moves entirely to the tool blocks.
+  # The agent starts unattended (PERMISSION_MODE), so the guardrail is entirely
+  # the tool blocks in DISALLOWED_TOOLS.
   # The roster (SESSION_AGENTS_JSON) was settled before the worktree was made.
   local -a agents_arg=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
-  log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_LABEL) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
+  log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_MODE) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
   log "subagents: $SESSION_AGENTS_STATUS"
   set +e
   # --agents goes before --disallowedTools: that one is variadic and would

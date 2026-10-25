@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Shared git/repo resolution for the ticket skills' scripts.
 #
-# Sourced, never executed. /ticket's and /small-ticket's launch.sh and
+# Sourced, never executed. /ticket's launch.sh, /implement-tickets' scripts and
 # /sweep-tickets' sweep.sh all resolve the same main checkout and the same base
 # branch. /sweep-tickets' safety guards rest on that resolution being the same
-# one the launchers used — the main checkout is refused even with --force, and a
+# one the launcher used — the main checkout is refused even with --force, and a
 # dirty worktree is refused that --force cannot override — which is why this is
 # one definition rather than three copies kept in step by hand.
 #

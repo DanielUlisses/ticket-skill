@@ -1,6 +1,6 @@
 ---
 name: ticket-reviewer
-description: Code-reviews the uncommitted changes of a ticket, without editing files. Use only when a /small-ticket orchestrator or /ticket coordinator delegates review.
+description: Code-reviews the uncommitted changes of a ticket, without editing files. Use only when a /ticket coordinator delegates review.
 tools: Read, Grep, Glob, Bash, Skill
 model: opus
 effort: medium
@@ -52,4 +52,4 @@ Inviolable rules: never `git commit`, `git push`, `git add`, `git stash`, `git r
 
 Return one list of findings — the code review's and yours together, deduplicated — each tagged with its axis (`standards`, `spec`, `correctness`, `security`, `infra`, `tests`) and with: **blocking** or **suggestion**, `file:line`, the problem, and the proposed fix. If there are no blocking findings, say so explicitly.
 
-Then add a `## Remember` heading with anything **durable** you learned about this repo while reading it — a convention it follows but never states, a pattern that repeats across files, a file that looks authoritative and isn't. Facts about the repo, not findings about this diff; `Nothing durable this ticket.` is a fine answer, and better than a padded list. Don't write any of it to a file — the orchestrator passes it to the developer, who decides what the repo remembers.
+Then add a `## Remember` heading with anything **durable** you learned about this repo while reading it — a convention it follows but never states, a pattern that repeats across files, a file that looks authoritative and isn't. Facts about the repo, not findings about this diff; `Nothing durable this ticket.` is a fine answer, and better than a padded list. Don't write any of it to a file — the coordinator passes it to the developer, who decides what the repo remembers.

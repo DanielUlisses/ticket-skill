@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # /ticket implementation launcher — Herdr worktree + Claude Code
 #
-# The worktree/tab/agent mechanics are the shared ticket-launcher.sh, the same
-# ones /small-ticket runs; this file is only what differs. It is aimed at an
-# already-approved ticket instead of a plan to be drafted: the `agent` tab runs
-# unattended (no plan mode, no one there to click a permission prompt on a Bash
-# call mid-TDD-loop), so the guardrail moves entirely to --disallowedTools: git
+# The worktree/tab/agent mechanics are the shared ticket-launcher.sh; this file
+# is only the parameters. It is aimed at an already-approved ticket instead of a
+# plan to be drafted: the `agent` tab runs unattended (no plan mode, no one there
+# to click a permission prompt on a Bash call mid-TDD-loop), so the guardrail moves entirely to --disallowedTools: git
 # add/commit/push/stash/reset/rebase and branch switches are blocked, since this
 # ticket must land unstaged for review.
 #
@@ -90,17 +89,13 @@ done
 # parameters below are resolved from the environment.
 load_ticket_models
 
-# ---- what makes this /ticket and not /small-ticket ---------------------------
+# ---- this launcher's parameters ----------------------------------------------
 TEMPLATE="$SKILL_DIR/templates/ticket-agent-prompt.md"
 # `--doc`: a board ticket whose deliverable is a document (`**Kind:** doc`) —
 # drafted from its outline, humanized, reviewed and validated, never interviewed.
 DOC_TEMPLATE="$SKILL_DIR/templates/ticket-doc-prompt.md"
 RUN_NAME="ticket"
 PERMISSION_MODE="${TICKET_IMPL_PERMISSION_MODE:-bypassPermissions}"
-PERMISSION_LABEL="$PERMISSION_MODE"
-# The plan is settled, so the session coordinates on TICKET_COORD_MODEL/EFFORT
-# and the ticket's model and effort go to the ticket-implementer subagent only.
-COORDINATOR="config"
 DISALLOWED_TOOLS=(
   "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)"
   "Bash(git stash:*)" "Bash(git reset:*)" "Bash(git rebase:*)"

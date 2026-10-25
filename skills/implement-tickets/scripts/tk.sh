@@ -1220,8 +1220,8 @@ Policy (tk.sh policy <board>) — later wins: defaults < box < repo < board
   docs/agents/policy.md lists the keys and their defaults
 
 Elsewhere
-  /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command
-  /small-ticket <task>       one ad-hoc ticket (--doc is frozen: document work goes through /ticket)
+  /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command — a one-off
+                             task, code or document, is a one-ticket board
   /sweep-tickets             after the retro: list and remove leftover worktrees and branches
 HELP
 }

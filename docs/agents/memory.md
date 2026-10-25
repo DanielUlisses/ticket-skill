@@ -25,7 +25,7 @@ code (ADR `0006-project-memory-in-scratch.md`).
 Three things follow from that path:
 
 - **It is read from the *main checkout*, never from the ticket's worktree.** The
-  launchers already resolve the main repo root (`git worktree list --porcelain`, first
+  launcher already resolves the main repo root (`git worktree list --porcelain`, first
   entry) to decide where to branch from, and memory is read from the same place. So every
   ticket — including one launched from inside another ticket's worktree — is briefed with
   the same, canonical memory.
@@ -57,7 +57,7 @@ you. Most repos will never have one, and that is fine.
 
 Short and factual. **It is paid for on every single launch**, so every line has to earn
 its tokens against everything else competing for that context. A page is generous; the
-launchers warn above 8 KiB (`MEMORY_WARN_BYTES`) and never truncate.
+launcher warns above 8 KiB (`MEMORY_WARN_BYTES`) and never truncate.
 
 Worth keeping:
 
@@ -80,8 +80,8 @@ appear, and copy that shape rather than inventing one.
 
 ## How injection works
 
-Both launchers reach this through the same code: `lib/ticket-launcher.sh`, which
-`skills/small-ticket/scripts/launch.sh` and `skills/ticket/scripts/launch.sh` each source.
+The launcher reaches this through `lib/ticket-launcher.sh`, which
+`skills/ticket/scripts/launch.sh` sources.
 Right before rendering the prompt it resolves the file against the main repo root, and —
 if it has any content — wraps it in a `## Project memory` heading with a short preamble and
 substitutes it for the `{{PROJECT_MEMORY}}` placeholder in the template. Absent or blank
@@ -89,11 +89,10 @@ substitutes nothing, and takes the placeholder's own blank line with it.
 
 | Skill | Template | Reaches it via |
 |---|---|---|
-| `/small-ticket` | `skills/small-ticket/templates/agent-prompt.md` | its own `launch.sh` |
-| `/ticket` | `skills/ticket/templates/ticket-agent-prompt.md` | its own `launch.sh` |
+| `/ticket` | `skills/ticket/templates/ticket-agent-prompt.md` (`ticket-doc-prompt.md` for `--doc`) | its own `launch.sh` |
 | `/implement-tickets` (the board session) | the same as `/ticket` | `tk.sh launch` runs `/ticket`'s `launch.sh` |
 
-The template is the only part of this each `launch.sh` still decides for itself; the
+The template is the only part of this `launch.sh` decides for itself; the
 resolution and the wrapping are the shared library's.
 
 `/implement-tickets` gets injection for free, because it ships no launcher of its own.
@@ -109,15 +108,15 @@ Memory is prose, it is read once, by the launcher, at the moment a worktree is c
 
 ### The coordinator has to pass it on
 
-Both `/small-ticket` and, since ADR 0002, `/ticket` brief a coordinator that delegates the
+Since ADR 0002, `/ticket` briefs a coordinator that delegates the
 actual work to the `ticket-*` subagents. Those subagents get
 a fresh context and **never see the launcher's prompt** — injection reaches the
-orchestrator and stops there. So the orchestrator's template tells it, at the Phase 2
+coordinator and stops there. So the coordinator's template tells it, at the Phase 2
 hand-off, to pass on whatever in the memory bears on the files the implementer is about to
 touch. Review and testing aren't given it: they read the diff and run the checks, and
 neither was worth the tokens; nor are the Haiku scouts, researchers and criteria checkers,
 which answer one narrow question each. If that turns out wrong, the verify phases of
-`skills/small-ticket/templates/agent-prompt.md` and `skills/ticket/templates/ticket-agent-prompt.md`
+`skills/ticket/templates/ticket-agent-prompt.md` and `ticket-doc-prompt.md`
 are where it would change.
 
 The scouts, researchers and criteria checkers don't close with `## Remember` — their whole
@@ -162,7 +161,7 @@ Approved lessons from past retros live in `.scratch/<board>/retro-results.md`, w
 at launch `resolve_retro_results` (`lib/ticket-launcher.sh`) globs
 `<main checkout>/.scratch/*/retro-results.md` — the main checkout, as for project memory,
 since a worktree has no `.scratch/` — and the `{{RETRO_RESULTS}}` placeholder (beside
-`{{PROJECT_MEMORY}}` in all four templates (`/ticket`'s code and doc briefs, `/small-ticket`'s code and `--doc` briefs)) becomes a
+`{{PROJECT_MEMORY}}` in both templates, `/ticket`'s code and doc briefs) becomes a
 `## Retro results` block with one absolute-path line per file, telling the agent to read it
 if it exists, follow approved items that bear on its work, and never edit it. The `/ticket`
 coordinator passes the relevant items on to the implementer; the `/ticket` planner reads the
