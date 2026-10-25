@@ -1,6 +1,6 @@
 ---
 name: small-ticket
-description: Opens an isolated Herdr worktree for one already-defined ticket, plans it in Claude Code, then implements, reviews, and tests it via subagents, leaving everything uncommitted. Also takes document tickets — a presales scope, proposal or estimate written as Markdown or a PDF, in a repo that may have no remote. For a rough idea that still needs sharpening and splitting into tickets, use /ticket instead.
+description: Opens an isolated Herdr worktree for one already-defined ticket, plans it in Claude Code, then implements, reviews, and tests it via subagents, leaving everything uncommitted. Its `--doc` mode for document tickets (a presales scope, proposal or estimate) still works but is frozen: document work goes through /ticket, even for a single document. For a rough idea that still needs sharpening and splitting into tickets, use /ticket instead.
 argument-hint: "<task description>"
 disable-model-invocation: true
 allowed-tools: Bash(~/.claude/skills/small-ticket/scripts/launch.sh *), Bash(herdr *), Bash(git *), Bash(mktemp *), Read, Write, AskUserQuestion
@@ -33,6 +33,8 @@ If the ticket is empty, ask for the task description and stop.
 ## 2b. Code or document?
 
 A ticket is a **document** ticket when its deliverable is the document itself — a presales scope, a proposal, a statement of work, an estimate, a report — written as Markdown and maybe rendered to a PDF, rather than a change to a program. The repo is often a plain folder of such documents, sometimes with no remote. Say which you decided, in one line, and on what: "document ticket — the deliverable is a scope for the client". Ask only when you genuinely can't tell.
+
+**`--doc` is frozen.** It keeps working and gets no new features; document work — an EAD, a TDD, a presales scope, even a single document — belongs to `/ticket`, which grills the content, writes the `**Kind:** doc` ticket with its `## Outline`, and hands it to the board. Say so to the developer and suggest `/ticket`; launch with `--doc` only if they still want it here.
 
 A document ticket launches with `--doc`: the orchestrator scopes the document with the developer (grilling where the scope is open), outlines it as the plan, and its subagents draft, review (`ticket-doc-reviewer`: commitments, accuracy, numbers, coverage) and render it — no seams, no test suite. Its branch type is `docs`.
 
