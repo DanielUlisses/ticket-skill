@@ -13,6 +13,11 @@
 #       the same commit and push, and no PR — for TICKET_FORGE=none, where the
 #       developer merges on the forge; asks no forge anything (message optional
 #       when the paths file is empty: the commit is already made)
+#   pr-open.sh check  <board> <NN> --local
+#   pr-open.sh commit <board> <NN> --message-file <f> --paths-file <f>
+#       the same guarded commit, and no push — for a repo with no remote, where
+#       tk.sh merge then merges the branch into the local base (message optional
+#       when the paths file is empty and the branch already has commits)
 #
 # Exit codes: 0 ok | 1 error/refused
 set -euo pipefail
@@ -30,14 +35,24 @@ source "$LIB_DIR/ticket-git-repo.sh"
 source "$SKILL_DIR/scripts/board-lib.sh"
 
 verb="${1:-}"; board="${2:-}"; nn="${3:-}"
-[[ "$verb" =~ ^(check|open|push)$ && -n "$nn" ]] || { sed -n '2,17p' "$0"; exit 1; }
+[[ "$verb" =~ ^(check|open|push|commit)$ && -n "$nn" ]] || { sed -n '2,22p' "$0"; exit 1; }
 shift 3
 # Push mode: commit and push only. No PR is opened or looked up, so no forge is needed.
+# Local mode: commit only — no remote, no forge; the branch is merged locally after.
 PUSH=0; [[ "$verb" == push ]] && PUSH=1
+LOCAL=0; [[ "$verb" == commit ]] && LOCAL=1
 [[ "$verb" == check && "${1:-}" == --push ]] && { PUSH=1; shift; }
+[[ "$verb" == check && "${1:-}" == --local ]] && { LOCAL=1; shift; }
 board_init "$board"
-(( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push or open a PR; the developer commits and merges locally"
-(( PUSH )) || forge_need
+if (( LOCAL )); then
+  (( ! HAS_REMOTE )) || die "this repo has a '$REMOTE' remote — a ticket ships there by PR (tk.sh pr) or push (tk.sh push), not a local commit and merge"
+else
+  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push or open a PR; tk.sh merge commits and merges the ticket locally"
+fi
+(( PUSH || LOCAL )) || forge_need
+# What the branch's own commits are counted from: the remote's base, or with no
+# remote the local one.
+BASE_AT="$REMOTE/$BASE_BRANCH"; (( LOCAL )) && BASE_AT="$BASE_BRANCH"
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
 WT="$(jq -r .worktree <<<"$t")"
@@ -52,8 +67,9 @@ preflight() {
   [[ -n "$BRANCH" && -d "$WT" ]] || die "ticket $nn has no worktree at ${WT:-?}"
   [[ "$(g rev-parse --abbrev-ref HEAD)" == "$BRANCH" ]] || die "$WT is not on $BRANCH"
   ! g rev-parse -q --verify MERGE_HEAD >/dev/null || die "a merge is in progress in $WT"
-  require_agent_quiet "$(jq -r .agent <<<"$t")" "$( ((PUSH)) && echo "pushing" || echo "opening a PR")"
-  (( ! PUSH )) || return 0
+  local doing="opening a PR"; (( PUSH )) && doing="pushing"; (( LOCAL )) && doing="committing"
+  require_agent_quiet "$(jq -r .agent <<<"$t")" "$doing"
+  (( ! PUSH && ! LOCAL )) || return 0
   local pr; pr="$(forge_pr_open "$BRANCH")" || die "couldn't ask $(forge_name) whether $BRANCH has an open PR — not signed in, or it timed out after ${TICKET_NET_TIMEOUT:-90}s (az devops login / gh auth login in a shell, then ask again)"
   pr="$(jq -r '.url // empty' <<<"${pr:-null}")"
   [[ -z "$pr" ]] || die "$BRANCH already has an open PR: $pr"
@@ -81,7 +97,8 @@ count_unpushed() {
 }
 
 # Stage exactly the named paths, commit them with <msg>, push the branch — the
-# one guarded path both open and push take. Sets LEFT to what stays uncommitted.
+# one guarded path open, push and commit take (commit stops before the push).
+# Sets LEFT to what stays uncommitted.
 # <retry> is how to ask again once a push failed, the commit already made.
 commit_and_push() {
   local msg="$1" paths="$2" retry="$3" files r staged p rc; local -a want
@@ -100,9 +117,13 @@ commit_and_push() {
     [[ -s "$msg" ]] || die "no commit message for the named paths — refusing"
     g add -- "${want[@]}"
     g commit -q -F "$msg" -- "${want[@]}"
-    echo "STEP committed $(g rev-parse --short HEAD) — pushing $BRANCH to $REMOTE" >&2
+    echo "STEP committed $(g rev-parse --short HEAD)$( ((LOCAL)) || echo " — pushing $BRANCH to $REMOTE")" >&2
   else
-    if (( PUSH )); then
+    if (( LOCAL )); then
+      [[ "$(g rev-list --count "$BASE_AT..HEAD" 2>/dev/null || echo 0)" -gt 0 ]] || die "no paths named and no commits on $BRANCH past $BASE_BRANCH — nothing to merge"
+      echo "STEP nothing to commit — $BRANCH already has its commits" >&2
+      LEFT="$(changed)"; return 0
+    elif (( PUSH )); then
       count_unpushed
       (( UNPUSHED > 0 )) || die "no paths named and nothing on $BRANCH that $REMOTE doesn't have — nothing to push"
     elif [[ "$(g rev-list --count "$REMOTE/$BASE_BRANCH..HEAD" 2>/dev/null || echo 0)" -eq 0 ]]; then
@@ -111,6 +132,7 @@ commit_and_push() {
     echo "STEP nothing to commit — pushing $(g rev-parse --short HEAD) on $BRANCH to $REMOTE" >&2
   fi
   LEFT="$(changed)"
+  (( ! LOCAL )) || return 0
   rc=0; quiet_net git -C "$WT" push -q -u "$REMOTE" "HEAD:refs/heads/$BRANCH" || rc=$?
   case $rc in
     0) ;;
@@ -125,15 +147,18 @@ case "$verb" in
   check)
     preflight
     files="$(changed)"
-    ahead="$(g rev-list --count "$REMOTE/$BASE_BRANCH..HEAD" 2>/dev/null || echo 0)"
-    if (( PUSH )); then
+    ahead="$(g rev-list --count "$BASE_AT..HEAD" 2>/dev/null || echo 0)"
+    if (( LOCAL )); then
+      [[ -n "$files" || "$ahead" -gt 0 ]] || die "nothing to merge: no changes and no commits on $BRANCH"
+    elif (( PUSH )); then
       count_unpushed
       [[ -n "$files" || "$UNPUSHED" -gt 0 ]] || die "nothing to push: no changes, and $REMOTE already has every commit on $BRANCH"
     else
       [[ -n "$files" || "$ahead" -gt 0 ]] || die "nothing to open a PR for: no changes and no commits on $BRANCH"
     fi
     echo "READY ticket $nn on $BRANCH (base $BASE_BRANCH) in $WT"
-    if (( PUSH )); then echo "MODE push — a commit and a pushed branch, no PR"
+    if (( LOCAL )); then echo "MODE local — a commit on the branch, merged into the local $BASE_BRANCH; no remote"
+    elif (( PUSH )); then echo "MODE push — a commit and a pushed branch, no PR"
     else echo "FORGE $(forge_name)$([[ $FORGE == azure ]] && echo " — description capped at 4000 characters; keep the body under it")"; fi
     echo "COMMITS already on the branch: $ahead"
     (( ! PUSH )) || echo "UNPUSHED $UNPUSHED"
@@ -143,7 +168,7 @@ case "$verb" in
     p="$(jq -r .parent <<<"$t")"; [[ -n "$p" ]] && echo "PARENT ${p^^}"
     rep="$(board_state_dir)/reports/$BRANCH.md"
     if [[ -s "$rep" ]]; then echo "REPORT $rep"; else echo "REPORT none"; fi
-    (( ! PUSH )) || exit 0
+    (( ! PUSH && ! LOCAL )) || exit 0
     skill="$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" -path '*mattpocock*' -path '*/pr/SKILL.md' 2>/dev/null | head -1 || true)"
     echo "PR_SKILL ${skill:-none found — use the PR template, or summary / evidence / risk}"
     tmpl="$(ls "$WT"/.github/pull_request_template.md "$WT"/.github/PULL_REQUEST_TEMPLATE.md "$WT"/PULL_REQUEST_TEMPLATE.md "$WT"/docs/PULL_REQUEST_TEMPLATE.md 2>/dev/null | head -1 || true)"
@@ -171,7 +196,7 @@ case "$verb" in
     echo "OPENED $url"
     echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, pushed"
     print_left ;;
-  push)
+  push|commit)
     msg="" paths=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -179,7 +204,7 @@ case "$verb" in
         *) die "unknown argument: $1" ;;
       esac
     done
-    [[ -f "$paths" ]] || die "push needs --paths-file (and --message-file when it names paths)"
+    [[ -f "$paths" ]] || die "$verb needs --paths-file (and --message-file when it names paths)"
     clean="$(mktemp -d)"; trap 'rm -rf "$clean"' EXIT
     : >"$clean/msg"
     if [[ -n "$msg" ]]; then
@@ -189,6 +214,11 @@ case "$verb" in
       [[ -s "$clean/msg" ]] || die "the commit message is empty once attribution lines are removed"
     fi
     preflight
+    if (( LOCAL )); then
+      commit_and_push "$clean/msg" "$paths" ""
+      echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, not pushed (no remote)"
+      print_left; exit 0
+    fi
     commit_and_push "$clean/msg" "$paths" "run tk.sh push again — the commit already made is pushed with it"
     # The remote-tracking copy is what the board reads as "pushed"; set it even
     # where a narrow fetch refspec kept git push from doing so.

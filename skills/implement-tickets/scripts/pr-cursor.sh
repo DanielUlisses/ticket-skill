@@ -10,10 +10,13 @@
 # and opened as a PR (exactly the named paths, no force, attribution stripped).
 # See docs/adr/0005-scratch-boards-retro-and-presales.md §9.
 #
-# Usage: pr-cursor.sh <board> <NN> [--push]
-#   --push  commit and push only, no PR (tk.sh push, for TICKET_FORGE=none): Cursor
-#           writes the commit message and picks the paths; pr-open.sh push does the
-#           rest. Always the Cursor CLI — TICKET_PR_RUNNER doesn't apply.
+# Usage: pr-cursor.sh <board> <NN> [--push|--commit]
+#   --push    commit and push only, no PR (tk.sh push, for TICKET_FORGE=none): Cursor
+#             writes the commit message and picks the paths; pr-open.sh push does the
+#             rest. Always the Cursor CLI — TICKET_PR_RUNNER doesn't apply.
+#   --commit  commit only, no push and no PR (tk.sh merge, in a repo with no remote,
+#             which then merges the branch locally): pr-open.sh commit does the git.
+#             Always the Cursor CLI, as --push.
 #
 # Optional variables (also read from ticket-models.env):
 #   TICKET_PR_RUNNER        cursor (default) | claude — claude makes tk.sh pr exit 5, and the
@@ -23,7 +26,7 @@
 #   TICKET_CURSOR_ARGS      extra arguments for the Cursor CLI, word-split
 #   TICKET_CURSOR_TIMEOUT   seconds (default 300)
 #
-# Exit codes: 0 opened (or pushed) | 1 error or refused
+# Exit codes: 0 opened (or pushed, or committed) | 1 error or refused
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,14 +42,24 @@ source "$LIB_DIR/ticket-git-repo.sh"
 source "$SKILL_DIR/scripts/board-lib.sh"
 
 load_models_env
-board="${1:-}"; nn="${2:-}"; PUSH=0
+board="${1:-}"; nn="${2:-}"; PUSH=0; LOCAL=0
 [[ "${3:-}" == --push ]] && PUSH=1
-[[ -n "$nn" && ( -z "${3:-}" || "$PUSH" == 1 ) ]] || { sed -n '2,27p' "$0"; exit 1; }
+[[ "${3:-}" == --commit ]] && LOCAL=1
+[[ -n "$nn" && ( -z "${3:-}" || "$PUSH" == 1 || "$LOCAL" == 1 ) ]] || { sed -n '2,29p' "$0"; exit 1; }
 PR_OPEN="$SKILL_DIR/scripts/pr-open.sh"
 
 # Refusals (agent working, PR already open, nothing changed, wrong repo) end here.
-if (( PUSH )); then check="$("$PR_OPEN" check "$board" "$nn" --push)" || exit 1
+if (( LOCAL )); then check="$("$PR_OPEN" check "$board" "$nn" --local)" || exit 1
+elif (( PUSH )); then check="$("$PR_OPEN" check "$board" "$nn" --push)" || exit 1
 else check="$("$PR_OPEN" check "$board" "$nn")" || exit 1; fi
+
+# A local merge of work already committed: no words to write either.
+if (( LOCAL )) && grep -qE '^[[:space:]]+\(none — only the commits above\)$' <<<"$check"; then
+  echo "STEP checked — nothing uncommitted; the commits already on the branch are merged" >&2
+  empty="$(mktemp)"; trap 'rm -f "$empty"' EXIT
+  "$PR_OPEN" commit "$board" "$nn" --paths-file "$empty"
+  exit 0
+fi
 
 # A push retried after a failed one has nothing left to commit: no words to write,
 # so Cursor isn't asked — pr-open.sh push only pushes.
@@ -62,17 +75,19 @@ CURSOR="${TICKET_CURSOR_BIN:-}"
 if [[ -z "$CURSOR" ]]; then
   if command -v cursor-agent >/dev/null 2>&1; then CURSOR=cursor-agent
   elif command -v agent >/dev/null 2>&1 && agent --help 2>&1 | grep -i cursor >/dev/null; then CURSOR=agent
-  elif (( PUSH )); then die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). tk.sh push has no Claude fallback"
+  elif (( PUSH || LOCAL )); then die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). tk.sh $( ((LOCAL)) && echo merge || echo push) has no Claude fallback"
   else die "the Cursor CLI isn't installed — curl https://cursor.com/install -fsS | bash, then cursor-agent login (or set CURSOR_API_KEY). Or TICKET_PR_RUNNER=claude to open PRs with the Claude agent"; fi
 fi
 
-echo "STEP checked — asking Cursor ($CURSOR) for the commit message$( ((PUSH)) || echo " and PR body")" >&2
+echo "STEP checked — asking Cursor ($CURSOR) for the commit message$( ((PUSH || LOCAL)) || echo " and PR body")" >&2
 
 field() { sed -n "s/^$1 //p" <<<"$check" | head -1; }
 WT="$(sed -n 's/^READY ticket [0-9]* on [^ ]* (base [^)]*) in //p' <<<"$check")"
 BASE="$(sed -n 's/^READY ticket [0-9]* on [^ ]* (base \([^)]*\)).*/\1/p' <<<"$check")"
 [[ -d "$WT" ]] || die "couldn't read the worktree from pr-open.sh check"
 REMOTE="${TICKET_REMOTE:-origin}"
+# What the branch's own commits are counted from: with no remote, the local base.
+BASE_AT="$REMOTE/$BASE"; (( LOCAL )) && BASE_AT="$BASE"
 
 # Capped pieces, so the prompt stays one argument (Linux allows 128 KiB per argument).
 # cap drains what it doesn't keep: head alone exits at the cap, the writer then dies
@@ -81,9 +96,13 @@ REMOTE="${TICKET_REMOTE:-origin}"
 cap() { local n="$1"; head -c "$n"; cat >/dev/null; echo; }
 section() { printf '\n=== %s ===\n' "$1"; }
 {
-  if (( PUSH )); then
+  if (( PUSH || LOCAL )); then
+    if (( LOCAL )); then
+      echo "You write the commit message for one finished ticket; its branch is merged into the local base, with no pull request."
+    else
+      echo "You write the commit message for one finished ticket; its branch is pushed, with no pull request."
+    fi
     cat <<'EOF'
-You write the commit message for one finished ticket; its branch is pushed, with no pull request.
 Run no command and change no file: answer with ONE JSON object and nothing else —
 no prose, no code fence:
 
@@ -93,7 +112,7 @@ no prose, no code fence:
 
 Rules:
 - paths: only from CHANGED below; leave out build output, logs, editor files and anything under RISKY.
-  If nothing in CHANGED belongs to the ticket (the work is already committed: see UNPUSHED), paths is [].
+  If nothing in CHANGED belongs to the ticket (the work is already committed: see UNPUSHED or COMMITS), paths is [].
 - commit_message: the repo's convention as RECENT COMMITS show it (conventional commits, a ticket
   prefix), else "<type>: <ticket title>". Name the PARENT id where there is one.
 - Never add a Co-authored-by trailer, a "Generated with" line, or any tool or AI attribution.
@@ -129,13 +148,13 @@ EOF
   pt="$(field PR_TEMPLATE)"; [[ -f "$pt" ]] && { section "PR TEMPLATE"; cap 6000 <"$pt"; }
   # The pr skill: Cursor's own install first, else the one check found under ~/.claude.
   # A push opens no PR: check prints no PR_TEMPLATE, and the skill isn't looked for.
-  if (( ! PUSH )); then
+  if (( ! PUSH && ! LOCAL )); then
     ps="$(find "$HOME/.cursor" -path '*/pr/SKILL.md' 2>/dev/null | head -1 || true)"
     [[ -n "$ps" ]] || ps="$(field PR_SKILL)"
     [[ -f "$ps" ]] && { section "PR SKILL"; cap 12000 <"$ps"; }
   fi
   section "DIFF (committed on the branch, then uncommitted)"
-  { git -C "$WT" diff "$REMOTE/$BASE...HEAD" 2>/dev/null; git -C "$WT" diff HEAD 2>/dev/null
+  { git -C "$WT" diff "$BASE_AT...HEAD" 2>/dev/null; git -C "$WT" diff HEAD 2>/dev/null
     (cd "$WT" && git ls-files --others --exclude-standard -z 2>/dev/null \
       | xargs -0 -r -I{} sh -c 'printf "\n--- new file: %s\n" "$1"; head -c 4000 "$1"' _ {})
   } | cap 50000
@@ -162,7 +181,7 @@ rm -f "$PROMPT.err"
 # sometimes fenced. Take the first {...} that parses.
 text="$(jq -r '.result // empty' <<<"$out" 2>/dev/null || true)"; [[ -n "$text" ]] || text="$out"
 ans=""
-if (( PUSH )); then want='type == "object" and (.commit_message | type == "string")'
+if (( PUSH || LOCAL )); then want='type == "object" and (.commit_message | type == "string")'
 else want='type == "object" and (.title | type == "string") and (.body | type == "string") and (.commit_message | type == "string")'; fi
 for cand in "$text" "$(sed -e '/^```/d' <<<"$text")" "$(awk 'BEGIN{p=0} /\{/{p=1} p' <<<"$text" | sed -n '1,/^}[[:space:]]*$/p')"; do
   if jq -e "$want" <<<"$cand" >/dev/null 2>&1; then ans="$cand"; break; fi
@@ -172,6 +191,15 @@ done
 d="$(mktemp -d)"; trap 'rm -rf "$d" "$PROMPT"' EXIT
 jq -r .commit_message <<<"$ans" >"$d/msg"
 jq -r '.paths // [] | .[]' <<<"$ans" >"$d/paths"
+if (( LOCAL )); then
+  # No paths is fine when the branch already has commits to merge; pr-open.sh
+  # commit refuses when it has none.
+  echo "STEP Cursor answered — committing $(grep -c . "$d/paths" || true) path(s), no push" >&2
+  "$PR_OPEN" commit "$board" "$nn" --message-file "$d/msg" --paths-file "$d/paths"
+  jq -r '(.left_out // [])[] | "LEFT OUT \(.path) — \(.why)"' <<<"$ans"
+  echo "WRITTEN BY Cursor ($CURSOR${TICKET_PR_CURSOR_MODEL:+, $TICKET_PR_CURSOR_MODEL})"
+  exit 0
+fi
 if (( PUSH )); then
   # No paths is fine when commits wait to be pushed (a push that failed, files rightly
   # left out beside them); with none waiting there is nothing to ship.

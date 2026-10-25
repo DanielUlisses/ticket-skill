@@ -7,11 +7,12 @@
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
-#   tk.sh gates   <board> <NN>           the five merge gates, one line each
-#   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates
+#   tk.sh gates   <board> <NN>           the five merge gates, one line each (no remote: the four local gates)
+#   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (no remote: the local gates)
 #   tk.sh pr      <board> <NN>           commit the ticket's work, push, open its PR — the words by the Cursor CLI
 #   tk.sh push    <board> <NN>           commit the ticket's work and push its branch, no PR (TICKET_FORGE=none)
-#   tk.sh merge   <board> <NN>           gates, then merge the PR on the forge (GitHub or Azure DevOps), then resolve
+#   tk.sh merge   <board> <NN>           gates, then merge the PR on the forge (GitHub or Azure DevOps), then resolve;
+#                                        no remote: local gates, commit the ticket's work, merge --no-ff into the local base
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh resolve <board> <NN> --no-code "<reason>"   resolve a ticket that delivers nothing committable
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
@@ -100,7 +101,7 @@ cmd_digest() {
   local out
   out="$(jq -n --argjson board "$BOARD_JSON" --argjson prev "$prev" --argjson full "$full" \
            --slurpfile facts <(printf '%s' "$facts") \
-           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson off "$(forge_off && echo true || echo false)" --arg policy "$policy" '
+           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson local "$( ((HAS_REMOTE)) && echo false || echo true )" --argjson off "$(forge_off && echo true || echo false)" --arg policy "$policy" '
     ($facts | map({key: .nn, value: .}) | from_entries) as $f |
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
@@ -119,7 +120,7 @@ cmd_digest() {
     ($prev.lines // {}) as $was |
     [ $rows[] | select($was[.nn] != .line) | .nn ] as $changed |
     { lines: $now,
-      text: ([ "BOARD \($id) base \($base)" +
+      text: ([ "BOARD \($id) base \($base)" + (if $local then " (no remote: merge is local)" else "" end) +
                  (([$board[].parent | select(. != "")] | unique) as $p |
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
              + ($policy | split("\n"))
@@ -131,7 +132,7 @@ cmd_digest() {
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
                  elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
-                 elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" else "open PR" end))"
+                 elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))"
                  else empty end ]
              + [ $rows[] | select((.unknown_refs // []) | length > 0) | "WARN \(.nn) blocked-by names nothing on the board: \(.unknown_refs | join(","))" ]
              + [ $rows[] | select((.xblockers_open // []) | any(endswith("(not found)"))) | "WARN \(.nn) blocked by a ticket on another repo'"'"'s board that can'"'"'t be found: \(.xblockers_open | map(select(endswith("(not found)"))) | join(", ")) — counted as open" ]
@@ -280,30 +281,152 @@ run_gates() {
   (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
 }
 
-# PRs need a remote. Without one there is nothing to gate: the developer merges
-# the branch locally and the next digest sees it by ancestry.
-need_pr_remote() {
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT (forge: none) — no PRs here; merge the branch locally and the next digest resolves it"
-  forge_need
+# A repo with no remote has no PR to gate: the ticket is merged into the local
+# base in the root checkout instead. Four gates, the same GATE lines and exit
+# codes as the forge's: clean (root_unclean: the root checkout can take the
+# merge), review and checks (what the
+# ticket's coordinator last wrote to its phase file), conflict (a trial merge of
+# the branch and its uncommitted work against the base, in git's object store
+# only — no checkout, no index is touched). Returns 0 / 10 / 12.
+run_local_gates() {
+  local t="$1" branch wt line review tests fail=0 conflicting=0 tip why
+  branch="$(jq -r .branch <<<"$t")"
+  [[ -n "$branch" ]] || { echo "GATE branch FAIL ticket has no branch recorded"; return 12; }
+  git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" || { echo "GATE branch FAIL no local branch $branch"; return 12; }
+  wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  tip="$(trial_tip "$branch" "$wt")" || tip=""
+  why="$(root_unclean "$tip")"
+  if [[ -n "$why" ]]; then echo "GATE clean FAIL $why"; fail=1
+  else echo "GATE clean PASS $ROOT on $BASE_BRANCH"; fi
+  # Line 2 of the phase file: "tests=… criteria=m/n review=ok|<N>-blocking",
+  # sanitised as the status board reads it.
+  line=""; [[ -s "$(board_state_dir)/phase/$branch" ]] && line="$(sed -n 2p "$(board_state_dir)/phase/$branch" | tr -cd 'a-z0-9=/ -')"
+  review="$(grep -oE '(^| )review=[a-z0-9-]+' <<<"$line" | sed 's/.*=//' || true)"
+  tests="$(grep -oE '(^| )tests=[a-z0-9-]+' <<<"$line" | sed 's/.*=//' || true)"
+  case "$review" in
+    ok|0-blocking) echo "GATE review PASS 0 blocking" ;;
+    "") echo "GATE review FAIL no review recorded in the phase file"; fail=1 ;;
+    *) echo "GATE review FAIL $review"; fail=1 ;;
+  esac
+  case "$tests" in
+    pass) echo "GATE checks PASS tests=pass" ;;
+    "") echo "GATE checks FAIL no tests recorded in the phase file"; fail=1 ;;
+    *) echo "GATE checks FAIL tests=$tests"; fail=1 ;;
+  esac
+  if [[ -z "$tip" ]]; then echo "GATE conflict FAIL couldn't build $branch's trial commit"; fail=1
+  else
+    local rc=0; git -C "$ROOT" merge-tree --write-tree --no-messages "$BASE_BRANCH" "$tip" >/dev/null 2>&1 || rc=$?
+    case $rc in
+      0) echo "GATE conflict PASS merges cleanly into $BASE_BRANCH" ;;
+      1) conflict_line "$t" "$wt"; conflicting=1 ;;
+      *) echo "GATE conflict FAIL git merge-tree couldn't try the merge (git 2.38+ needed)"; fail=1 ;;
+    esac
+  fi
+  (( fail )) && return 12; (( conflicting )) && return 10; return 0
 }
+
+# Why the root checkout can't take a merge of <tip> (a commit; empty: skip the
+# last check), or nothing: it must be on the base, with no merge in progress, no
+# tracked changes, and no untracked file where <tip> adds one — git would refuse
+# to overwrite it.
+root_unclean() {
+  local tip="${1:-}" head files
+  head="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "a detached HEAD")"
+  if [[ "$head" != "$BASE_BRANCH" ]]; then echo "$ROOT is on $head, not $BASE_BRANCH"; return; fi
+  if git -C "$ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null; then echo "a merge is in progress in $ROOT"; return; fi
+  files="$(git -C "$ROOT" status --porcelain --untracked-files=no | sed -E 's/^.. //')"
+  if [[ -n "$files" ]]; then echo "$ROOT has uncommitted tracked changes: $(head -5 <<<"$files" | paste -sd ' ' -)"; return; fi
+  [[ -n "$tip" ]] || return 0
+  files="$(comm -12 <(git -C "$ROOT" ls-files --others --exclude-standard | sort) \
+                    <(git -C "$ROOT" diff --name-only --diff-filter=A "$BASE_BRANCH" "$tip" | sort))"
+  [[ -z "$files" ]] || echo "$ROOT has untracked files the ticket adds — move them aside: $(head -5 <<<"$files" | paste -sd ' ' -)"
+}
+
+# No remote, no ticket-merger (its script needs a remote to push to): the
+# developer resolves a conflict by hand in the ticket's worktree.
+conflict_line() {
+  local t="$1" wt="$2" nn branch
+  nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
+  echo "GATE conflict FAIL conflicts with $BASE_BRANCH — resolve by hand: merge $BASE_BRANCH into $branch in $wt, then merge $nn again"
+}
+
+# The commit the trial merge tries: <branch>'s tip with its worktree's uncommitted
+# work on top (tracked and untracked, not ignored), built through a throwaway
+# index so the worktree's own index and files are left as they are. With no
+# worktree (or nothing uncommitted) it is the tip itself.
+trial_tip() {
+  local branch="$1" wt="$2" tmp tree
+  if [[ ! -d "$wt" || "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$branch" \
+        || -z "$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
+    git -C "$ROOT" rev-parse "refs/heads/$branch"; return
+  fi
+  tmp="$(mktemp -d)"
+  if GIT_INDEX_FILE="$tmp/index" git -C "$wt" read-tree HEAD \
+     && GIT_INDEX_FILE="$tmp/index" git -C "$wt" add -A \
+     && tree="$(GIT_INDEX_FILE="$tmp/index" git -C "$wt" write-tree)"; then
+    rm -rf "$tmp"
+    GIT_AUTHOR_NAME=tk GIT_AUTHOR_EMAIL=tk@localhost GIT_COMMITTER_NAME=tk GIT_COMMITTER_EMAIL=tk@localhost \
+      git -C "$wt" commit-tree "$tree" -p HEAD -m "trial merge of $branch"
+  else
+    rm -rf "$tmp"; return 1
+  fi
+}
+
+# The local merge: gates, the ticket's work committed through the same guarded
+# path a PR or a push takes (pr-cursor.sh --commit: Cursor's message, the named
+# paths only, the risky-file guard, no attribution), then the branch merged
+# --no-ff into the base in the root checkout, then resolved. Nothing is pushed.
+# A merge that fails anyway is aborted, leaving the root checkout as it was:
+# exit 10 when it stopped on conflicts, 12 for anything else git refused.
+merge_local() {
+  local board="$1" nn="$2" t rc branch why err unmerged wt
+  t="$(ticket_json "$nn")"; branch="$(jq -r .branch <<<"$t")"
+  wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  set +e; run_local_gates "$t"; rc=$?; set -e
+  [[ $rc -eq 0 ]] || { echo "NOT MERGED — a gate failed"; return $rc; }
+  load_models_env
+  "$SKILL_DIR/scripts/pr-cursor.sh" "$board" "$nn" --commit || { echo "NOT MERGED — the ticket's work wasn't committed"; return 1; }
+  # The commit took a while; the root checkout must still take the merge.
+  why="$(root_unclean "$(git -C "$ROOT" rev-parse "refs/heads/$branch")")"
+  [[ -z "$why" ]] || { echo "GATE clean FAIL $why"; echo "NOT MERGED — a gate failed"; return 12; }
+  if ! err="$(git -C "$ROOT" merge --no-ff --no-edit -q "$branch" 2>&1 >/dev/null)"; then
+    unmerged="$(git -C "$ROOT" ls-files -u)"
+    if [[ -n "$unmerged" ]] || git -C "$ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+      git -C "$ROOT" merge --abort >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$unmerged" ]]; then conflict_line "$t" "$wt"; echo "NOT MERGED — a gate failed"; return 10; fi
+    echo "NOT MERGED — git merge failed, $ROOT left as it was: $(grep -v '^[[:space:]]*$' <<<"$err" | tail -3 | paste -sd ' ' -)"; return 12
+  fi
+  echo "MERGED $nn (local) $branch into $BASE_BRANCH as $(git -C "$ROOT" rev-parse --short HEAD)"
+  resolve_ticket "$t"
+}
+
+# PRs need a remote — every caller has taken the no-remote path (above) or
+# refused already — and a forge that can be asked.
+need_pr_remote() { forge_need; }
 
 cmd_gates() {
   board_init "${1:-}"; local t; t="$(ticket_json "${2:?usage: tk.sh gates <board> <NN>}")"
+  (( HAS_REMOTE )) || { run_local_gates "$t"; return; }
   need_pr_remote; run_gates "$t"
 }
 
 cmd_ready() {
-  board_init "${1:-}"; need_pr_remote
+  board_init "${1:-}"; (( HAS_REMOTE )) && need_pr_remote
   local t nn any=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"
-    if run_gates "$t" >/dev/null 2>&1; then echo "READY $nn #$PR_NUMBER"; any=1; fi
+    if (( ! HAS_REMOTE )); then
+      if run_local_gates "$t" >/dev/null 2>&1; then echo "READY $nn (local)"; any=1; fi
+    elif run_gates "$t" >/dev/null 2>&1; then echo "READY $nn #$PR_NUMBER"; any=1; fi
   done < <(jq -c '.[] | select(.status == "in-progress")' <<<"$BOARD_JSON")
   (( any )) || echo "READY none"
 }
 
 cmd_merge() {
-  board_init "${1:-}"; need_pr_remote
+  board_init "${1:-}"
+  (( HAS_REMOTE )) || { merge_local "${1:-}" "${2:?usage: tk.sh merge <board> <NN>}"; return; }
+  need_pr_remote
   local nn="${2:?usage: tk.sh merge <board> <NN>}" t rc method
   t="$(ticket_json "$nn")"
   set +e; run_gates "$t"; rc=$?; set -e
@@ -323,7 +446,9 @@ cmd_merge() {
 cmd_pr() {
   load_models_env
   # Refuse up front (git-only mode, no remote, no forge CLI) so no agent is dispatched for nothing.
-  board_init "${1:-}"; need_pr_remote
+  board_init "${1:-}"
+  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT (forge: none) — no PRs here; tk.sh merge commits the ticket and merges it locally"
+  need_pr_remote
   if [[ "${TICKET_PR_RUNNER:-cursor}" == claude ]]; then
     echo "RUNNER claude — dispatch ticket-pr-creator for ticket ${2:-?}"; return 5
   fi
@@ -338,7 +463,7 @@ cmd_pr() {
 cmd_push() {
   load_models_env
   board_init "${1:-}"
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push; merge the branch locally and the next digest resolves it"
+  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push; tk.sh merge commits the ticket and merges it locally"
   "$SKILL_DIR/scripts/pr-cursor.sh" "${1:-}" "${2:?usage: tk.sh push <board> <NN>}" --push
 }
 
@@ -601,6 +726,8 @@ cmd_boards() {
   resolve_repo_root
   local d slug n out=""
   if [[ -d "$ROOT/.scratch" ]]; then
+    # Directories only, on purpose: .scratch/project-memory.md (and policy.json) sit beside
+    # the boards and must never be listed as one.
     while IFS= read -r slug; do
       [[ -n "$slug" ]] || continue
       d="$ROOT/.scratch/$slug"
@@ -746,7 +873,7 @@ cmd_retro() {
     done
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   echo
-  for f in docs/agents/project-memory.md CLAUDE.md AGENTS.md CODING_STANDARDS.md; do
+  for f in .scratch/project-memory.md CLAUDE.md AGENTS.md CODING_STANDARDS.md; do
     [[ -f "$ROOT/$f" ]] && echo "FILE $ROOT/$f" || echo "FILE $f none"
   done
   for f in retro writing-for-agents; do
@@ -785,7 +912,7 @@ cmd_retro_save() {
 # Each named block in retro/proposals.md gets one **Mark:** line (replacing an
 # earlier one); no args reads the marks already there, so marking by hand works
 # too. Everything is validated before any file is written. Never touches
-# docs/agents/project-memory.md: an approved M item is a todo for the developer.
+# .scratch/project-memory.md: an approved M item is a todo for the developer.
 cmd_retro_apply() {
   board_init "${1:-}"; shift || true
   local props="$BOARD_PATH/retro/proposals.md" out="$BOARD_PATH/retro-results.md"
@@ -899,14 +1026,14 @@ cmd_retro_apply() {
       print "Generated by `tk.sh retro-apply` from `retro/proposals.md` (" when "), and regenerated from its"
       print "`**Mark:**` lines on every run — change a mark there, not here. Guidance for every ticket and a"
       print "todo for the developer, who turns open items into work. Agents never tick these boxes; project"
-      print "memory is applied by hand (docs/agents/memory.md)."
+      print "memory is applied by hand to .scratch/project-memory.md (docs/agents/memory.md)."
       print ""
       print "## Approved"
       print ""
       c = 0
       for (i = 1; i <= n; i++) if (mk[i] == "approved") {
         c++
-        head = (ids[i] ~ /^M/) ? "add to docs/agents/project-memory.md: " ttl[i] : ttl[i]
+        head = (ids[i] ~ /^M/) ? "add to .scratch/project-memory.md: " ttl[i] : ttl[i]
         print "- [ ] " ids[i] " " head
         if (chg[i] != "") print "  - Change: " indent(chg[i])
         if (src[i] != "") print "  - Source: " indent(src[i])
@@ -1009,10 +1136,14 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   resolves it. Any forge; always the Cursor CLI
   merge 05                      five gates, then merges the PR ON THE FORGE (GitHub/Azure — what
                                   the merge button does; your local main is untouched until you
-                                  pull), resolve, offer what it unblocked. No remote: refused —
-                                  merge the branch locally, the next status check resolves it
+                                  pull), resolve, offer what it unblocked. No remote: four local
+                                  gates (clean root on main, review 0 blocking, tests=pass,
+                                  no conflict), commits the ticket (Cursor's message, as push),
+                                  merges it --no-ff into your local main, resolves; nothing pushed
                                   conflict -> Sonnet merger merges main INTO the ticket branch and
-                                  resolves it; you choose Commit (pushes the branch) / Abort / Leave
+                                  resolves it; you choose Commit (pushes the branch) / Abort / Leave.
+                                  No remote: no merger — merge main into the ticket branch in its
+                                  worktree by hand, then merge 05 again
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
   ask 03 <question>             the same, as a question
@@ -1033,7 +1164,7 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                 mark the saved proposals (tk.sh retro-apply) and regenerate
                                   <board>/retro-results.md: approved items as a checklist for you
                                   and future tickets, then Deferred and Rejected. Unmarked ids are
-                                  reported as pending; project-memory.md is never written
+                                  reported as pending; .scratch/project-memory.md is never written
   policy / set auto_merge true  show this board's policy (tk.sh policy), or change it for this
                                   board only (tk.sh policy-set): forge, require_human_before_pr,
                                   auto_merge, night_shift, autonomy, max_parallel, usage_gate_pct

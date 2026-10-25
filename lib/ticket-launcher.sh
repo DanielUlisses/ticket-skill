@@ -175,18 +175,30 @@ fill_prose() {
 # Sets MEMORY_BLOCK (what the prompt's {{PROJECT_MEMORY}} becomes) and
 # MEMORY_STATUS (the summary's PROJECT_MEMORY= line).
 #
-# Read from $ROOT, the MAIN checkout, never from the worktree: the base branch is
-# what the developer has already reviewed and merged, so a lesson reaches future
-# tickets only once it has landed there — that merge is the developer gate on
-# capture. It also puts the file somewhere /sweep-tickets can never take with it,
-# since that skill removes worktrees and branches and leaves the checkout alone.
+# Read from $ROOT, the MAIN checkout, never from the worktree. The file is
+# .scratch/project-memory.md: gitignored, never committed, so memory is never written
+# inside tracked code (ADR 0006). There is no merge gate any more; the developer gate
+# is the approval in `tk.sh retro-apply` / the hub's memory ticket. It sits where
+# /sweep-tickets can never take it, since that skill removes worktrees and branches
+# and leaves the main checkout's .scratch alone.
+# One transition: with the new file absent and the old docs/agents/project-memory.md
+# present, read the old one and log a move hint. Nothing is created or moved here.
 # Absent, unreadable or blank means the launch is exactly what it was before this
 # existed: no heading, no placeholder, nothing said to the agent.
 resolve_project_memory() {
   local memory
   MEMORY_WARN_BYTES=8192   # 8 KiB; memory is paid for on every launch, so warn past a page or so
-  MEMORY_FILE="${TICKET_MEMORY_FILE:-docs/agents/project-memory.md}"
+  MEMORY_FILE="${TICKET_MEMORY_FILE:-.scratch/project-memory.md}"
   [[ "$MEMORY_FILE" == /* ]] || MEMORY_FILE="$ROOT/$MEMORY_FILE"
+  if [[ -z "${TICKET_MEMORY_FILE:-}" ]]; then
+    if [[ ! -e "$MEMORY_FILE" && -f "$ROOT/docs/agents/project-memory.md" ]]; then
+      log "project memory: reading the old docs/agents/project-memory.md — move it to .scratch/project-memory.md (not done for you)"
+      MEMORY_FILE="$ROOT/docs/agents/project-memory.md"
+    fi
+    if ! git -C "$ROOT" check-ignore -q .scratch/project-memory.md 2>/dev/null; then
+      log "warning: .scratch/ is not gitignored in this repo — project memory there could be committed"
+    fi
+  fi
   MEMORY_REL="${MEMORY_FILE#"$ROOT"/}"
   MEMORY_BLOCK=""
   MEMORY_STATUS="none ($MEMORY_REL)"

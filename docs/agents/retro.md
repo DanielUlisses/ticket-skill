@@ -23,7 +23,7 @@ files, so they outlive the board session, are answered by id, and reach later ti
 4. **Results.** Every run regenerates `.scratch/<board>/retro-results.md` from the marks — never
    appended to:
    - **Approved** — a checklist, `- [ ] <id> <title>`, with the change, source and reason under
-     each. An approved `M` item reads `add to docs/agents/project-memory.md: <fact>`.
+     each. An approved `M` item reads `add to .scratch/project-memory.md: <fact>`.
    - **Deferred** — `- <id> — <title>`, so a later retro can pick them up.
    - **Rejected** — `- <id> — <title>`, so the next retro doesn't propose them again.
 
@@ -37,7 +37,7 @@ heading or a field, so code in a `**Change:**` reaches the results as written.
 
 ## What it never does
 
-- **It never writes `docs/agents/project-memory.md`.** Memory stays hand-applied
+- **It never writes `.scratch/project-memory.md`.** Memory stays hand-applied
   (`docs/agents/memory.md`, *Folding a lesson back in*); an approved `M` item is a todo.
 - **Agents never tick the boxes.** The file is guidance for tickets and a todo for the developer,
   who turns open items into work. Every run writes the boxes unticked: the file is regenerated,

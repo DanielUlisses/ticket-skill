@@ -44,8 +44,8 @@ whole (`2.0` prints as `2`).
 | `require_human_before_pr` | bool | `true` | a PR (or, in tk-hub, a push) needs a human step first. In the board session that step is the developer naming the ticket ("open a PR for 03"); unattended automation (night shift) opens none |
 | `auto_merge` | bool | `false` | a ticket whose PR passes every gate may be merged without the developer naming it |
 | `night_shift` | bool | `false` | tk-hub: run the board as `auto` plus PR/push after review passes; merge only with `auto_merge` |
-| `autonomy` | `assist` \| `auto` | `auto` | tk-hub's scheduler: `auto` launches frontier tickets as they unblock, within the caps, stopping at `human` and `needs`; `assist` launches only on a click |
-| `max_parallel` | whole number, 1–1000 | `5` | tk-hub: tickets running at once on the box |
+| `autonomy` | `assist` \| `auto` | `assist` | tk-hub's scheduler: `auto` launches frontier tickets as they unblock, within the caps, stopping at `human` and `needs`; `assist` launches only on a click. `auto` is allowed on at most one board per devbox (enforced by tk-hub, ticket-board:40); ▶ Run waves acts only on `night_shift` boards |
+| `max_parallel` | whole number, 1–1000 | `4` | tk-hub: tickets running at once on the box |
 | `usage_gate_pct` | number 0–100 | `90` | tk-hub: a Claude usage window at or above this stops automatic launches on the box |
 | `synthesis` | object | `{"backends": ["agy"], "timeout": 300}` | tk-hub's summary runner; passed through, not checked inside |
 
@@ -87,9 +87,11 @@ night shift.
   acting on the latest read. `forge: none` beats every other key: it runs no PR or merge verb on its
   own and dispatches neither `ticket-pr-creator` nor `ticket-merger`, whatever `auto_merge` says.
   Asked for a PR or a merge, it runs `tk.sh pr` / `tk.sh merge` anyway and shows the refusal: both
-  refuse before doing anything, with no remote as `no 'origin' remote … (forge: none) — … merge the
-  branch locally`, and with the policy or env's `none` as `no forge access here (policy)` /
-  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. With
+  refuse before doing anything with the policy or env's `none`, as `no forge access here (policy)` /
+  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. A repo with **no
+  remote** is the exception: `tk.sh merge` is a local merge there (four local gates, the ticket's
+  work committed through the guarded path, `--no-ff` into the local base), run on the developer's
+  word or under `auto_merge` like any merge; only `tk.sh pr` and `push` refuse. With
   `require_human_before_pr` it opens a PR only for a ticket the developer names, and that request
   is the human step — it doesn't ask again. It merges without being asked only when `auto_merge`
   is `true`, and only what `tk.sh ready` lists (`READY none` is nothing to merge), stopping at the
