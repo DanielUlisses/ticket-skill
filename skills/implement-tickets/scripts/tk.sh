@@ -1221,7 +1221,7 @@ Policy (tk.sh policy <board>) — later wins: defaults < box < repo < board
 
 Elsewhere
   /ticket [jira-id] <task>   plan a board (Opus); ends by printing the tkb command
-  /small-ticket <task>       one ad-hoc ticket (a document deliverable launches in --doc mode)
+  /small-ticket <task>       one ad-hoc ticket (--doc is frozen: document work goes through /ticket)
   /sweep-tickets             after the retro: list and remove leftover worktrees and branches
 HELP
 }
