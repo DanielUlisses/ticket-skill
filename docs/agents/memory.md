@@ -162,7 +162,7 @@ Approved lessons from past retros live in `.scratch/<board>/retro-results.md`, w
 at launch `resolve_retro_results` (`lib/ticket-launcher.sh`) globs
 `<main checkout>/.scratch/*/retro-results.md` — the main checkout, as for project memory,
 since a worktree has no `.scratch/` — and the `{{RETRO_RESULTS}}` placeholder (beside
-`{{PROJECT_MEMORY}}` in all three templates: `/ticket`, `/small-ticket`, `--doc`) becomes a
+`{{PROJECT_MEMORY}}` in all four templates (`/ticket`'s code and doc briefs, `/small-ticket`'s code and `--doc` briefs)) becomes a
 `## Retro results` block with one absolute-path line per file, telling the agent to read it
 if it exists, follow approved items that bear on its work, and never edit it. The `/ticket`
 coordinator passes the relevant items on to the implementer; the `/ticket` planner reads the
