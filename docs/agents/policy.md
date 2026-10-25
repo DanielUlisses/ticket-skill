@@ -40,7 +40,7 @@ whole (`2.0` prints as `2`).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `forge` | `github` \| `azure` \| `none` | detected from the remote URL (`none` without a remote) | where PRs live. `none` is git-only mode (ADR 0005 §7): no `gh`/`az` call; `pr`, `gates`, `ready` and `merge` refuse |
+| `forge` | `github` \| `azure` \| `none` | detected from the remote URL (`none` without a remote) | where PRs live. `none` is git-only mode (ADR 0005 §7): no `gh`/`az` call; `pr`, `gates`, `ready` and `merge` refuse, except with no remote, where `gates`, `ready` and `merge` take the local path (ADR 0007 §4) and only `pr` and `push` refuse |
 | `require_human_before_pr` | bool | `true` | a PR (or, in tk-hub, a push) needs a human step first. In the board session that step is the developer naming the ticket ("open a PR for 03"); unattended automation (night shift) opens none |
 | `auto_merge` | bool | `false` | a ticket whose PR passes every gate may be merged without the developer naming it |
 | `night_shift` | bool | `false` | tk-hub: run the board as `auto` plus PR/push after review passes; merge only with `auto_merge` |
@@ -89,7 +89,7 @@ night shift.
   Asked for a PR or a merge, it runs `tk.sh pr` / `tk.sh merge` anyway and shows the refusal: both
   refuse before doing anything with the policy or env's `none`, as `no forge access here (policy)` /
   `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. A repo with **no
-  remote** is the exception: `tk.sh merge` is a local merge there (four local gates, the ticket's
+  remote** is the exception: `tk.sh merge` is a local merge there (ADR 0007; four local gates, the ticket's
   work committed through the guarded path, `--no-ff` into the local base), run on the developer's
   word or under `auto_merge` like any merge; only `tk.sh pr` and `push` refuse. With
   `require_human_before_pr` it opens a PR only for a ticket the developer names, and that request
