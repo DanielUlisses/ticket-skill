@@ -36,7 +36,7 @@ on every install.
 ## The launchers are parameters, not forks
 
 `/ticket` and `/small-ticket` differ in six things, and only six: `SKILL_DIR`,
-`TEMPLATE`, `RUN_NAME`, `PERMISSION_MODE`, `PERMISSION_LABEL` and `DISALLOWED_TOOLS` — plus `COORDINATOR` (whose model the session itself runs on) and, for `/small-ticket` only, `DOC_TEMPLATE` (what a `--doc` launch renders; ADR 0005).
+`TEMPLATE`, `RUN_NAME`, `PERMISSION_MODE`, `PERMISSION_LABEL` and `DISALLOWED_TOOLS` — plus `COORDINATOR` (whose model the session itself runs on) and `DOC_TEMPLATE` (what a `--doc` launch renders; ADR 0005): `/small-ticket`'s plan-mode `doc-prompt.md`, and `/ticket`'s unattended `ticket-doc-prompt.md`, which `tk.sh launch` asks for when a board ticket says `**Kind:** doc`. `--doc-type ead|tdd|other` fills that brief's `{{DOC_GUIDANCE}}` with the installed skill and its validator — installed meaning `$TICKET_SKILLS_DIR` (default `~/.claude/skills`) has `<type>/SKILL.md` and `<type>/scripts/check_<type>.py`; otherwise one `WARN` line and the generic brief. `TICKET_DRY_RUN=1` does every check, renders the prompt and prints the summary (`DRY_RUN=1` last), then stops before the pull, the worktree and Herdr — the way to see what a ticket would launch as.
 Each `launch.sh` sets those and calls `launcher_main "$@"`. The differences are real
 and must not be flattened — `/small-ticket` starts in plan mode with a developer
 watching, `/ticket` starts unattended with eight git verbs blocked — but they are

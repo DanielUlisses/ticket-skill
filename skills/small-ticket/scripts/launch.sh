@@ -48,6 +48,7 @@
 #   TICKET_ACCOUNT     — the claude-acc account this ticket runs on; --account beats it. Unset means inherit whatever the worktree's parent directory is linked to, which writes no link at all. See docs/agents/accounts.md
 #   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
 #   TICKET_ACCOUNT_LOCK_WAIT (default: 10) — seconds to wait for the lock on ~/.claude-switch/links before refusing to write it
+#   TICKET_DRY_RUN     (default: 0) — 1 renders the prompt and prints the summary, then stops: no pull, no worktree, no agent, no Herdr needed
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 

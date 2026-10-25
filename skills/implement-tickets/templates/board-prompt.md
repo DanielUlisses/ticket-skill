@@ -72,7 +72,7 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 **Shared research.** With two or more tickets in the wave, run `tk.sh helpers {{BOARD}} <NN>…`. A `research:` topic named by two or more of them gets one `ticket-researcher` each, all in one message. Write their answers to one file (Write, under `/tmp`) and pass it as `--research` to every launch in the wave.
 
-**Launch** one ticket at a time, choosing `--type` from the title (`fix` for a bug, `feat` for new behaviour, …). Exit 0: next. Exit 3: the agent is at a trust dialog; tell the developer to answer it in that tab, then run the `launch.sh prompt …` command it printed. Anything else: report the error and go on to the next ticket.
+**Launch** one ticket at a time, choosing `--type` from the title (`fix` for a bug, `feat` for new behaviour, …); a ticket with `**Kind:** doc` launches as a document on a `docs` branch whatever `--type` says, and a `WARN` line in its output is shown to the developer as printed. Exit 0: next. Exit 3: the agent is at a trust dialog; tell the developer to answer it in that tab, then run the `launch.sh prompt …` command it printed. Anything else: report the error and go on to the next ticket.
 
 ## Merging — only when the developer names it (or `auto_merge` is true)
 

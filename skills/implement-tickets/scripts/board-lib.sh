@@ -16,11 +16,17 @@
 #
 # The one output shape is BOARD_JSON: an array of tickets, ordered by number,
 #   {nn, title, ref, file, status, branch, base, model, effort, account,
-#    agent, blocked_raw, blockers:[nn], smodel, seffort, parent}
+#    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type}
+# (kind and doc_type are the **Kind:** / **Doc type:** lines, lowercased; empty
+# when the ticket has none — a ticket with no Kind is `code`)
 # plus BOARD_ID (what to pass back to every script), BOARD_SLUG (a path-safe
 # name for state files) and BOARD_PATH.
 
 JIRA_RE='^[A-Za-z][A-Za-z0-9]+-[0-9]+$'
+
+# What a ticket's **Kind:** line may say. An open list: a new kind is a new
+# word here and a branch in tk.sh launch. No line means `code`.
+TICKET_KINDS="code doc"
 
 board_state_dir() {
   local d="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME"
@@ -75,18 +81,20 @@ parse_ticket_file() {
     /^\*\*Suggested model:\*\*/   { smodel = first(val($0)) }
     /^\*\*Suggested effort:\*\*/  { seffort = first(val($0)) }
     /^\*\*Parent:\*\*/            { parent = tolower(first(val($0))) }
+    /^\*\*Kind:\*\*/              { kind = tolower(first(val($0))) }
+    /^\*\*Doc type:\*\*/          { doctype = tolower(first(val($0))) }
     /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype
     }' "$f" \
   | jq -R --arg file "$f" 'split("\u001f") as $v | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
       status: (if $v[2] == "" then "open" else $v[2] end),
       branch: $v[3], base: $v[4], model: $v[5], effort: $v[6], account: $v[7], agent: $v[8],
       blocked_raw: $v[9], smodel: $v[10], seffort: $v[11], parent: $v[12], worktree: $v[13],
-      repo: $v[14], repo_path: $v[15] }'
+      repo: $v[14], repo_path: $v[15], kind: $v[16], doc_type: $v[17] }'
 }
 
 load_file_board() {

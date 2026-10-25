@@ -68,6 +68,10 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 
 **Blocked by:** <blockers, or "None (can start immediately)">
 
+**Kind:** doc — <this line, and the next, only for a document ticket>
+
+**Doc type:** <ead|tdd|other>
+
 **Seams under test:** <the public boundaries this ticket's tests go at, or "None — no test suite here; verify by running <the real command>">
 
 **Suggested model:** <opus|sonnet|fable> — <one clause: why this ticket needs that model>
@@ -85,6 +89,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 `**Repo:**` is written on every ticket: the directory name of the root of the repo the ticket changes, then its absolute path. The board refuses to launch, or open a PR for, a ticket whose repo isn't its own, so a ticket written to the wrong board is caught at launch rather than after its merge.
 
 `**Parent:**` is written only when the task opened with a Jira id: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
+
+`**Kind:**` is written only on a ticket whose deliverable is a document — a scope, a proposal, an estimate, a design document — and reads `doc`; no line means `code`, and any other word is refused at launch with the known kinds named. A doc ticket launches with `/ticket`'s unattended doc brief on a `docs` branch: nobody is interviewed, so the ticket carries a `## Outline` section (audience, sections and what each says, in/out of scope, estimate method, sources, output path) above its criteria — that outline is the plan, and whatever it leaves open the document marks as an assumption. Its **Seams under test** line is `None` plus the validator to run (`None — validate with check_ead.py <file>`); its review stays at `TICKET_DOC_REVIEW_*`. `**Doc type:**` picks the guidance: `ead` and `tdd` send the drafter to the installed skill of that name and its `check_<type>.py`, `other` (or no line) is the generic brief.
 
 `**Suggested model:**`, `**Suggested effort:**` and `**Suggested helpers:**` are body lines like the two above them. The first two are what the board session's launch question pre-selects; the third reaches the coordinator inside the ticket body it is sent. A ticket written before these lines existed simply carries none, and the launcher's own defaults stand.
 
