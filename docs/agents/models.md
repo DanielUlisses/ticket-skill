@@ -7,26 +7,25 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 
 | Role | Agent | Default | Varies per ticket? |
 |---|---|---|---|
-| Implementation | `ticket-implementer` (and `/small-ticket`'s plan-mode orchestrator) | `opus` @ `medium` | **yes** — the ticket's `**Suggested model:**`/`**Suggested effort:**`, the launch question, the 4th positional and `--effort` |
+| Implementation | `ticket-implementer` | `opus` @ `medium` | **yes** — the ticket's `**Suggested model:**`/`**Suggested effort:**`, the launch question, the 4th positional and `--effort` |
 | Coordination | the session each launched ticket runs | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
 | Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
 | Retro | `ticket-retro`, dispatched by the board when it closes | `sonnet` @ `medium` | no — `TICKET_RETRO_*` |
 | Opening PRs | the **Cursor CLI** (`tk.sh pr` → `pr-cursor.sh`, and `tk.sh push` → `pr-cursor.sh --push`, no PR), no Claude model; `ticket-pr-creator` only with `TICKET_PR_RUNNER=claude`, and never for `push` | Cursor's default (`TICKET_PR_CURSOR_MODEL`); the agent `sonnet` @ `low` | no — `TICKET_PR_*` |
-| Review | `ticket-reviewer` | `opus` @ `medium` — `high` when nothing can test the ticket | effort only: `TICKET_REVIEW_EFFORT_UNTESTED` for a ticket whose **Seams under test** says `None`, or `--review-effort` |
-| Document review | `ticket-doc-reviewer`, for any document ticket — a board ticket with `**Kind:** doc`, or the frozen `/small-ticket --doc` (ADR 0007) | `opus` @ `medium` — a `None` seams line doesn't raise it | no — `TICKET_DOC_REVIEW_*` |
+| Review | `ticket-reviewer` | `opus` @ `medium` — `high` when nothing can test the ticket | effort only: `TICKET_REVIEW_EFFORT_UNTESTED` for a ticket whose **Seams under test** says `None` |
+| Document review | `ticket-doc-reviewer`, for any document ticket — a board ticket with `**Kind:** doc` (ADR 0007) | `opus` @ `medium` — a `None` seams line doesn't raise it | no — `TICKET_DOC_REVIEW_*` |
 | Testing | `ticket-tester`, one per check | `haiku` @ `low` | no — `TICKET_TEST_*` |
 | Repo discovery | `ticket-scout`, one per question | `haiku` @ `low` | no — `TICKET_SCOUT_*` |
 | External research | `ticket-researcher`, one per question | `haiku` @ `medium` | no — `TICKET_RESEARCH_*` |
 | Acceptance | `ticket-criteria-checker`, one per criterion | `haiku` @ `low` | no — `TICKET_CHECK_*` |
 
 All of it lives in `config/models.env`, installed by `./install.sh` as `skills/ticket-models.env`,
-one file shared by the three launching skills. The shared `lib/ticket-launcher.sh` sources it and
+one file shared by the two launching skills. The shared `lib/ticket-launcher.sh` sources it and
 turns it into two things:
 
-- the **session's own** `--model`/`--effort` — the coordinator's for `/ticket` (its launcher sets
-  `COORDINATOR=config`), the implementer's for `/small-ticket` (`COORDINATOR=impl`), since that
-  orchestrator plans with the developer and planning is where the thinking pays;
+- the **session's own** `--model`/`--effort` — the coordinator's (`TICKET_COORD_*`), since the
+  plan is already settled and the session only dispatches, judges and reports;
 - an **`--agents` JSON** that re-issues every installed `agents/ticket-*.md` — prompt and tools
   unchanged — with the model and effort this launch resolved for its role. A definition passed
   there outranks `~/.claude/agents/` for that session only, which is what lets one ticket's
@@ -43,7 +42,7 @@ which carries the same defaults.
 `config/models.env` and the agent frontmatter use the **`opus`/`sonnet`/`haiku` aliases**, not a
 pinned model id. Claude Code resolves an alias to the newest model in that family (`claude --help`:
 "Provide an alias for the latest model … or a model's full name"), so most new releases need **no
-repo edit at all** — the next `/small-ticket` run just picks up the new model the next time Claude
+repo edit at all** — the next `/ticket` launch just picks up the new model the next time Claude
 Code resolves the alias. Pin a full model id only when you deliberately want to freeze a version
 (e.g. to keep reproducing a specific run, or because a new release regressed something you're not
 ready to absorb yet).
@@ -57,8 +56,7 @@ until this knob existed every ticket ran at whatever the CLI defaulted to — ch
 Effort used to be one level for the whole launched session, because a subagent had no effort
 of its own. It has one now: Claude Code reads an `effort:` field from a subagent's definition,
 and `--agents` carries it per launch. So `TICKET_IMPL_EFFORT` (and `--effort`) is the
-*implementer's* effort, and every other role has its own `TICKET_<ROLE>_EFFORT`. Under
-`/small-ticket` the implementer's effort is also the orchestrator's; under `/ticket` the
+*implementer's* effort, and every other role has its own `TICKET_<ROLE>_EFFORT`; the
 coordinator runs on `TICKET_COORD_EFFORT`.
 
 ### Resolution order
@@ -111,8 +109,7 @@ silently ignore would be worse than one that refuses to answer.
 
 ### Where it shows up
 
-`herdr agent start ... -- --model "$COORD_MODEL" --effort "$COORD_EFFORT" --agents '<json>' ...`
-(the coordinator's pair is the implementer's under `/small-ticket`), the launcher's
+`herdr agent start ... -- --model "$COORD_MODEL" --effort "$COORD_EFFORT" --agents '<json>' ...`, the launcher's
 `starting '<agent>' (claude, opus, effort low, bypassPermissions) … — implementer sonnet, effort high`
 log line, and the summary's `EFFORT=`, `COORDINATOR=` and `SUBAGENTS=` lines.
 
@@ -142,7 +139,7 @@ how you pick up the new commented default, and is only worth it if you want to e
 
 Three ways to override, from the launch question down to the quietest option:
 
-1. **The launch question.** All three skills (`/ticket`, `/small-ticket`, `/implement-tickets`) ask
+1. **The launch question.** Both launching skills (`/ticket`, `/implement-tickets`) ask
    which model should implement the ticket — and, in the same call, at which effort — **once a
    session**, before its first launcher call,
    together with the account and with the default named by `launch.sh defaults` rather than assumed
@@ -172,10 +169,7 @@ which of the three it came from — which is what the launch question states as 
 source has to be read before the config file is sourced: `models.env` sets its values with `:=`, so
 an exported `TICKET_IMPL_MODEL` wins silently and afterwards the two are indistinguishable.
 
-`TICKET_PLAN_MODEL` no longer exists — `/small-ticket`'s plan-mode orchestrator and the
-`ticket-implementer` subagent it delegates to now share the single `TICKET_IMPL_MODEL` knob, since
-choosing a model for one and not the other never made sense: whichever model plans the ticket also
-implements it.
+`TICKET_PLAN_MODEL` no longer exists — `TICKET_IMPL_MODEL` is the one per-ticket model knob.
 
 ## The asymmetry that's gone
 
@@ -203,7 +197,7 @@ When a new model ships (a new family, or you want to pin a specific id instead o
 4. `grep -rniE 'opus|sonnet|haiku|fable' skills agents config docs lib` to catch any prose that
    names a model outside the files above — `lib/ticket-launcher.sh` holds the in-script fallbacks.
 5. Re-run `./install.sh` for every Claude config root in use.
-6. Smoke-test with one `/ticket` launch and one `/small-ticket` launch: the summary's
+6. Smoke-test with one `/ticket` launch: the summary's
    `COORDINATOR=` and `SUBAGENTS=` lines say what was asked for, and `/agents` in the pane lists
    the `ticket-*` agents with those models.
 

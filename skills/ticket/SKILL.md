@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a Haiku board session (/implement-tickets) that launches, merges and coordinates them. It never launches tickets itself. For an already-defined code ticket, use /small-ticket instead; document work, even one document, stays here; for tickets already written to `.scratch/`, use /implement-tickets.
+description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a Haiku board session (/implement-tickets) that launches, merges and coordinates them. It never launches tickets itself. A one-off task, code or document, is a one-ticket board here; for tickets already written to `.scratch/`, use /implement-tickets.
 argument-hint: "[jira-id] <task description>"
 disable-model-invocation: true
 allowed-tools: Bash(git *), Bash(ls *), Read, Write, Skill, Agent, AskUserQuestion
@@ -24,7 +24,7 @@ Before anything else, look at the task's **first word**. It is a Jira id when it
 - **Strip** it from the task text. What remains is the task Phase 1 interviews — the id names where the tickets go, not what they are about.
 - **Say so** in one line before the interview starts: "Jira id `itm-9909` — the board is `itm-9909` and every ticket's parent."
 
-The id then does two things in Phase 2, and nothing else: it is the **board's name** (in place of the feature slug) and every ticket's **parent** (a `**Parent:**` line in its body). Branch names, the coordinator's brief and `/small-ticket` are untouched, and nothing calls Jira — the id is a name, not a link.
+The id then does two things in Phase 2, and nothing else: it is the **board's name** (in place of the feature slug) and every ticket's **parent** (a `**Parent:**` line in its body). Branch names and the coordinator's brief are untouched, and nothing calls Jira — the id is a name, not a link.
 
 Only the first word counts. A key-shaped token anywhere later in the text is just text, and a first word that doesn't match the pattern means there is no id: the feature slug names the board and no ticket carries a parent, exactly as before this existed. See `docs/agents/jira-parent.md`.
 
@@ -36,7 +36,7 @@ Before grilling, read every `<root>/.scratch/*/retro-results.md` that exists (`<
 
 Call the Skill tool with `mattpocock-skills:grilling`, using the task above as the plan under interview, and follow its process as loaded. Stop only once the frontier is empty **and** the developer has confirmed you've reached a shared understanding — don't move to Phase 2 before that confirmation. A shared understanding, not a hunch, is what Phase 2 slices up.
 
-**When the deliverable is a document** — a scope, proposal, estimate, EAD, TDD or report, even a single one — the grilling covers its **content**, not only the work: the audience; the sections and what each says; what is in scope and out; the assumptions the developer is willing to have marked; the sources it rests on (repo files, links, people); how any estimate is built; and the output path. For an EAD, also the brief fields the installed `ead` skill asks for (read its `SKILL.md`). Check that the doc type's skill is installed — `${TICKET_SKILLS_DIR:-~/.claude/skills}/<type>/SKILL.md` **and** `<type>/scripts/check_<type>.py`, for `ead` or `tdd` — and where either is missing it isn't, say so to the developer before writing the ticket (the drafter will fall back to the generic brief, with one `WARN` at launch) and carry on; it is a warning, not a stop. Document work belongs here even for one document: `/small-ticket --doc` is frozen.
+**When the deliverable is a document** — a scope, proposal, estimate, EAD, TDD or report, even a single one — the grilling covers its **content**, not only the work: the audience; the sections and what each says; what is in scope and out; the assumptions the developer is willing to have marked; the sources it rests on (repo files, links, people); how any estimate is built; and the output path. For an EAD, also the brief fields the installed `ead` skill asks for (read its `SKILL.md`). Check that the doc type's skill is installed — `${TICKET_SKILLS_DIR:-~/.claude/skills}/<type>/SKILL.md` **and** `<type>/scripts/check_<type>.py`, for `ead` or `tdd` — and where either is missing it isn't, say so to the developer before writing the ticket (the drafter will fall back to the generic brief, with one `WARN` at launch) and carry on; it is a warning, not a stop. Document work belongs here even for one document: it is a one-ticket board with `**Kind:** doc`.
 
 ## Phase 2 — Break into tickets
 

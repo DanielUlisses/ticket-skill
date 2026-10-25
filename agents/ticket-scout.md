@@ -1,6 +1,6 @@
 ---
 name: ticket-scout
-description: Answers one narrow, factual question about the repo a ticket runs in — where something lives, what calls it, how a pattern is done here, which command runs the checks — with file:line evidence and no opinions. Read-only. Use when a /small-ticket orchestrator or /ticket coordinator fans out discovery, several scouts at once.
+description: Answers one narrow, factual question about the repo a ticket runs in — where something lives, what calls it, how a pattern is done here, which command runs the checks — with file:line evidence and no opinions. Read-only. Use when a /ticket coordinator fans out discovery, several scouts at once.
 tools: Read, Grep, Glob, Bash
 model: haiku
 effort: low

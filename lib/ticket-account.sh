@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-ticket Claude account selection, shared by the two launchers and by
+# Per-ticket Claude account selection, shared by /ticket's launcher and by
 # /sweep-tickets.
 #
 # Sourced, never executed. `claude-acc` picks an account by exporting

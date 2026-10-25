@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the /ticket, /small-ticket, /implement-tickets and /sweep-tickets skills
+# Installs the /ticket, /implement-tickets and /sweep-tickets skills
 # and their shared subagents
 #
 # Usage: ./install.sh [dest ...]   (default: ~/.claude)
@@ -22,7 +22,7 @@ for DEST in "${DESTS[@]}"; do
   mkdir -p "$DEST_SKILLS" "$DEST_AGENTS"
 
   # /implement-tickets ships the board session's scripts and prompt; its launches reuse /ticket's launcher
-  for skill in small-ticket ticket implement-tickets sweep-tickets; do
+  for skill in ticket implement-tickets sweep-tickets; do
     mkdir -p "$DEST_SKILLS/$skill"
     cp "$SRC/skills/$skill/SKILL.md" "$DEST_SKILLS/$skill/"
     for dir in scripts templates; do
@@ -34,6 +34,13 @@ for DEST in "${DESTS[@]}"; do
     done
   done
   cp "$SRC"/agents/*.md "$DEST_AGENTS/"
+
+  # /small-ticket is gone — /ticket is the one way in (ADR 0007). A copy left by
+  # an earlier install would still be offered as a skill, so it goes too.
+  if [[ -d "$DEST_SKILLS/small-ticket" ]]; then
+    rm -rf "$DEST_SKILLS/small-ticket"
+    echo "removed: $DEST_SKILLS/small-ticket (retired — use /ticket; a one-off task is a one-ticket board)"
+  fi
 
   # The shell aliases (tkb, tkv, tkhelp, …) — code, so overwritten like the libraries.
   cp "$SRC/shell/ticket-aliases.sh" "$DEST_SKILLS/ticket-aliases.sh"
@@ -48,9 +55,8 @@ for DEST in "${DESTS[@]}"; do
     echo "installed: $DEST_SKILLS/$(basename "$lib")"
   done
 
-  # config/models.env is shared by the launch.sh of the three launching skills
-  # (small-ticket, ticket, implement-tickets), one level up from the individual
-  # skill dirs. /sweep-tickets launches nothing, so it reads no model.
+  # config/models.env is shared by the scripts of the two launching skills
+  # (ticket, implement-tickets), one level up from the individual skill dirs. /sweep-tickets launches nothing, so it reads no model.
   # Never overwrite a destination copy the developer has hand-edited, since
   # that's the whole point of a per-machine override.
   MODELS_SRC="$SRC/config/models.env"
@@ -64,7 +70,7 @@ for DEST in "${DESTS[@]}"; do
     echo "warning: $MODELS_DEST differs from $MODELS_SRC — keeping the destination copy (hand-edited config is never overwritten)"
   fi
 
-  echo "installed: $DEST_SKILLS/{small-ticket,ticket,implement-tickets,sweep-tickets} and $DEST_AGENTS/ticket-*.md"
+  echo "installed: $DEST_SKILLS/{ticket,implement-tickets,sweep-tickets} and $DEST_AGENTS/ticket-*.md"
 done
 
 # Load the aliases from ~/.bashrc: one line, behind a marker, added once. It

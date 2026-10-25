@@ -1,6 +1,6 @@
 ---
 name: ticket-researcher
-description: Answers one question about something outside the repo a ticket depends on — a library's API, a CLI's flags, a cloud service's behaviour, a spec — from primary sources, pinned to the version the repo actually uses. Read-only. Use when a /small-ticket orchestrator or /ticket coordinator needs external facts before planning or implementing.
+description: Answers one question about something outside the repo a ticket depends on — a library's API, a CLI's flags, a cloud service's behaviour, a spec — from primary sources, pinned to the version the repo actually uses. Read-only. Use when a /ticket coordinator needs external facts before planning or implementing.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 model: haiku
 effort: medium

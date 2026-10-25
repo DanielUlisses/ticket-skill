@@ -1,7 +1,7 @@
 # The shared shell library
 
 Three scripts in this repo do overlapping work: `skills/ticket/scripts/launch.sh`,
-`skills/small-ticket/scripts/launch.sh` and `skills/sweep-tickets/scripts/sweep.sh`.
+`skills/implement-tickets/scripts/board.sh` and `skills/sweep-tickets/scripts/sweep.sh`.
 What they share lives in `lib/`, sourced rather than executed. Nothing in `lib/` runs
 on its own.
 
@@ -9,10 +9,10 @@ on its own.
 |---|---|---|
 | `lib/ticket-git-repo.sh` | `die`/`log`/`need`, `resolve_repo_root`, `resolve_base_branch`, `run_git_net` | all three scripts |
 | `lib/ticket-account.sh` | the `claude-acc` helpers: link resolution, the `flock`ed link/unlink, the account names to choose between, reading the links file back for entries claude-acc can no longer reach, and reading a started agent's `CLAUDE_CONFIG_DIR` | all three scripts |
-| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory and retro-results resolution (`docs/agents/memory.md`), `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `print_launch_defaults`, `launcher_main` | the two launchers |
+| `lib/ticket-launcher.sh` | the worktree/tab/agent mechanics, project-memory and retro-results resolution (`docs/agents/memory.md`), `fill_prose`, `trust_worktree_mise`, `load_ticket_models`, `print_launch_defaults`, `launcher_main` | `/ticket`'s launcher, and `board.sh` for the model config and the subagent roster |
 
-`ticket-account.sh` is shared three ways for the same reason the git half is: the launchers
-write the links and `/sweep-tickets` takes them away again, and both halves have to agree on
+`ticket-account.sh` is shared for the same reason the git half is: the launcher
+writes the links and `/sweep-tickets` takes them away again, and both halves have to agree on
 what counts as a link a ticket owns. See [`accounts.md`](accounts.md).
 
 ## Why one level up
@@ -33,14 +33,13 @@ Unlike `ticket-models.env`, which `install.sh` never overwrites because it is
 config a developer may have hand-edited, the libraries are code and are overwritten
 on every install.
 
-## The launchers are parameters, not forks
+## The launcher is parameters, not a fork
 
-`/ticket` and `/small-ticket` differ in six things, and only six: `SKILL_DIR`,
-`TEMPLATE`, `RUN_NAME`, `PERMISSION_MODE`, `PERMISSION_LABEL` and `DISALLOWED_TOOLS` — plus `COORDINATOR` (whose model the session itself runs on) and `DOC_TEMPLATE` (what a `--doc` launch renders; ADR 0005, ADR 0007 for the board path): `/small-ticket`'s plan-mode `doc-prompt.md`, and `/ticket`'s unattended `ticket-doc-prompt.md`, which `tk.sh launch` asks for when a board ticket says `**Kind:** doc`. `--doc-type ead|tdd|other` fills that brief's `{{DOC_GUIDANCE}}` with the installed skill and its validator — installed meaning `$TICKET_SKILLS_DIR` (default `~/.claude/skills`) has `<type>/SKILL.md` and `<type>/scripts/check_<type>.py`; otherwise one `WARN` line and the generic brief. `TICKET_DRY_RUN=1` does every check, renders the prompt and prints the summary (`DRY_RUN=1` last), then stops before the pull, the worktree and Herdr — the way to see what a ticket would launch as.
-Each `launch.sh` sets those and calls `launcher_main "$@"`. The differences are real
-and must not be flattened — `/small-ticket` starts in plan mode with a developer
-watching, `/ticket` starts unattended with eight git verbs blocked — but they are
-values, not code paths.
+`/ticket`'s `launch.sh` sets six things: `SKILL_DIR`, `TEMPLATE`, `RUN_NAME`,
+`PERMISSION_MODE`, `DISALLOWED_TOOLS` and `DOC_TEMPLATE` (what a `--doc` launch renders; ADR 0007): the unattended `ticket-doc-prompt.md`, which `tk.sh launch` asks for when a board ticket says `**Kind:** doc`. `--doc-type ead|tdd|other` fills that brief's `{{DOC_GUIDANCE}}` with the installed skill and its validator — installed meaning `$TICKET_SKILLS_DIR` (default `~/.claude/skills`) has `<type>/SKILL.md` and `<type>/scripts/check_<type>.py`; otherwise one `WARN` line and the generic brief. `TICKET_DRY_RUN=1` does every check, renders the prompt and prints the summary (`DRY_RUN=1` last), then stops before the pull, the worktree and Herdr — the way to see what a ticket would launch as.
+`launch.sh` sets those and calls `launcher_main "$@"`. The agent starts unattended
+with eight git verbs blocked; the session coordinates on `TICKET_COORD_MODEL`/`EFFORT`
+and only its `ticket-implementer` gets the ticket's model and effort.
 
 `load_ticket_models` is called by the launcher *before* it sets those parameters,
 because `ticket-models.env` may set any `TICKET_*` variable and anything resolved
@@ -48,7 +47,7 @@ from the environment has to be resolved after the config file has been read.
 
 The account is a launch-time argument rather than one of those six parameters: it varies
 per ticket, not per skill, so `--account` (or `TICKET_ACCOUNT`) is parsed inside
-`launcher_main` and both skills get it from the one definition. `--effort` sits in the same
+`launcher_main`. `--effort` sits in the same
 loop for the same reason, and is validated there against the five levels Claude Code knows:
 the CLI only *warns* on a level it doesn't recognise and then runs at its own default, so a
 value passed through would make a typo look like it worked. `load_ticket_models` deliberately
