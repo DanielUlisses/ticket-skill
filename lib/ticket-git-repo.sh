@@ -37,11 +37,36 @@ resolve_repo_root() {
   SELF="$(git rev-parse --show-toplevel)"
 }
 
-# Sets BASE_BRANCH: TICKET_BASE_BRANCH, else the remote's default branch, else
-# whichever of main/master exists locally. Needs ROOT and REMOTE.
+# Sets BASE_BRANCH: TICKET_BASE_BRANCH, else the repo policy's base_branch, else
+# the remote's default branch, else whichever of main/master exists locally.
+# Needs ROOT and REMOTE.
+#
+# Only the repo layer (<ROOT>/.scratch/policy.json) can name the base: the
+# launchers and sweep.sh resolve it with no board in hand, and they must all
+# agree, so a board or box base_branch is never read here.
 resolve_base_branch() {
-  local b
+  local b f="$ROOT/.scratch/policy.json" layer
   BASE_BRANCH="${TICKET_BASE_BRANCH:-}"
+  if [[ -z "$BASE_BRANCH" && -e "$f" ]]; then
+    # Read the way board-lib.sh's policy_read_layer does, so a file is malformed
+    # (or an empty layer) here exactly when it is there.
+    need jq
+    layer="$(jq -cs 'if length == 0 then {} elif length == 1 and (.[0] | type) == "object" then .[0]
+                     else error("not one JSON object") end' "$f" 2>&1)" \
+      || { layer="${layer#jq: error (at *): }"; die "policy file $f is malformed: ${layer#jq: }"; }
+    BASE_BRANCH="$(jq -r 'if .base_branch == null then ""
+                          elif (.base_branch | type) == "string" and .base_branch != "" then .base_branch
+                          else error("base_branch is \(.base_branch | tojson) — want a branch name") end' <<<"$layer" 2>&1)" \
+      || die "policy file $f: ${BASE_BRANCH#jq: error (at <stdin>:*): }"
+    if [[ -n "$BASE_BRANCH" ]]; then
+      if [[ "$BASE_BRANCH" == refs/* || "$BASE_BRANCH" == "$REMOTE"/* ]]; then
+        b="${BASE_BRANCH#refs/heads/}"; b="${b#refs/remotes/}"; b="${b#"$REMOTE"/}"
+        die "policy file $f: base_branch '$BASE_BRANCH' — name the branch alone (e.g. $b), not a ref or $REMOTE/<branch>"
+      fi
+      git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1 \
+        || die "policy file $f: base_branch '$BASE_BRANCH' is not a valid branch name"
+    fi
+  fi
   if [[ -z "$BASE_BRANCH" ]]; then
     BASE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null || true)"
     BASE_BRANCH="${BASE_BRANCH#"$REMOTE"/}"
@@ -51,7 +76,7 @@ resolve_base_branch() {
       git -C "$ROOT" show-ref --verify --quiet "refs/heads/$b" && { BASE_BRANCH="$b"; break; }
     done
   fi
-  [[ -n "$BASE_BRANCH" ]] || die "couldn't detect the base branch (set TICKET_BASE_BRANCH)"
+  [[ -n "$BASE_BRANCH" ]] || die "couldn't detect the base branch (set TICKET_BASE_BRANCH, or base_branch in $f)"
 }
 
 # git over the network: no credential prompt, and a timeout where the system has

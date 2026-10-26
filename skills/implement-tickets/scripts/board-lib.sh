@@ -684,15 +684,18 @@ load_models_env() {
 # shellcheck disable=SC2016  # a jq program: its $vars are jq's
 POLICY_CHECK='
   def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
-              autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object"};
+              autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object",
+              base_branch: "branch"};
   def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
-             count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object"};
+             count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object",
+             branch: "a branch name"};
   def ok($t; $v):
     if   $t == "bool"     then ($v | type) == "boolean"
     elif $t == "forge"    then $v | IN("github", "azure", "none")
     elif $t == "autonomy" then $v | IN("assist", "auto")
     elif $t == "count"    then ($v | type) == "number" and $v == ($v | floor) and $v >= 1 and $v <= 1000
     elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
+    elif $t == "branch"   then ($v | type) == "string" and $v != ""
     else ($v | type) == "object" end;
   to_entries[] | select($only == "" or .key == $only)
   | kinds[.key] as $t | select($t != null) | select(ok($t; .value) | not)
@@ -724,16 +727,18 @@ policy_board_file() { echo "$BOARD_PATH/policy.json"; }
 
 # Sets POLICY_LAYERS: box * repo * board, no defaults. $1 as policy_read_layer's $2.
 # Needs ROOT and BOARD_PATH (the board layer only when that directory exists).
+# base_branch is kept from the repo layer alone, the only one resolve_base_branch
+# reads, so what tk.sh policy prints is the value in effect (bar the env).
 policy_layers() {
   local f only="${1:-}"
   POLICY_LAYERS='{}'
-  for f in "$(policy_box_file)" "$ROOT/.scratch/policy.json"; do
-    policy_read_layer "$f" "$only"
-    POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * $b' <<<"$POLICY_LAYERS")"
-  done
+  policy_read_layer "$(policy_box_file)" "$only"
+  POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * ($b | del(.base_branch))' <<<"$POLICY_LAYERS")"
+  policy_read_layer "$ROOT/.scratch/policy.json" "$only"
+  POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * $b' <<<"$POLICY_LAYERS")"
   if [[ -d "$BOARD_PATH" ]]; then
     policy_read_layer "$(policy_board_file)" "$only"
-    POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * $b' <<<"$POLICY_LAYERS")"
+    POLICY_LAYERS="$(jq -c --argjson b "$POLICY_LAYER" '. * ($b | del(.base_branch))' <<<"$POLICY_LAYERS")"
   fi
 }
 

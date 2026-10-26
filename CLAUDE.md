@@ -61,9 +61,10 @@ changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch a
 ### Board policy
 
 How a board behaves — `forge`, `require_human_before_pr`, `auto_merge`, `night_shift`,
-`autonomy`, `max_parallel`, `usage_gate_pct`, `synthesis` — is one JSON object that tk-hub and the
-board session both read with `tk.sh policy <board>` (`tk.sh digest` prints it as one `POLICY` line), layered (later wins) from built-in defaults, the
+`autonomy`, `max_parallel`, `usage_gate_pct`, `synthesis`, `base_branch` — is one JSON object that
+tk-hub and the board session both read with `tk.sh policy <board>` (`tk.sh digest` prints it as one `POLICY` line), layered (later wins) from built-in defaults, the
 box (`~/.config/tk-daemon/policy.json`), the repo (`.scratch/policy.json`) and the board
 (`.scratch/<board>/policy.json`, written by `tk.sh policy-set`). Env `TICKET_FORGE` beats `forge`, and a
-policy `forge` acts as `TICKET_FORGE` for every `tk.sh` verb when the env sets none. See
-`docs/agents/policy.md`.
+policy `forge` acts as `TICKET_FORGE` for every `tk.sh` verb when the env sets none. `base_branch` is
+read from the repo layer only, by every launcher, `tk.sh` verb and `sweep.sh`, and `TICKET_BASE_BRANCH`
+beats it. See `docs/agents/policy.md`.

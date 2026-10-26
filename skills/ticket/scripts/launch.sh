@@ -42,7 +42,7 @@
 #   TICKET_AGENTS_DIR      (default: <config-root>/agents) — where the ticket-*.md definitions are read from
 #   TICKET_IMPL_PERMISSION_MODE (default: bypassPermissions) — acceptEdits only covers Edit/Write, not the Bash implement/test loop
 #   TICKET_REMOTE          (default: origin)
-#   TICKET_BASE_BRANCH     (default: remote's default branch, e.g. main)
+#   TICKET_BASE_BRANCH     (default: base_branch in the repo's .scratch/policy.json, else the remote's default branch, e.g. main)
 #   TICKET_MODELS_CONF     (default: <skills-dir>/ticket-models.env) — override the config file path
 #   TICKET_LIB_DIR         — the directory holding the shared ticket-*.sh libraries (default: <skills-dir>)
 #   TICKET_MEMORY_FILE     (default: .scratch/project-memory.md, relative to the main repo root) — per-repo project memory folded into the prompt; absent means the launch is unchanged

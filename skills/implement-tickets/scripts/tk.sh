@@ -1091,6 +1091,13 @@ cmd_policy_set() {
   [[ -d "$BOARD_PATH" ]] || die "board $BOARD_ID is not a directory ($BOARD_PATH) — no place for its policy.json"
   local f arg key val obj errs lock lockfd
   f="$(policy_board_file)"
+  # The base branch is the repo's, not one board's (resolve_base_branch): refused
+  # before the lock, so a refusal leaves nothing behind. Removing it is allowed,
+  # to clean a board file that was given one by hand.
+  for arg in "$@"; do
+    [[ "$arg" == *=?* && "${arg%%=*}" =~ ^base_branch(\.|$) ]] \
+      && die "base_branch is repo-wide, not per board — the developer sets it by hand in $ROOT/.scratch/policy.json; nothing written"
+  done
   if command -v flock >/dev/null 2>&1; then
     lock="$BOARD_PATH/.policy.lock"
     exec {lockfd}>>"$lock" || die "can't open the lock file $lock"
@@ -1217,6 +1224,8 @@ Policy (tk.sh policy <board>) — later wins: defaults < box < repo < board
   box    $TICKET_BOX_POLICY, default ~/.config/tk-daemon/policy.json
   repo   <main checkout>/.scratch/policy.json
   board  .scratch/<board>/policy.json — what policy-set writes (key=value, typed; key= removes)
+  base_branch  repo layer only (the developer edits the repo file); TICKET_BASE_BRANCH beats it;
+               policy-set refuses it, and tk.sh policy prints the repo's
   docs/agents/policy.md lists the keys and their defaults
 
 Elsewhere
