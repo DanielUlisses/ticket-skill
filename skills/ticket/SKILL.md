@@ -126,9 +126,10 @@ Not ignored means every `git status` in the root shows `?? .scratch/` from here 
 ```bash
 git -C <root> symbolic-ref --quiet --short refs/remotes/<remote>/HEAD   # strip the leading `<remote>/`; fails with no remote
 git -C <root> branch --show-current
+jq -r '.base_branch // empty' <root>/.scratch/policy.json 2>/dev/null   # the repo's own base, when it names one
 ```
 
-Resolve it the way `resolve_base_branch` does, so the branch you name is the one the launchers branch from: `TICKET_BASE_BRANCH` where it's set, else that remote's `HEAD` (`TICKET_REMOTE`, default `origin`), else whichever of `main`/`master` exists locally.
+Resolve it the way `resolve_base_branch` does, so the branch you name is the one the launchers branch from: `TICKET_BASE_BRANCH` where it's set, else `base_branch` in the repo's `.scratch/policy.json`, else that remote's `HEAD` (`TICKET_REMOTE`, default `origin`), else whichever of `main`/`master` exists locally.
 
 - **The root is on the default branch** — tell the developer `.scratch/` isn't ignored, that you'd add it to `.gitignore` on `<default-branch>`, and that this is a tracked change they'll be committing. Ask (`AskUserQuestion`), and edit only on a yes: `Read` the `.gitignore` and `Write` it back with `.scratch/` appended as its own line, preserving everything already there, or `Write` just that line where there's no file yet. Never edit it silently.
 - **The root is on another branch** — say which branch it's on and which is the default, and that the entry belongs on the default one. Don't edit this branch's `.gitignore` and don't switch branches: the entry would land where the board won't. Leave it with the developer.

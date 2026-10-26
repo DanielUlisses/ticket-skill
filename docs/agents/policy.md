@@ -48,12 +48,48 @@ whole (`2.0` prints as `2`).
 | `max_parallel` | whole number, 1–1000 | `4` | tk-hub: tickets running at once on the box |
 | `usage_gate_pct` | number 0–100 | `90` | tk-hub: a Claude usage window at or above this stops automatic launches on the box |
 | `synthesis` | object | `{"backends": ["agy"], "timeout": 300}` | tk-hub's summary runner; passed through, not checked inside |
+| `base_branch` | branch name | the remote's default branch (`main`/`master` locally without one) — not printed: resolved at launch | the branch tickets branch from, PR into and land on. **Repo layer only** — see below |
 
 Any other key is passed through untouched, at any layer — `tk.sh policy` prints it, nothing here
 reads it.
 
 Client policy — `require_human_before_pr` and `forge: none` — always beats tk-hub's scheduler and
 night shift.
+
+### `base_branch`
+
+The base is the repo's, not a board's: `launch.sh`, `/sweep-tickets`' `sweep.sh` and every `tk.sh`
+verb resolve it through `resolve_base_branch` (`lib/ticket-git-repo.sh`), the launchers and sweep with
+no board in hand, and they must agree — sweep's guards rest on it. So it is read from
+`<main checkout>/.scratch/policy.json` alone:
+
+1. Env `TICKET_BASE_BRANCH`, when set and non-empty, beats it.
+2. Else the repo file's `base_branch`.
+3. Else the remote's `HEAD`, else whichever of `main`/`master` exists locally.
+
+A `base_branch` in the box or a board file is never read, and `tk.sh policy` drops it from those
+layers, so the value it prints is the repo file's — the one in effect, unless `TICKET_BASE_BRANCH`
+is set, which `tk.sh policy` doesn't show. `policy-set` refuses to set the key (removing it,
+`base_branch=`, is allowed, to clean a board file given one by hand); the developer edits the repo
+file, since the board session never edits a `policy.json`.
+
+In the repo file, the value is the branch's bare name: a ref (`refs/heads/x`) or a remote branch
+(`origin/x`) is refused, as is one that `git check-ref-format --branch` rejects or one that isn't a
+non-empty string. Any of these, or malformed JSON, stops every launcher and verb on the repo with an
+error naming the file. `tk.sh policy` checks only that it is a non-empty string (in every layer,
+so a wrong-typed one in the box or a board file still stops it, naming the file, though it is never
+read), so a bad name shows
+up at the first launch or verb. The branch is not checked to exist, the same as with the env var.
+
+Use it when a repo's tickets land on a long-lived integration branch rather than the default one:
+a fork that validates changes before they reach `main`, say. In `.scratch/policy.json` (the
+file is git-ignored with the rest of `.scratch/`; keep any keys it already has):
+
+```json
+{"base_branch": "kyverno-cel-migration"}
+```
+
+Remove the key once the integration branch has merged, and the repo is back on its default.
 
 ### Why these defaults
 

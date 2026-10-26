@@ -43,7 +43,8 @@
 #
 # Optional variables:
 #   TICKET_REMOTE        (default: origin)
-#   TICKET_BASE_BRANCH   (default: the remote's default branch, e.g. main)
+#   TICKET_BASE_BRANCH   (default: base_branch in the repo's .scratch/policy.json, else the
+#                        remote's default branch, e.g. main)
 #   TICKET_DIGEST_GLOB   (default: /tmp/implement-tickets-digest-*.txt)
 #   CLAUDE_SWITCH_DIR    (default: ~/.claude-switch) — read by ticket-account.sh; point it
 #                        at a sandbox to exercise the link source without touching the real file
