@@ -3,16 +3,21 @@
 # code, so the model driving the board (Haiku, by default) only reads results
 # and decides. See docs/adr/0004-haiku-board-session.md.
 #
-# Usage (<board> is a Jira id or slug under .scratch/, a path, or "" for the only one there):
+# Usage (<board> is a Jira id or slug under .scratch/, a path, or "" for the only one there).
+# Local mode — no remote, or a remote whose host isn't GitHub or Azure DevOps (a bare SSH
+# repo, Gitea, a NAS) and no forge named by TICKET_FORGE or a policy: gates, ready and merge
+# take the local path, pr and push refuse, and the local base is never pushed.
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
-#   tk.sh gates   <board> <NN>           the five merge gates, one line each (no remote: the four local gates)
-#   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (no remote: the local gates)
+#   tk.sh gates   <board> <NN>           the five merge gates, one line each (local mode: the local gates — four,
+#                                        five with a remote: base, the local base not behind <remote>/<base>)
+#   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (local mode: the local gates)
 #   tk.sh pr      <board> <NN>           commit the ticket's work, push, open its PR — the words by the Cursor CLI
 #   tk.sh push    <board> <NN>           commit the ticket's work and push its branch, no PR (TICKET_FORGE=none)
 #   tk.sh merge   <board> <NN>           gates, then merge the PR on the forge (GitHub or Azure DevOps), then resolve;
-#                                        no remote: local gates, commit the ticket's work, merge --no-ff into the local base
+#                                        local mode: local gates, commit the ticket's work, merge --no-ff into the
+#                                        local base — never pushed
 #   tk.sh resolve <board> <NN>           mark a landed ticket resolved in its home
 #   tk.sh resolve <board> <NN> --no-code "<reason>"   resolve a ticket that delivers nothing committable
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
@@ -23,13 +28,15 @@
 #   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
 #                                        [{slug, path, tickets}] — machine-readable, nothing else on stdout
 #   tk.sh export  <board>                one JSON object: board info, board.md, retro-results.md and every
-#                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub
+#                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub;
+#                                        merge_mode: pr | push (forge none by policy/env) | local (local mode)
 #   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
 #   tk.sh retro-save <board>             save ticket-retro's output (stdin) as retro/proposals.md; the previous one is archived
 #   tk.sh retro-apply <board> [approve|reject|defer <id>...]...  mark proposals by id, regenerate retro-results.md
-#   tk.sh policy  <board>                the resolved policy as JSON: defaults < box < repo < board, env TICKET_FORGE wins
+#   tk.sh policy  <board>                the resolved policy as JSON: defaults < box < repo < board, env TICKET_FORGE wins;
+#                                        forge is detected from the remote (none: no remote, or not GitHub/Azure)
 #   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
@@ -98,10 +105,15 @@ cmd_digest() {
   local state_file prev="{}"
   state_file="$(board_state_dir)/$BOARD_SLUG.digest.json"
   [[ -f "$state_file" ]] && prev="$(cat "$state_file")"
+  # A remote on no forge we detect is local mode by default — said once (again
+  # with --full, or when the remote changes), so a GitHub Enterprise or an ssh
+  # alias doesn't merge locally unnoticed.
+  local nfwarn=""
+  if local_mode && (( HAS_REMOTE )); then nfwarn="$(local_mode_reason long)"; fi
   local out
   out="$(jq -n --argjson board "$BOARD_JSON" --argjson prev "$prev" --argjson full "$full" \
            --slurpfile facts <(printf '%s' "$facts") \
-           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson local "$( ((HAS_REMOTE)) && echo false || echo true )" --argjson off "$(forge_off && echo true || echo false)" --arg policy "$policy" '
+           --arg id "$BOARD_ID" --arg base "$BASE_REF" --arg remote "$REMOTE" --argjson local "$(local_mode && echo true || echo false)" --arg localwhy "$(local_mode_reason): merge is local$( ((HAS_REMOTE)) && echo ", the base is not pushed")" --arg nfwarn "$nfwarn" --argjson off "$(forge_off && echo true || echo false)" --arg policy "$policy" '
     ($facts | map({key: .nn, value: .}) | from_entries) as $f |
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
@@ -119,8 +131,8 @@ cmd_digest() {
     ($rows | map({key: .nn, value: .line}) | from_entries) as $now |
     ($prev.lines // {}) as $was |
     [ $rows[] | select($was[.nn] != .line) | .nn ] as $changed |
-    { lines: $now,
-      text: ([ "BOARD \($id) base \($base)" + (if $local then " (no remote: merge is local)" else "" end) +
+    { lines: $now, nfwarn: $nfwarn,
+      text: ([ "BOARD \($id) base \($base)" + (if $local then " (\($localwhy))" else "" end) +
                  (([$board[].parent | select(. != "")] | unique) as $p |
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
              + ($policy | split("\n"))
@@ -137,10 +149,11 @@ cmd_digest() {
              + [ $rows[] | select((.unknown_refs // []) | length > 0) | "WARN \(.nn) blocked-by names nothing on the board: \(.unknown_refs | join(","))" ]
              + [ $rows[] | select((.xblockers_open // []) | any(endswith("(not found)"))) | "WARN \(.nn) blocked by a ticket on another repo'"'"'s board that can'"'"'t be found: \(.xblockers_open | map(select(endswith("(not found)"))) | join(", ")) — counted as open" ]
              + [ $rows[] | select(.foreign != "") | "WARN \(.nn) changes \(.foreign), not this repo — it can'"'"'t launch here; move its file to that repo'"'"'s .scratch/\($id)/issues/ and run the board there" ]
+             + (if $nfwarn != "" and ($full == 1 or $prev.nfwarn != $nfwarn) then [ "WARN \($nfwarn)" ] else [] end)
              + [ "CHANGED " + (if $prev.lines == null then "all (first digest)" else ($changed | join(" ") | dash) end) ]
             ) | join("\n") }')"
   jq -r .text <<<"$out"
-  jq '{lines}' <<<"$out" >"$state_file"
+  jq '{lines, nfwarn}' <<<"$out" >"$state_file"
   # The line format /sweep-tickets cross-checks against (sweep.sh load_board):
   # <NN> <status> <ref> <branch> <agent-state> <landed> <open-blockers>.
   jq -nr --argjson board "$BOARD_JSON" --slurpfile facts <(printf '%s' "$facts") '
@@ -281,13 +294,14 @@ run_gates() {
   (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
 }
 
-# A repo with no remote has no PR to gate: the ticket is merged into the local
-# base in the root checkout instead. Four gates, the same GATE lines and exit
-# codes as the forge's: clean (root_unclean: the root checkout can take the
-# merge), review and checks (what the
+# A repo in local mode (local_mode: no remote, or no forge) has no PR to gate:
+# the ticket is merged into the local base in the root checkout instead. Four
+# gates, the same GATE lines and exit codes as the forge's: clean (root_unclean:
+# the root checkout can take the merge), review and checks (what the
 # ticket's coordinator last wrote to its phase file), conflict (a trial merge of
 # the branch and its uncommitted work against the base, in git's object store
-# only — no checkout, no index is touched). Returns 0 / 10 / 12.
+# only — no checkout, no index is touched). With a remote, a fifth: base
+# (base_behind). Returns 0 / 10 / 12.
 run_local_gates() {
   local t="$1" branch wt line review tests fail=0 conflicting=0 tip why
   branch="$(jq -r .branch <<<"$t")"
@@ -298,6 +312,10 @@ run_local_gates() {
   why="$(root_unclean "$tip")"
   if [[ -n "$why" ]]; then echo "GATE clean FAIL $why"; fail=1
   else echo "GATE clean PASS $ROOT on $BASE_BRANCH"; fi
+  if (( HAS_REMOTE )); then
+    base_fetch; why="$(base_behind)"; echo "GATE base $why"
+    [[ "$why" == PASS* ]] || fail=1
+  fi
   # Line 2 of the phase file: "tests=… criteria=m/n review=ok|<N>-blocking",
   # sanitised as the status board reads it.
   line=""; [[ -s "$(board_state_dir)/phase/$branch" ]] && line="$(sed -n 2p "$(board_state_dir)/phase/$branch" | tr -cd 'a-z0-9=/ -')"
@@ -325,6 +343,36 @@ run_local_gates() {
   (( fail )) && return 12; (( conflicting )) && return 10; return 0
 }
 
+# Local mode with a remote: the base is fetched (into <remote>/<base> only —
+# nothing is pulled), once per tk.sh run however many tickets are gated
+# (base_fetch, called outside the $(…) that base_behind runs in, so the guard
+# holds; BASE_FETCH_FAILED tells base_behind the fetch failed). The local base
+# must hold every commit the remote's has, or a local merge would fork the base
+# from the remote's. Ahead is fine: local merges are never pushed; ahead and
+# behind both is a diverged base, for the developer to rebase or merge by hand.
+# A failed fetch compares with the last one. base_behind prints "PASS …" or
+# "FAIL …", the rest of a GATE base line.
+BASE_FETCHED=0; BASE_FETCH_FAILED=0
+base_fetch() {
+  (( BASE_FETCHED )) && return 0
+  BASE_FETCHED=1
+  run_git_net fetch "$REMOTE" "+refs/heads/$BASE_BRANCH:refs/remotes/$REMOTE/$BASE_BRANCH" --quiet 2>/dev/null || BASE_FETCH_FAILED=1
+  return 0
+}
+base_behind() {
+  local rref="refs/remotes/$REMOTE/$BASE_BRANCH" note="" counts ahead behind
+  (( BASE_FETCH_FAILED )) && note=" (fetch from $REMOTE failed — compared with the last fetch)"
+  if ! git -C "$ROOT" show-ref --verify --quiet "$rref"; then
+    echo "PASS no $REMOTE/$BASE_BRANCH to compare with — the fetch failed (no $BASE_BRANCH there, or $REMOTE unreachable) and none was fetched before"; return
+  fi
+  counts="$(git -C "$ROOT" rev-list --left-right --count "$BASE_BRANCH...$rref" 2>/dev/null)" || { echo "FAIL couldn't compare $BASE_BRANCH with $REMOTE/$BASE_BRANCH"; return; }
+  read -r ahead behind <<<"$counts"
+  if (( behind > 0 && ahead > 0 )); then
+    echo "FAIL local $BASE_BRANCH has diverged from $REMOTE/$BASE_BRANCH ($ahead commit(s) only here, $behind only there) — rebase or merge it by hand first${note}"
+  elif (( behind > 0 )); then echo "FAIL local $BASE_BRANCH is behind $REMOTE/$BASE_BRANCH — pull it first ($behind commit(s) missing)${note}"
+  else echo "PASS local $BASE_BRANCH has every commit on $REMOTE/$BASE_BRANCH${note}"; fi
+}
+
 # Why the root checkout can't take a merge of <tip> (a commit; empty: skip the
 # last check), or nothing: it must be on the base, with no merge in progress, no
 # tracked changes, and no untracked file where <tip> adds one — git would refuse
@@ -342,8 +390,8 @@ root_unclean() {
   [[ -z "$files" ]] || echo "$ROOT has untracked files the ticket adds — move them aside: $(head -5 <<<"$files" | paste -sd ' ' -)"
 }
 
-# No remote, no ticket-merger (its script needs a remote to push to): the
-# developer resolves a conflict by hand in the ticket's worktree.
+# Local mode, no ticket-merger (its script pushes its merge to a PR's branch):
+# the developer resolves a conflict by hand in the ticket's worktree.
 conflict_line() {
   local t="$1" wt="$2" nn branch
   nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
@@ -397,26 +445,27 @@ merge_local() {
     if [[ -n "$unmerged" ]]; then conflict_line "$t" "$wt"; echo "NOT MERGED — a gate failed"; return 10; fi
     echo "NOT MERGED — git merge failed, $ROOT left as it was: $(grep -v '^[[:space:]]*$' <<<"$err" | tail -3 | paste -sd ' ' -)"; return 12
   fi
-  echo "MERGED $nn (local) $branch into $BASE_BRANCH as $(git -C "$ROOT" rev-parse --short HEAD)"
+  echo "MERGED $nn (local) $branch into $BASE_BRANCH as $(git -C "$ROOT" rev-parse --short HEAD)$( ((HAS_REMOTE)) && echo " — merged into local $BASE_BRANCH, not pushed")"
   resolve_ticket "$t"
 }
 
-# PRs need a remote — every caller has taken the no-remote path (above) or
-# refused already — and a forge that can be asked.
+# PRs need a forge — every caller has taken the local path (above) or refused
+# already in local mode — that can be asked.
 need_pr_remote() { forge_need; }
 
 cmd_gates() {
   board_init "${1:-}"; local t; t="$(ticket_json "${2:?usage: tk.sh gates <board> <NN>}")"
-  (( HAS_REMOTE )) || { run_local_gates "$t"; return; }
+  if local_mode; then run_local_gates "$t"; return; fi
   need_pr_remote; run_gates "$t"
 }
 
 cmd_ready() {
-  board_init "${1:-}"; (( HAS_REMOTE )) && need_pr_remote
+  board_init "${1:-}"; local lm=0; local_mode && lm=1
+  (( lm )) || need_pr_remote
   local t nn any=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"
-    if (( ! HAS_REMOTE )); then
+    if (( lm )); then
       if run_local_gates "$t" >/dev/null 2>&1; then echo "READY $nn (local)"; any=1; fi
     elif run_gates "$t" >/dev/null 2>&1; then echo "READY $nn #$PR_NUMBER"; any=1; fi
   done < <(jq -c '.[] | select(.status == "in-progress")' <<<"$BOARD_JSON")
@@ -425,7 +474,7 @@ cmd_ready() {
 
 cmd_merge() {
   board_init "${1:-}"
-  (( HAS_REMOTE )) || { merge_local "${1:-}" "${2:?usage: tk.sh merge <board> <NN>}"; return; }
+  if local_mode; then merge_local "${1:-}" "${2:?usage: tk.sh merge <board> <NN>}"; return; fi
   need_pr_remote
   local nn="${2:?usage: tk.sh merge <board> <NN>}" t rc method
   t="$(ticket_json "$nn")"
@@ -445,9 +494,9 @@ cmd_merge() {
 # exit 5 tells the board session to dispatch ticket-pr-creator instead.
 cmd_pr() {
   load_models_env
-  # Refuse up front (git-only mode, no remote, no forge CLI) so no agent is dispatched for nothing.
+  # Refuse up front (git-only mode, local mode, no forge CLI) so no agent is dispatched for nothing.
   board_init "${1:-}"
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT (forge: none) — no PRs here; tk.sh merge commits the ticket and merges it locally"
+  local_mode && die "$(local_mode_reason long)$( ((HAS_REMOTE)) || echo " (forge: none)") — no PRs here; tk.sh merge commits the ticket and merges it into the local $BASE_BRANCH"
   need_pr_remote
   if [[ "${TICKET_PR_RUNNER:-cursor}" == claude ]]; then
     echo "RUNNER claude — dispatch ticket-pr-creator for ticket ${2:-?}"; return 5
@@ -463,7 +512,10 @@ cmd_pr() {
 cmd_push() {
   load_models_env
   board_init "${1:-}"
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push; tk.sh merge commits the ticket and merges it locally"
+  if local_mode; then
+    (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push; tk.sh merge commits the ticket and merges it locally"
+    die "$(local_mode_reason long) — no forge to merge a pushed branch on; tk.sh merge commits the ticket and merges it into the local $BASE_BRANCH (on a forge we don't detect, a policy forge: none pushes instead)"
+  fi
   "$SKILL_DIR/scripts/pr-cursor.sh" "${1:-}" "${2:?usage: tk.sh push <board> <NN>}" --push
 }
 
@@ -482,7 +534,7 @@ resolve_ticket() {
     if forge_ok && ! err="$(forge_merged_pr "$branch" 2>&1 >/dev/null)"; then
       die "ticket $nn hasn't landed by git ($l), and $(forge_name) couldn't be asked: $(tail -1 <<<"$err")"
     fi
-    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(forge_off && echo "the forge was not asked ($(forge_off_why))" || echo "$(forge_name) reports no merged PR from it") — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
+    die "ticket $nn hasn't landed ($l): $branch isn't in $BASE_REF by ancestry or content, and $(if forge_off; then echo "the forge was not asked ($(forge_off_why))"; elif local_mode; then echo "there is no forge to ask (local mode)"; else echo "$(forge_name) reports no merged PR from it"; fi) — not resolving it (tk.sh why $BOARD_ID $nn shows each check)"
   fi
   if [[ "$l" == yes:pr#* ]]; then
     sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"
@@ -509,6 +561,7 @@ cmd_why() {
       || echo "  $REMOTE has no branch $branch (deleted after the merge, or pushed under another name)"; }
   fi
   if forge_off; then echo "ticket $nn: $(jq -r .status <<<"$t"), forge: none ($(forge_off_why)) — git log only"
+  elif local_mode; then echo "ticket $nn: $(jq -r .status <<<"$t"), forge: none ($(local_mode_reason)) — local mode, git log only"
   else echo "ticket $nn: $(jq -r .status <<<"$t"), forge $(forge_name)$([[ $FORGE == azure ]] && echo " ($AZ_ORG / $AZ_PROJECT / $AZ_REPO)")"; fi
   local errs; errs="$(mktemp)"
   # The trace goes to stderr, straight through; only the verdict is captured.
@@ -525,6 +578,7 @@ cmd_why() {
     else echo "OPEN PR unknown — $(forge_name) said: $(grep -v '^[[:space:]]*$' "$perr" | tail -1)"; fi
     rm -f "$perr"
   elif forge_off; then echo "OPEN PR not asked — forge: none ($(forge_off_why)) — git log only"
+  elif local_mode; then echo "OPEN PR not asked — local mode, no forge"
   else echo "OPEN PR not asked — $(forge_name) CLI unavailable"; fi
 }
 
@@ -757,8 +811,9 @@ cmd_export() {
   VIEW_ERRS="$errs" LANDED_ERRS="$errs" board_rows | jq \
     --arg board_id "$BOARD_ID" --arg slug "$BOARD_SLUG" --arg repo "$REPO_NAME" --arg root "$ROOT" \
     --arg base "$BASE_BRANCH" --arg forge "$FORGE" --argjson has_remote "$( ((HAS_REMOTE)) && echo true || echo false )" \
-    --arg board_path "$BOARD_PATH" \
-    '{board_id:$board_id, slug:$slug, repo:$repo, root:$root, base:$base, has_remote:$has_remote, forge:$forge, board_path:$board_path,
+    --arg merge_mode "$(merge_mode)" --arg board_path "$BOARD_PATH" \
+    '{board_id:$board_id, slug:$slug, repo:$repo, root:$root, base:$base, has_remote:$has_remote, forge:$forge,
+      merge_mode:$merge_mode, board_path:$board_path,
       board_md: null, retro_results_md: null, tickets: .}' \
     | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
     | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi
@@ -1143,13 +1198,15 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   resolves it. Any forge; always the Cursor CLI
   merge 05                      five gates, then merges the PR ON THE FORGE (GitHub/Azure — what
                                   the merge button does; your local main is untouched until you
-                                  pull), resolve, offer what it unblocked. No remote: four local
-                                  gates (clean root on main, review 0 blocking, tests=pass,
-                                  no conflict), commits the ticket (Cursor's message, as push),
-                                  merges it --no-ff into your local main, resolves; nothing pushed
+                                  pull), resolve, offer what it unblocked. Local mode (no remote,
+                                  or one not on GitHub/Azure DevOps): four local gates (clean
+                                  root on main, review 0 blocking, tests=pass, no conflict; with a
+                                  remote a fifth, local main not behind the remote's), commits the
+                                  ticket (Cursor's message, as push), merges it --no-ff into your
+                                  local main, resolves; nothing pushed, main included
                                   conflict -> Sonnet merger merges main INTO the ticket branch and
                                   resolves it; you choose Commit (pushes the branch) / Abort / Leave.
-                                  No remote: no merger — merge main into the ticket branch in its
+                                  Local mode: no merger — merge main into the ticket branch in its
                                   worktree by hand, then merge 05 again
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
@@ -1202,14 +1259,19 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
   tk.sh boards            every board under .scratch/: [{slug, path, tickets}]
   tk.sh export <board>    board info, board.md, retro-results.md and every ticket as the status
                           board sees it, as one object (slug or boards[].path; `base` is the base
-                          branch name, not a sha; `has_remote` tells forge none from no remote).
+                          branch name, not a sha; `has_remote` tells a repo with no remote from
+                          one with a remote but forge none; `merge_mode: pr|push|local` is how a
+                          ticket ships — a PR, a push merged on the forge by you, a local merge).
                           No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
                           keeps it offline
 
 Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
   Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
-  TICKET_FORGE=github|azure       override the detection
+  any other host local mode: merge into the local base (never pushed), pr/push refuse — a bare
+                 SSH repo, Gitea, a NAS, a local path, no remote. Hosts match case-insensitively,
+                 an ssh alias by its HostName (ssh -G, offline)
+  TICKET_FORGE=github|azure       override the detection (GitHub Enterprise, say)
   TICKET_FORGE=none               git only: no gh/az call; digest/view/why/resolve read the git log,
                                   pr/gates/ready/merge refuse — push, then merge on the forge yourself
   TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)

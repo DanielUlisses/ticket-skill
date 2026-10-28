@@ -15,8 +15,9 @@
 #       when the paths file is empty: the commit is already made)
 #   pr-open.sh check  <board> <NN> --local
 #   pr-open.sh commit <board> <NN> --message-file <f> --paths-file <f>
-#       the same guarded commit, and no push — for a repo with no remote, where
-#       tk.sh merge then merges the branch into the local base (message optional
+#       the same guarded commit, and no push — for a repo in local mode (no remote,
+#       or no forge: board-lib's local_mode), where tk.sh merge then merges the
+#       branch into the local base (message optional
 #       when the paths file is empty and the branch already has commits)
 #
 # Exit codes: 0 ok | 1 error/refused
@@ -38,20 +39,20 @@ verb="${1:-}"; board="${2:-}"; nn="${3:-}"
 [[ "$verb" =~ ^(check|open|push|commit)$ && -n "$nn" ]] || { sed -n '2,22p' "$0"; exit 1; }
 shift 3
 # Push mode: commit and push only. No PR is opened or looked up, so no forge is needed.
-# Local mode: commit only — no remote, no forge; the branch is merged locally after.
+# Local mode: commit only — no remote, or no forge; the branch is merged locally after.
 PUSH=0; [[ "$verb" == push ]] && PUSH=1
 LOCAL=0; [[ "$verb" == commit ]] && LOCAL=1
 [[ "$verb" == check && "${1:-}" == --push ]] && { PUSH=1; shift; }
 [[ "$verb" == check && "${1:-}" == --local ]] && { LOCAL=1; shift; }
 board_init "$board"
 if (( LOCAL )); then
-  (( ! HAS_REMOTE )) || die "this repo has a '$REMOTE' remote — a ticket ships there by PR (tk.sh pr) or push (tk.sh push), not a local commit and merge"
+  local_mode || die "this repo has a '$REMOTE' remote on a forge — a ticket ships there by PR (tk.sh pr) or push (tk.sh push), not a local commit and merge"
 else
-  (( HAS_REMOTE )) || die "no '$REMOTE' remote in $ROOT — nowhere to push or open a PR; tk.sh merge commits and merges the ticket locally"
+  local_mode && die "$(local_mode_reason long) — nowhere to push or open a PR; tk.sh merge commits and merges the ticket locally"
 fi
 (( PUSH || LOCAL )) || forge_need
-# What the branch's own commits are counted from: the remote's base, or with no
-# remote the local one.
+# What the branch's own commits are counted from: the remote's base, or in local
+# mode the local one.
 BASE_AT="$REMOTE/$BASE_BRANCH"; (( LOCAL )) && BASE_AT="$BASE_BRANCH"
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
@@ -157,7 +158,7 @@ case "$verb" in
       [[ -n "$files" || "$ahead" -gt 0 ]] || die "nothing to open a PR for: no changes and no commits on $BRANCH"
     fi
     echo "READY ticket $nn on $BRANCH (base $BASE_BRANCH) in $WT"
-    if (( LOCAL )); then echo "MODE local — a commit on the branch, merged into the local $BASE_BRANCH; no remote"
+    if (( LOCAL )); then echo "MODE local — a commit on the branch, merged into the local $BASE_BRANCH; nothing pushed"
     elif (( PUSH )); then echo "MODE push — a commit and a pushed branch, no PR"
     else echo "FORGE $(forge_name)$([[ $FORGE == azure ]] && echo " — description capped at 4000 characters; keep the body under it")"; fi
     echo "COMMITS already on the branch: $ahead"
@@ -216,7 +217,7 @@ case "$verb" in
     preflight
     if (( LOCAL )); then
       commit_and_push "$clean/msg" "$paths" ""
-      echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, not pushed (no remote)"
+      echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, not pushed (local mode)"
       print_left; exit 0
     fi
     commit_and_push "$clean/msg" "$paths" "run tk.sh push again — the commit already made is pushed with it"

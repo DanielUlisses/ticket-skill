@@ -225,6 +225,8 @@ landed() {
     fi
   elif forge_off; then
     _lt "forge: none ($(forge_off_why)) — git log only"
+  elif local_mode; then
+    _lt "forge: none ($(local_mode_reason)) — local mode, git log only"
   elif (( HAS_REMOTE )); then
     _lt "$(forge_name): not asked ($( ((${#tips[@]})) && echo "its CLI isn't available" || echo "nothing committed"))"
   fi
@@ -356,6 +358,9 @@ board_init() {
   resolve_board "${1:-}"
   policy_forge_env
   forge_detect
+  # Local mode merges into the local base and never pushes it, so that is what
+  # a ticket lands in — not <remote>/<base>, which a local merge never reaches.
+  if local_mode; then BASE_REF="$BASE_BRANCH"; fi
   # tk.sh export passes "allow-empty": a board folder with no ticket files is an
   # empty board, not an error.
   if [[ "${2:-}" == allow-empty && -d "$BOARD_PATH" ]] &&
@@ -375,19 +380,62 @@ board_init() {
 # so the gates, the merge, the landing check, the status board and pr-open.sh
 # never call gh or az themselves.
 
+# The host part of a remote URL (https://[user@]host/…, ssh://[user@]host[:port]/…,
+# [user@]host:path) as written, or nothing for a local path (/srv/git/x.git, file://…).
+remote_host() {
+  local url="$1" re_url='^[A-Za-z][A-Za-z0-9+.-]*://([^@/]*@)?([^/:]*)' re_scp='^([^@/]+@)?([^:/]+):'
+  if [[ "$url" =~ $re_url ]]; then echo "${BASH_REMATCH[2]}"
+  elif [[ "$url" =~ $re_scp ]]; then echo "${BASH_REMATCH[2]}"
+  fi
+}
+
+# The host a remote URL really reaches, lowercased: for an SSH URL (scp form,
+# ssh://, git+ssh://) the HostName ssh's config gives its host — an alias such
+# as gh-work → github.com — read offline with ssh -G (no connection is made);
+# otherwise, or without ssh, the host as written.
+remote_real_host() {
+  local url="$1" host real=""
+  host="$(remote_host "$url")"
+  [[ -n "$host" ]] || return 0
+  if [[ "$url" =~ ^(ssh|git\+ssh|ssh\+git):// || ! "$url" =~ :// ]] && command -v ssh >/dev/null 2>&1; then
+    real="$(ssh -G "$host" 2>/dev/null </dev/null | awk '$1 == "hostname" {print $2; exit}')"
+  fi
+  real="${real:-$host}"; echo "${real,,}"
+}
+
+# A remote URL fit to print: any user:token@ in it removed.
+remote_url_safe() { git -C "$ROOT" remote get-url "$REMOTE" 2>/dev/null | sed -E 's#(://)[^@/]*@#\1#'; }
+
 # Sets FORGE (github|azure|none) and, for Azure, AZ_ORG / AZ_PROJECT / AZ_REPO
 # parsed from the remote — passed explicitly, so a remote not named origin works.
+# Detected from the URL's host, case-insensitively — as written and, for an SSH
+# URL, as ssh's config resolves it (remote_real_host): dev.azure.com /
+# visualstudio.com is Azure DevOps, a github.com host (or an ssh alias starting
+# github.com- / github.com_, or one whose HostName is github.com) GitHub,
+# anything else — a bare SSH repo, Gitea, a NAS, a local path — none, which
+# with no forge named is local mode (local_mode). GitHub Enterprise needs
+# TICKET_FORGE / a policy `forge` of github or azure.
 forge_detect() {
   FORGE=none; AZ_ORG=""; AZ_PROJECT=""; AZ_REPO=""
   (( HAS_REMOTE )) || return 0
-  local url; url="$(git -C "$ROOT" remote get-url "$REMOTE")"
+  local url host real hosts; url="$(git -C "$ROOT" remote get-url "$REMOTE")"
+  # Both hosts, space-separated and space-padded, so each pattern anchors on a space.
+  local re_az='[ .](dev\.azure\.com|visualstudio\.com) ' re_gh='[ .]github\.com[ _-]'
+  host="$(remote_host "$url")"; real=""
+  [[ -z "${TICKET_FORGE:-}" || "$TICKET_FORGE" == azure ]] && real="$(remote_real_host "$url")"
+  hosts=" ${host,,} $real "
   case "${TICKET_FORGE:-}" in
     github|azure) FORGE="$TICKET_FORGE" ;;
     none) FORGE=none ;;   # git only: no gh/az call anywhere; the developer merges on the forge
-    "") if [[ "$url" =~ (dev\.azure\.com|visualstudio\.com) ]]; then FORGE=azure; else FORGE=github; fi ;;
+    "") if [[ "$hosts" =~ $re_az ]]; then FORGE=azure
+        elif [[ "$hosts" =~ $re_gh ]]; then FORGE=github
+        else FORGE=none; fi ;;
     *) die "TICKET_FORGE is '$TICKET_FORGE' — github, azure or none" ;;
   esac
   [[ "$FORGE" == azure ]] || return 0
+  # Parse the org/project/repo from the URL with its host as ssh resolves it,
+  # lowercased, so an alias or Dev.Azure.com reads as the patterns below expect.
+  [[ -n "$host" && -n "$real" ]] && url="${url/"$host"/"$real"}"
   local re_https='^https?://([^@/]+@)?dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/?#]+)'
   local re_vs='^https?://([^@/]+@)?([^./]+)\.visualstudio\.com/(DefaultCollection/)?([^/]+)/_git/([^/?#]+)'
   local re_ssh='^([^@]+@)?(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com):v3/([^/]+)/([^/]+)/([^/]+)$'
@@ -407,9 +455,36 @@ forge_detect() {
   AZ_REPO="${AZ_REPO%.git}"; AZ_PROJECT="${AZ_PROJECT%.git}"; AZ_PROJECT="${AZ_PROJECT//%20/ }"; AZ_REPO="${AZ_REPO//%20/ }"
 }
 
-# Git-only mode: TICKET_FORGE=none on a repo that has a remote. (No remote is a
-# different, already-reported case.)
+# Git-only mode: TICKET_FORGE=none (env, or a policy `forge`) on a repo that has
+# a remote — push-only, the developer merges on the forge. (Local mode is the
+# other case.)
 forge_off() { [[ "${TICKET_FORGE:-}" == none ]] && (( HAS_REMOTE )); }
+
+# Local mode: no remote, or a remote whose host is no forge we know (forge
+# detected as none, and none named by TICKET_FORGE or a policy). There is no PR
+# to open or merge: tk.sh merge, gates and ready take the local path
+# (merge_local, run_local_gates), pr and push refuse. The local base is never
+# pushed. Needs board_init (FORGE, and TICKET_FORGE as policy_forge_env set it).
+local_mode() { (( ! HAS_REMOTE )) || [[ "${FORGE:-none}" == none && -z "${TICKET_FORGE:-}" ]]; }
+
+# Why this repo is in local mode — the one wording every message uses. Short
+# (the digest's BOARD line, landed, why): "no remote" / "no forge at <remote>".
+# With "long" (the messages that refuse a PR or a push, the digest's WARN): the
+# root or the URL (no credentials), and the way out.
+local_mode_reason() {
+  if (( ! HAS_REMOTE )); then
+    if [[ "${1:-}" == long ]]; then echo "no '$REMOTE' remote in $ROOT"; else echo "no remote"; fi
+  elif [[ "${1:-}" == long ]]; then
+    echo "no forge at '$REMOTE' ($(remote_url_safe)): its host isn't GitHub or Azure DevOps (local mode; on GitHub Enterprise, or an ssh alias ssh -G doesn't resolve, TICKET_FORGE=github|azure or a policy forge names one — tk.sh policy-set <board> forge=github)"
+  else echo "no forge at $REMOTE"; fi
+}
+
+# How a ticket ships here, the one answer tk-hub reads (tk.sh export): local
+# (local mode: merged into the local base), push (forge none by policy or env
+# on a remote: pushed, merged on the forge by the developer), pr (otherwise).
+merge_mode() {
+  if local_mode; then echo local; elif forge_off; then echo push; else echo pr; fi
+}
 
 # Where git-only mode came from, for the messages that report it: a policy file's
 # `forge: none` (FORGE_SRC=policy, set by policy_forge_env) or the env.
@@ -432,14 +507,14 @@ forge_need() {
     azure)
       need az
       [[ "${TICKET_AZURE_MERGE:-squash}" =~ ^(squash|merge)$ ]] || die "TICKET_AZURE_MERGE is '$TICKET_AZURE_MERGE' — squash or merge"
-      [[ -n "$AZ_ORG" ]] || die "can't read an Azure DevOps org/project/repo from the '$REMOTE' remote ($(git -C "$ROOT" remote get-url "$REMOTE"))"
+      [[ -n "$AZ_ORG" ]] || die "can't read an Azure DevOps org/project/repo from the '$REMOTE' remote ($(remote_url_safe))"
       local rc=0; quiet_net az extension show --name azure-devops --only-show-errors >/dev/null 2>&1 || rc=$?
       (( rc != 124 )) || die "az timed out after ${TICKET_NET_TIMEOUT:-90}s just checking its extensions — run any az command in a shell to see what it's waiting on"
       (( rc == 0 )) || die "the azure-devops extension isn't installed — az extension add --name azure-devops (then az devops login, or set AZURE_DEVOPS_EXT_PAT)" ;;
     *) if forge_off; then
          die "no forge access here ($(forge_off_why)) — \`tk.sh push <board> <NN>\` ships a ticket without a PR; merge it on the forge yourself (Azure DevOps, GitHub) and the next digest resolves it from the git log"
        fi
-       die "no '$REMOTE' remote in $ROOT — no PRs here" ;;
+       die "$(local_mode_reason long) — no PRs here; \`tk.sh merge <board> <NN>\` merges a ticket into the local base" ;;
   esac
 }
 
@@ -745,7 +820,8 @@ policy_layers() {
 # A policy `forge` acts as TICKET_FORGE for every script when the env doesn't set
 # one, so `forge: none` stops gh/az calls in digest and view too, not only in
 # what the board session chooses to run. Checks `forge` only (see above). Sets
-# FORGE_SRC: no-remote, env, policy or detect, for the messages. Needs ROOT,
+# FORGE_SRC: no-remote, env, policy or detected (tk-hub's names for the forge
+# key's source; a remote on no known forge is detected too), for the messages. Needs ROOT,
 # HAS_REMOTE and BOARD_PATH.
 # shellcheck disable=SC2034  # FORGE_SRC is read by forge_off_why
 policy_forge_env() {
@@ -753,7 +829,7 @@ policy_forge_env() {
   else
     policy_layers forge
     TICKET_FORGE="$(jq -r '.forge // empty' <<<"$POLICY_LAYERS")"
-    FORGE_SRC="$([[ -n "$TICKET_FORGE" ]] && echo policy || echo detect)"
+    FORGE_SRC="$([[ -n "$TICKET_FORGE" ]] && echo policy || echo detected)"
   fi
   (( HAS_REMOTE )) || FORGE_SRC=no-remote
 }
