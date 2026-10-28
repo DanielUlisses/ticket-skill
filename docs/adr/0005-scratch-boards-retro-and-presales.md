@@ -157,6 +157,8 @@ column has an icon; chips are dark text on the role's colour.
 
 ## 7. PRs on GitHub or Azure DevOps
 
+> Amended by [0008](0008-forge-less-remotes-are-local-mode.md): a host that is neither GitHub nor Azure DevOps is detected as `none` — local mode — not GitHub.
+
 The board's PR leg — the merge gates, `merge`, the landing check, the status board's PR column and
 `pr-open.sh` — called `gh` directly, so a repo on Azure DevOps had boards that could launch and
 review but never open, gate or merge a PR. They now go through a small **forge layer** in

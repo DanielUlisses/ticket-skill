@@ -30,6 +30,38 @@ Then `forge` is settled last:
 1. Env `TICKET_FORGE` (`github|azure|none`), when set, beats every layer.
 2. A repo with no remote has `forge: none` whatever the layers or the env say — there is nothing to
    call (the same rule `forge_detect` has always had).
+3. Otherwise, with neither set, `forge_detect` reads the remote's URL host, case-insensitively
+   (`GitHub.com` is `github.com`): `dev.azure.com` / `visualstudio.com` is `azure`, a `github.com`
+   host (`ssh.github.com`, or an ssh alias starting `github.com-` or `github.com_`) is `github`, and
+   any other host — a bare SSH repo, Gitea, a NAS, a local path — is `none`. For an SSH URL (scp
+   form `host:path`, `ssh://`, `git+ssh://`) the host is also read as ssh resolves it, offline, with
+   `ssh -G <host>` (its `HostName` in `~/.ssh/config`; no connection is made), so an alias such as
+   `gh-work` whose `HostName` is `github.com` is `github`. tk-hub shows that source as `detected`.
+   GitHub Enterprise, or an alias ssh can't resolve, needs `TICKET_FORGE` or a policy `forge` of
+   `github` / `azure`; the digest says so once, in a `WARN`, when a remote is detected as `none`.
+
+### Local mode and `merge_mode`
+
+A repo is in **local mode** (`local_mode` in `board-lib.sh`; ADR 0008) when it has no remote, or when its
+forge was *detected* as `none` and neither `TICKET_FORGE` nor a policy names one. There is no PR to
+open or merge: `tk.sh gates`, `ready` and `merge` take the local path (`run_local_gates`,
+`merge_local` — ADR 0007 §4), and `tk.sh pr` / `push` refuse, pointing at `tk.sh merge`. With a
+remote the local gates gain a fifth, `base`: the base is fetched (into `<remote>/<base>` only —
+nothing is pulled) and `GATE base FAIL local <base> is behind <remote>/<base> — pull it first`
+when the local base lacks commits the remote has; ahead is fine, but ahead and behind both is
+`GATE base FAIL local <base> has diverged from <remote>/<base> … — rebase or merge it by hand
+first`. The base is fetched once per `tk.sh` run, however many tickets `ready` gates. A failed
+fetch compares with the last one. The base is never pushed: the merge prints `MERGED <NN> (local) … — merged into local
+<base>, not pushed`.
+
+`forge: none` set by a policy or `TICKET_FORGE` on a remote is **push-only** instead, as before —
+on a GitHub or Azure DevOps remote, and also on one we don't detect (a Gitea whose web UI you merge
+in): `tk.sh push` ships the branch and the developer merges on the forge.
+
+`tk.sh export` carries the one answer tk-hub reads, `merge_mode`: `local` (local mode), `push`
+(`forge: none` by policy or env on a remote) or `pr` (otherwise). The digest's `BOARD` line ends
+`(no remote: merge is local)` or `(no forge at <remote>: merge is local, the base is not pushed)`
+in local mode.
 
 A missing file, or an empty one, is an empty layer: a repo with no policy files at all prints the
 defaults. Malformed JSON, a file that isn't one JSON object, or a known key with the wrong type is
@@ -40,7 +72,7 @@ whole (`2.0` prints as `2`).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `forge` | `github` \| `azure` \| `none` | detected from the remote URL (`none` without a remote) | where PRs live. `none` is git-only mode (ADR 0005 §7): no `gh`/`az` call; `pr`, `gates`, `ready` and `merge` refuse, except with no remote, where `gates`, `ready` and `merge` take the local path (ADR 0007 §4) and only `pr` and `push` refuse |
+| `forge` | `github` \| `azure` \| `none` | detected from the remote URL (`none` without a remote, or on a host that isn't GitHub or Azure DevOps) | where PRs live. `none` set by a policy or the env is git-only mode (ADR 0005 §7): no `gh`/`az` call; `pr`, `gates`, `ready` and `merge` refuse and `push` ships. In local mode — no remote, or `none` detected — `gates`, `ready` and `merge` take the local path (ADR 0007 §4) and only `pr` and `push` refuse (see above) |
 | `require_human_before_pr` | bool | `true` | a PR (or, in tk-hub, a push) needs a human step first. In the board session that step is the developer naming the ticket ("open a PR for 03"); unattended automation (night shift) opens none |
 | `auto_merge` | bool | `false` | a ticket whose PR passes every gate may be merged without the developer naming it |
 | `night_shift` | bool | `false` | tk-hub: run the board as `auto` plus PR/push after review passes; merge only with `auto_merge` |
@@ -124,9 +156,10 @@ Remove the key once the integration branch has merged, and the repo is back on i
   own and dispatches neither `ticket-pr-creator` nor `ticket-merger`, whatever `auto_merge` says.
   Asked for a PR or a merge, it runs `tk.sh pr` / `tk.sh merge` anyway and shows the refusal: both
   refuse before doing anything with the policy or env's `none`, as `no forge access here (policy)` /
-  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. A repo with **no
-  remote** is the exception: `tk.sh merge` is a local merge there (ADR 0007; four local gates, the ticket's
-  work committed through the guarded path, `--no-ff` into the local base), run on the developer's
+  `(TICKET_FORGE=none)` — `push, open and merge the PR on the forge yourself`. A repo in **local
+  mode** (no remote, or a remote whose forge was detected as `none`) is the exception: `tk.sh merge`
+  is a local merge there (ADR 0007; four local gates, five with a remote, the ticket's
+  work committed through the guarded path, `--no-ff` into the local base, nothing pushed), run on the developer's
   word or under `auto_merge` like any merge; only `tk.sh pr` and `push` refuse. With
   `require_human_before_pr` it opens a PR only for a ticket the developer names, and that request
   is the human step — it doesn't ask again. It merges without being asked only when `auto_merge`

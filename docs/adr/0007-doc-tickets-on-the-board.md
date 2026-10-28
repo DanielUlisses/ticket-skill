@@ -46,6 +46,8 @@ check. This repo ships neither skill. `TICKET_DRY_RUN=1` shows what a ticket wou
 
 ## 4. No remote means a local merge, for a document that names a validator
 
+> Amended by [0008](0008-forge-less-remotes-are-local-mode.md): the local merge applies in local mode — no remote, or a remote on no forge we detect — with a fifth gate, `base`, when there is a remote.
+
 Document repos often have no remote. 0005 §9 gave `tk.sh merge` a local path; this record states
 that it applies to every kind, subject to the checks gate. With no remote, `merge_local` runs four local gates, commits the
 ticket's work through `pr-cursor.sh --commit` (which needs the Cursor CLI logged in, remote or not), and runs `git merge --no-ff` into the root checkout.

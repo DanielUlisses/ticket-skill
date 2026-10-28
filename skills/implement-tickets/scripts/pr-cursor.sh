@@ -14,7 +14,7 @@
 #   --push    commit and push only, no PR (tk.sh push, for TICKET_FORGE=none): Cursor
 #             writes the commit message and picks the paths; pr-open.sh push does the
 #             rest. Always the Cursor CLI — TICKET_PR_RUNNER doesn't apply.
-#   --commit  commit only, no push and no PR (tk.sh merge, in a repo with no remote,
+#   --commit  commit only, no push and no PR (tk.sh merge, in local mode — no remote or no forge,
 #             which then merges the branch locally): pr-open.sh commit does the git.
 #             Always the Cursor CLI, as --push.
 #
@@ -86,7 +86,7 @@ WT="$(sed -n 's/^READY ticket [0-9]* on [^ ]* (base [^)]*) in //p' <<<"$check")"
 BASE="$(sed -n 's/^READY ticket [0-9]* on [^ ]* (base \([^)]*\)).*/\1/p' <<<"$check")"
 [[ -d "$WT" ]] || die "couldn't read the worktree from pr-open.sh check"
 REMOTE="${TICKET_REMOTE:-origin}"
-# What the branch's own commits are counted from: with no remote, the local base.
+# What the branch's own commits are counted from: in local mode, the local base.
 BASE_AT="$REMOTE/$BASE"; (( LOCAL )) && BASE_AT="$BASE"
 
 # Capped pieces, so the prompt stays one argument (Linux allows 128 KiB per argument).
