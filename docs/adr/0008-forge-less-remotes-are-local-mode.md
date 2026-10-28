@@ -3,8 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-10-27
 - **Deciders:** Daniel Ulisses
-- **Amends:** 0005 §7 (detection: "anything else GitHub" becomes "anything else none") and 0007 §4
-  (the local merge applies to local mode, not only to a repo with no remote); both stay as written
+- **Amends:** 0005 §7 (detection: "anything else GitHub" becomes "anything else none") 0007 §4
+  (the local merge applies to local mode, not only to a repo with no remote) and 0005 §9 (the merger
+  works in local mode); all stay as written
 
 0005 §7 read the remote's URL and called anything that wasn't Azure DevOps GitHub. A repo whose
 remote is a bare SSH repo, a Gitea, a NAS share or a local path then had every PR verb call `gh`
@@ -22,6 +23,12 @@ ran only when there was no remote at all.
   remote they add a fifth gate, `base`: the base is fetched once per run, and the local base must
   not be behind `<remote>/<base>` or diverged from it. `pr` and `push` refuse. The local base is
   never pushed, and landing is checked against the local base, not `<remote>/<base>`.
+- **Conflicts go to `ticket-merger`.** `merge-conflict.sh` merges the local base (`refs/heads/<base>`),
+  fetches nothing, and `finish` commits without pushing; `tk.sh merge` then lands it. Because the
+  gates judge the branch plus its uncommitted work, `merge_local` first commits the ticket's work
+  through `pr-cursor.sh --commit` when the conflict gate is the only failure (exit 10) — the
+  developer's "merge NN" authorises it — so the worktree is clean for the merger. If paths are left
+  out and it stays dirty, `start` refuses and the merger reports that.
 - **`forge: none` named** by a policy or the env stays push-only (0005 §7, §9), on any host.
 - **The way out** for GitHub Enterprise, or an alias ssh can't resolve, is `TICKET_FORGE` or a
   policy `forge` of `github` / `azure`. The digest says so once, in a `WARN`, when a remote is

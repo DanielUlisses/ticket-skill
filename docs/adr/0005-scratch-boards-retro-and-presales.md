@@ -307,3 +307,5 @@ ticket's work committed through the same guarded path as `tk.sh push`, then `git
 the local base in the root checkout; nothing is pushed. There is no merger there — its script pushes
 — so a conflict is the developer's to resolve by hand in the ticket's worktree.
 
+> Amended by [0008](0008-forge-less-remotes-are-local-mode.md): in local mode a conflict goes to `ticket-merger`, which merges the local base and commits without pushing; "by hand" still works.
+

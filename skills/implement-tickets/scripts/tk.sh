@@ -333,7 +333,7 @@ run_local_gates() {
   esac
   if [[ -z "$tip" ]]; then echo "GATE conflict FAIL couldn't build $branch's trial commit"; fail=1
   else
-    local rc=0; git -C "$ROOT" merge-tree --write-tree --no-messages "$BASE_BRANCH" "$tip" >/dev/null 2>&1 || rc=$?
+    local rc=0; git -C "$ROOT" merge-tree --write-tree --no-messages "refs/heads/$BASE_BRANCH" "$tip" >/dev/null 2>&1 || rc=$?
     case $rc in
       0) echo "GATE conflict PASS merges cleanly into $BASE_BRANCH" ;;
       1) conflict_line "$t" "$wt"; conflicting=1 ;;
@@ -390,12 +390,12 @@ root_unclean() {
   [[ -z "$files" ]] || echo "$ROOT has untracked files the ticket adds — move them aside: $(head -5 <<<"$files" | paste -sd ' ' -)"
 }
 
-# Local mode, no ticket-merger (its script pushes its merge to a PR's branch):
-# the developer resolves a conflict by hand in the ticket's worktree.
+# Local mode conflict: ticket-merger resolves it through merge-conflict.sh (the
+# local base into the branch, committed without a push); by hand works too.
 conflict_line() {
   local t="$1" wt="$2" nn branch
   nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
-  echo "GATE conflict FAIL conflicts with $BASE_BRANCH — resolve by hand: merge $BASE_BRANCH into $branch in $wt, then merge $nn again"
+  echo "GATE conflict FAIL conflicts with $BASE_BRANCH — send ticket-merger (or merge $BASE_BRANCH into $branch in $wt by hand), then merge $nn again"
 }
 
 # The commit the trial merge tries: <branch>'s tip with its worktree's uncommitted
@@ -431,8 +431,17 @@ merge_local() {
   t="$(ticket_json "$nn")"; branch="$(jq -r .branch <<<"$t")"
   wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
   set +e; run_local_gates "$t"; rc=$?; set -e
-  [[ $rc -eq 0 ]] || { echo "NOT MERGED — a gate failed"; return $rc; }
   load_models_env
+  if [[ $rc -eq 10 ]]; then
+    # The conflict gate was the only failure. The gates judged the branch plus its
+    # uncommitted work, and ticket-merger needs a clean worktree to merge the base
+    # in: the developer's "merge NN" authorises the same guarded commit a merge
+    # makes, so make it now. Paths Cursor leaves out keep the worktree dirty, and
+    # the merger's start then refuses and says so.
+    "$SKILL_DIR/scripts/pr-cursor.sh" "$board" "$nn" --commit || { echo "NOT MERGED — the ticket's work wasn't committed"; return 1; }
+    echo "NOT MERGED — a gate failed"; return 10
+  fi
+  [[ $rc -eq 0 ]] || { echo "NOT MERGED — a gate failed"; return $rc; }
   "$SKILL_DIR/scripts/pr-cursor.sh" "$board" "$nn" --commit || { echo "NOT MERGED — the ticket's work wasn't committed"; return 1; }
   # The commit took a while; the root checkout must still take the merge.
   why="$(root_unclean "$(git -C "$ROOT" rev-parse "refs/heads/$branch")")"
@@ -1206,8 +1215,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   local main, resolves; nothing pushed, main included
                                   conflict -> Sonnet merger merges main INTO the ticket branch and
                                   resolves it; you choose Commit (pushes the branch) / Abort / Leave.
-                                  Local mode: no merger — merge main into the ticket branch in its
-                                  worktree by hand, then merge 05 again
+                                  Local mode: the same, but Commit pushes nothing — then merge 05
+                                  again to land it in your local main
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
   ask 03 <question>             the same, as a question
