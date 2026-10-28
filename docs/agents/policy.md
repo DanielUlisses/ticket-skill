@@ -52,7 +52,10 @@ when the local base lacks commits the remote has; ahead is fine, but ahead and b
 `GATE base FAIL local <base> has diverged from <remote>/<base> … — rebase or merge it by hand
 first`. The base is fetched once per `tk.sh` run, however many tickets `ready` gates. A failed
 fetch compares with the last one. The base is never pushed: the merge prints `MERGED <NN> (local) … — merged into local
-<base>, not pushed`.
+<base>, not pushed`. A conflict (exit 10) sends `ticket-merger` as usual: `merge-conflict.sh`
+merges the local `<base>` into the ticket's branch (no fetch), and `finish` commits the
+resolution without pushing (`COMMITTED merge <sha> on <branch> — not pushed`); `tk.sh merge`
+again lands it.
 
 `forge: none` set by a policy or `TICKET_FORGE` on a remote is **push-only** instead, as before —
 on a GitHub or Azure DevOps remote, and also on one we don't detect (a Gitea whose web UI you merge

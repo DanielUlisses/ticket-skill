@@ -3,11 +3,14 @@
 # workflow commits or pushes; this script is the one exception, and it only ever
 # makes one kind of commit: a merge of the base branch into the ticket's own
 # branch, pushed without force. See docs/adr/0004-haiku-board-session.md.
+# In local mode (no remote, or a remote that isn't GitHub or Azure DevOps; ADR
+# 0008) the base is the local <base>, nothing is fetched, and finish commits
+# without pushing: tk.sh merge then merges the branch into <base>.
 #
 # Usage:
-#   merge-conflict.sh start  <board> <NN>   merge <remote>/<base> into the ticket's worktree, stop before committing
+#   merge-conflict.sh start  <board> <NN>   merge <remote>/<base> (local mode: the local <base>) into the ticket's worktree, stop before committing
 #   merge-conflict.sh status <board> <NN>   what is still unresolved
-#   merge-conflict.sh finish <board> <NN>   commit the resolved merge and push it — only after the developer said yes
+#   merge-conflict.sh finish <board> <NN>   commit the resolved merge and push it (local mode: no push) — only after the developer said yes
 #   merge-conflict.sh abort  <board> <NN>   undo the merge in progress
 #
 # Exit codes: 0 ok (incl. UP TO DATE) | 1 error/refused | 2 start: conflicts to resolve
@@ -27,9 +30,9 @@ source "$LIB_DIR/ticket-git-repo.sh"
 source "$SKILL_DIR/scripts/board-lib.sh"
 
 verb="${1:-}"; board="${2:-}"; nn="${3:-}"
-[[ "$verb" =~ ^(start|status|finish|abort)$ && -n "$nn" ]] || { sed -n '2,15p' "$0"; exit 1; }
+[[ "$verb" =~ ^(start|status|finish|abort)$ && -n "$nn" ]] || { sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 1; }
 board_init "$board"
-local_mode && die "$(local_mode_reason long) — no PR to unblock; merge the base into the branch by hand, then tk.sh merge"
+LOCAL=0; local_mode && LOCAL=1
 t="$(ticket_json "$nn")"
 BRANCH="$(jq -r .branch <<<"$t")"
 WT="$(jq -r .worktree <<<"$t")"
@@ -56,11 +59,18 @@ case "$verb" in
     # worktree is how a resolution gets silently overwritten.
     require_agent_quiet "$(jq -r .agent <<<"$t")" "merging into $WT"
     [[ -z "$(g status --porcelain)" ]] || die "$WT has uncommitted changes — the merge needs a clean worktree; the developer commits or discards them first"
-    GIT_TERMINAL_PROMPT=0 g fetch "$REMOTE" "$BASE_BRANCH" --quiet
-    if g merge --no-ff --no-commit "$REMOTE/$BASE_BRANCH" >/dev/null 2>&1; then
+    # Local mode: tk.sh merge lands the branch in the local base, so that is what
+    # to bring in — no fetch, the remote (if any) is not a forge we talk to.
+    if (( LOCAL )); then BASE_REF_MERGE="refs/heads/$BASE_BRANCH"
+    else
+      GIT_TERMINAL_PROMPT=0 g fetch "$REMOTE" "$BASE_BRANCH" --quiet
+      BASE_REF_MERGE="$REMOTE/$BASE_BRANCH"
+    fi
+    msg=(); (( LOCAL )) && msg=(-m "Merge branch '$BASE_BRANCH' into $BRANCH")
+    if g merge --no-ff --no-commit "${msg[@]}" "$BASE_REF_MERGE" >/dev/null 2>&1; then
       # "Already up to date" also exits 0, and leaves no merge to finish.
-      in_merge || { echo "UP TO DATE — $BRANCH already contains $REMOTE/$BASE_BRANCH; nothing to merge or push"; exit 0; }
-      echo "CLEAN — $REMOTE/$BASE_BRANCH merged into $BRANCH without conflicts, not committed yet"
+      in_merge || { echo "UP TO DATE — $BRANCH already contains $BASE_REF_MERGE; nothing to merge or push"; exit 0; }
+      echo "CLEAN — $BASE_REF_MERGE merged into $BRANCH without conflicts, not committed yet"
       echo "WORKTREE $WT"
       exit 0
     fi
@@ -87,6 +97,10 @@ case "$verb" in
     stray="$(g diff --name-only)"
     [[ -z "$stray" ]] || { echo "UNSTAGED CHANGES — not committing; they aren't part of the merge:"; sed 's/^/  /' <<<"$stray"; exit 4; }
     g commit --no-edit >/dev/null
+    if (( LOCAL )); then
+      echo "COMMITTED merge $(g rev-parse --short HEAD) on $BRANCH — not pushed; tk.sh merge $board $nn merges it into $BASE_BRANCH"
+      exit 0
+    fi
     # Plain push to the same branch: never --force, never another ref.
     rc=0; quiet_net git -C "$WT" push "$REMOTE" "HEAD:refs/heads/$BRANCH" || rc=$?
     (( rc == 0 )) || die "push failed (exit $rc) — the merge commit is made; push it by hand from a shell (git -C $WT push $REMOTE HEAD:refs/heads/$BRANCH) once signed in"
