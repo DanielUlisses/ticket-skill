@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-27
+- **Amended:** 2026-10-28 — GitHub Enterprise hosts `gh` knows are detected as `github`
 - **Deciders:** Daniel Ulisses
 - **Amends:** 0005 §7 (detection: "anything else GitHub" becomes "anything else none") 0007 §4
   (the local merge applies to local mode, not only to a repo with no remote) and 0005 §9 (the merger
@@ -17,7 +18,11 @@ ran only when there was no remote at all.
 - **Detection.** `forge_detect` matches the URL's host case-insensitively. `dev.azure.com` /
   `visualstudio.com` is Azure DevOps. A `github.com` host, an ssh alias starting `github.com-` or
   `github.com_`, or an SSH host whose `HostName` is `github.com` (read offline with `ssh -G`) is
-  GitHub. Any other host is `none`.
+  GitHub, and so is a GitHub Enterprise host `gh` already knows: a
+  `*.ghe.com` host, the host `GH_HOST` names, or one `gh auth token --hostname <host>` finds a token
+  for (offline, tried on the URL's host and its `ssh -G` HostName; with `GH_ENTERPRISE_TOKEN` unset
+  for the probe, which would otherwise match every host). Without `gh` on PATH, none of these apply.
+  Any other host is `none`.
 - **Local mode** (`local_mode`) is no remote, or `none` *detected* with no forge named by
   `TICKET_FORGE` or a policy. `gates`, `ready` and `merge` take 0007 §4's local path. With a
   remote they add a fifth gate, `base`: the base is fetched once per run, and the local base must
@@ -30,8 +35,9 @@ ran only when there was no remote at all.
   developer's "merge NN" authorises it — so the worktree is clean for the merger. If paths are left
   out and it stays dirty, `start` refuses and the merger reports that.
 - **`forge: none` named** by a policy or the env stays push-only (0005 §7, §9), on any host.
-- **The way out** for GitHub Enterprise, or an alias ssh can't resolve, is `TICKET_FORGE` or a
-  policy `forge` of `github` / `azure`. The digest says so once, in a `WARN`, when a remote is
+- **The way out** for a GitHub Enterprise host `gh` isn't logged into (`gh auth login --hostname
+  <host>` fixes it; someone authenticated only through `GH_ENTERPRISE_TOKEN` sets `GH_HOST=<host>`),
+  or an alias ssh can't resolve, is `TICKET_FORGE` or a policy `forge` of `github` / `azure`. The digest says so once, in a `WARN`, when a remote is
   detected as `none`.
 - `tk.sh export` carries `merge_mode` (`pr` | `push` | `local`) so tk-hub needn't rebuild this rule.
 

@@ -33,11 +33,16 @@ Then `forge` is settled last:
 3. Otherwise, with neither set, `forge_detect` reads the remote's URL host, case-insensitively
    (`GitHub.com` is `github.com`): `dev.azure.com` / `visualstudio.com` is `azure`, a `github.com`
    host (`ssh.github.com`, or an ssh alias starting `github.com-` or `github.com_`) is `github`, and
-   any other host — a bare SSH repo, Gitea, a NAS, a local path — is `none`. For an SSH URL (scp
-   form `host:path`, `ssh://`, `git+ssh://`) the host is also read as ssh resolves it, offline, with
+   any other host — a bare SSH repo, Gitea, a NAS, a local path — is `none` (bar the GitHub
+   Enterprise hosts below). For an SSH URL (scp form `host:path`, `ssh://`, `git+ssh://`) the host is also read as ssh resolves it, offline, with
    `ssh -G <host>` (its `HostName` in `~/.ssh/config`; no connection is made), so an alias such as
    `gh-work` whose `HostName` is `github.com` is `github`. tk-hub shows that source as `detected`.
-   GitHub Enterprise, or an alias ssh can't resolve, needs `TICKET_FORGE` or a policy `forge` of
+   A GitHub Enterprise host is `github` too when `gh` knows it: a `*.ghe.com` host, the host
+   `GH_HOST` names, or one `gh auth token --hostname <host>` has a token for (offline; tried on the
+   URL's host and its `ssh -G` HostName; no `gh` on PATH, no GHE detection; the probe is skipped
+   once a forge is named, so `none` makes no `gh` call). A GHE host `gh` isn't logged into (`gh auth
+   login --hostname <host>`; with only `GH_ENTERPRISE_TOKEN`, set `GH_HOST=<host>`), or an alias ssh can't
+   resolve, needs `TICKET_FORGE` or a policy `forge` of
    `github` / `azure`; the digest says so once, in a `WARN`, when a remote is detected as `none`.
 
 ### Local mode and `merge_mode`

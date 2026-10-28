@@ -4,9 +4,10 @@
 # and decides. See docs/adr/0004-haiku-board-session.md.
 #
 # Usage (<board> is a Jira id or slug under .scratch/, a path, or "" for the only one there).
-# Local mode — no remote, or a remote whose host isn't GitHub or Azure DevOps (a bare SSH
-# repo, Gitea, a NAS) and no forge named by TICKET_FORGE or a policy: gates, ready and merge
-# take the local path, pr and push refuse, and the local base is never pushed.
+# Local mode — no remote, or a remote whose host (a bare SSH repo, Gitea, a NAS) isn't
+# GitHub, Azure DevOps or a GitHub Enterprise host gh knows, and no forge named by
+# TICKET_FORGE or a policy: gates, ready and merge take the local path, pr and push
+# refuse, and the local base is never pushed.
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
@@ -36,7 +37,7 @@
 #   tk.sh retro-save <board>             save ticket-retro's output (stdin) as retro/proposals.md; the previous one is archived
 #   tk.sh retro-apply <board> [approve|reject|defer <id>...]...  mark proposals by id, regenerate retro-results.md
 #   tk.sh policy  <board>                the resolved policy as JSON: defaults < box < repo < board, env TICKET_FORGE wins;
-#                                        forge is detected from the remote (none: no remote, or not GitHub/Azure)
+#                                        forge is detected from the remote (none: no remote, or not GitHub, Azure or a GHE host gh knows)
 #   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
@@ -106,8 +107,8 @@ cmd_digest() {
   state_file="$(board_state_dir)/$BOARD_SLUG.digest.json"
   [[ -f "$state_file" ]] && prev="$(cat "$state_file")"
   # A remote on no forge we detect is local mode by default — said once (again
-  # with --full, or when the remote changes), so a GitHub Enterprise or an ssh
-  # alias doesn't merge locally unnoticed.
+  # with --full, or when the remote changes), so a GitHub Enterprise host gh
+  # doesn't know, or an ssh alias, doesn't merge locally unnoticed.
   local nfwarn=""
   if local_mode && (( HAS_REMOTE )); then nfwarn="$(local_mode_reason long)"; fi
   local out
@@ -1277,10 +1278,11 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
 Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
   Azure DevOps   az + az extension add --name azure-devops; az devops login (or AZURE_DEVOPS_EXT_PAT)
+  GitHub Ent.    a *.ghe.com host, GH_HOST's host, or one gh holds a token for (gh auth login --hostname H)
   any other host local mode: merge into the local base (never pushed), pr/push refuse — a bare
                  SSH repo, Gitea, a NAS, a local path, no remote. Hosts match case-insensitively,
                  an ssh alias by its HostName (ssh -G, offline)
-  TICKET_FORGE=github|azure       override the detection (GitHub Enterprise, say)
+  TICKET_FORGE=github|azure       override the detection (a GHE host gh isn't logged into, say)
   TICKET_FORGE=none               git only: no gh/az call; digest/view/why/resolve read the git log,
                                   pr/gates/ready/merge refuse — push, then merge on the forge yourself
   TICKET_AZURE_MERGE=squash|merge Azure's merge strategy (default squash; GitHub uses the repo's)
