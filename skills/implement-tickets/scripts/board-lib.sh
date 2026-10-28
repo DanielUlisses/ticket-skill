@@ -406,15 +406,39 @@ remote_real_host() {
 # A remote URL fit to print: any user:token@ in it removed.
 remote_url_safe() { git -C "$ROOT" remote get-url "$REMOTE" 2>/dev/null | sed -E 's#(://)[^@/]*@#\1#'; }
 
+# Is a remote's host (as written, and as ssh resolves it) a GitHub Enterprise
+# host gh already knows? A *.ghe.com host (GHE Cloud with data residency), the
+# host GH_HOST names, or one gh holds a token for (gh auth token reads its own
+# config: no network). Needs gh — without it, no. The probe runs with the
+# enterprise-token and GH_HOST variables unset: GH_ENTERPRISE_TOKEN makes gh
+# answer yes for every host, a typo or a Gitea included. The probe is bounded
+# (timeout 5, no stdin) and skipped when GHE_NO_PROBE=1 — policy_resolve sets
+# that when a forge is already named, so "none" really means no gh call.
+ghe_host() {
+  command -v gh >/dev/null 2>&1 || return 1
+  local h first="" t=()
+  command -v timeout >/dev/null 2>&1 && t=(timeout 5)
+  for h in "${1,,}" "${2,,}"; do
+    [[ -n "$h" && "$h" != "$first" ]] || continue
+    first="$h"
+    [[ "$h" == *.ghe.com ]] && return 0
+    [[ -n "${GH_HOST:-}" && "$h" == "${GH_HOST,,}" ]] && return 0
+    [[ "${GHE_NO_PROBE:-0}" == 1 ]] && continue
+    env -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN -u GH_HOST \
+      "${t[@]}" gh auth token --hostname "$h" </dev/null >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
 # Sets FORGE (github|azure|none) and, for Azure, AZ_ORG / AZ_PROJECT / AZ_REPO
 # parsed from the remote — passed explicitly, so a remote not named origin works.
 # Detected from the URL's host, case-insensitively — as written and, for an SSH
 # URL, as ssh's config resolves it (remote_real_host): dev.azure.com /
 # visualstudio.com is Azure DevOps, a github.com host (or an ssh alias starting
 # github.com- / github.com_, or one whose HostName is github.com) GitHub,
-# anything else — a bare SSH repo, Gitea, a NAS, a local path — none, which
-# with no forge named is local mode (local_mode). GitHub Enterprise needs
-# TICKET_FORGE / a policy `forge` of github or azure.
+# a GitHub Enterprise host gh knows (ghe_host) GitHub too; anything else — a
+# bare SSH repo, Gitea, a NAS, a local path — none, which with no forge named is
+# local mode (local_mode). TICKET_FORGE / a policy `forge` still names one.
 forge_detect() {
   FORGE=none; AZ_ORG=""; AZ_PROJECT=""; AZ_REPO=""
   (( HAS_REMOTE )) || return 0
@@ -428,7 +452,7 @@ forge_detect() {
     github|azure) FORGE="$TICKET_FORGE" ;;
     none) FORGE=none ;;   # git only: no gh/az call anywhere; the developer merges on the forge
     "") if [[ "$hosts" =~ $re_az ]]; then FORGE=azure
-        elif [[ "$hosts" =~ $re_gh ]]; then FORGE=github
+        elif [[ "$hosts" =~ $re_gh ]] || ghe_host "$host" "$real"; then FORGE=github
         else FORGE=none; fi ;;
     *) die "TICKET_FORGE is '$TICKET_FORGE' — github, azure or none" ;;
   esac
@@ -475,7 +499,7 @@ local_mode_reason() {
   if (( ! HAS_REMOTE )); then
     if [[ "${1:-}" == long ]]; then echo "no '$REMOTE' remote in $ROOT"; else echo "no remote"; fi
   elif [[ "${1:-}" == long ]]; then
-    echo "no forge at '$REMOTE' ($(remote_url_safe)): its host isn't GitHub or Azure DevOps (local mode; on GitHub Enterprise, or an ssh alias ssh -G doesn't resolve, TICKET_FORGE=github|azure or a policy forge names one — tk.sh policy-set <board> forge=github)"
+    echo "no forge at '$REMOTE' ($(remote_url_safe)): its host isn't GitHub, Azure DevOps or a GitHub Enterprise host gh is logged into (local mode; detection needs gh on PATH. For a host gh doesn't know, run gh auth login --hostname <host>; with only GH_ENTERPRISE_TOKEN set GH_HOST=<host>; or TICKET_FORGE=github|azure or a policy forge names one — tk.sh policy-set <board> forge=github)"
   else echo "no forge at $REMOTE"; fi
 }
 
@@ -842,8 +866,13 @@ policy_forge_env() {
 policy_resolve() {
   local env_forge="${TICKET_FORGE:-}"
   case "$env_forge" in github|azure|none|"") ;; *) die "TICKET_FORGE is '$env_forge' — github, azure or none" ;; esac
-  TICKET_FORGE="" forge_detect
   policy_layers "${1:-}"
+  # A forge named by env or a layer overwrites the detected one below, so don't
+  # ask gh (ghe_host) for it.
+  local named=0
+  [[ -n "$env_forge" ]] && named=1
+  jq -e 'has("forge")' >/dev/null 2>&1 <<<"$POLICY_LAYERS" && named=1
+  TICKET_FORGE="" GHE_NO_PROBE="$named" forge_detect
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
      autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
