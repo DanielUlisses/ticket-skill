@@ -88,6 +88,7 @@ whole (`2.0` prints as `2`).
 | `max_parallel` | whole number, 1–1000 | `4` | tk-hub: tickets running at once on the box |
 | `usage_gate_pct` | number 0–100 | `90` | tk-hub: a Claude usage window at or above this stops automatic launches on the box |
 | `synthesis` | object | `{"backends": ["agy"], "timeout": 300}` | tk-hub's summary runner; passed through, not checked inside |
+| `remote_control` | bool | `false` | **Box layer only, read by the launchers:** each ticket's agent starts with `claude --remote-control <host>/<agent>`, so tk-hub's Sessions page can link the session in the Claude app. devboxes writes it per client (`remote_control` in the client file); leave it `false` where the client's plan has Remote Control turned off. Env `TICKET_REMOTE_CONTROL=1\|0` beats it. Not type-checked by `tk.sh policy` (a non-boolean reads as unset) |
 | `base_branch` | branch name | the remote's default branch (`main`/`master` locally without one) — not printed: resolved at launch | the branch tickets branch from, PR into and land on. **Repo layer only** — see below |
 
 Any other key is passed through untouched, at any layer — `tk.sh policy` prints it, nothing here
