@@ -58,6 +58,10 @@ one board per repo under the same name: each ticket (`**Repo:**`) lives on the b
 changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch another repo's ticket
 (ADR 0005 §8). See `docs/agents/jira-parent.md`.
 
+### Contracts and rescope
+
+Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;`-separated, a consume ending `(from NN)`, `(<repo>:NN)` or `(existing)`) and, for the developer's own work, `**Owner:** me` — never launched, resolved with `--no-code` from `open`. `tk.sh validate <board> [NN]` prints the contract evidence tk-hub's validator reads (the new `validate-contracts` skill is its brief and answer format; the hub's daemon prepends it on the planner box). `/ticket rescope <board> <NN> <why>` runs `tk.sh rescope`, writes a plan diff under `.scratch/<board>/rescope/<id>/` and proposes it with `tk.sh rescope-propose`; nothing changes until `tk.sh rescope-apply` (tk-hub's Apply) — add, change (run state kept, its agent told), split, drop (`**Status:** dropped`). `tk.sh export` carries `rescopes` and each ticket's `transcript`. See `docs/agents/contracts.md`.
+
 ### Board policy
 
 How a board behaves — `forge`, `require_human_before_pr`, `auto_merge`, `night_shift`,

@@ -1,7 +1,7 @@
 ---
 name: ticket
 description: Sharpens a rough task into a shared understanding, breaks it into numbered tracer-bullet tickets, then hands the board to a Haiku board session (/implement-tickets) that launches, merges and coordinates them. It never launches tickets itself. A one-off task, code or document, is a one-ticket board here; for tickets already written to `.scratch/`, use /implement-tickets.
-argument-hint: "[jira-id] <task description>"
+argument-hint: "[jira-id] <task description> | rescope <board> <NN>[,<NN>] <why>"
 disable-model-invocation: true
 allowed-tools: Bash(git *), Bash(ls *), Read, Write, Skill, Agent, AskUserQuestion
 ---
@@ -29,6 +29,18 @@ The id then does two things in Phase 2, and nothing else: it is the **board's na
 Only the first word counts. A key-shaped token anywhere later in the text is just text, and a first word that doesn't match the pattern means there is no id: the feature slug names the board and no ticket carries a parent, exactly as before this existed. See `docs/agents/jira-parent.md`.
 
 If the task is empty — including a task that was only an id — ask for a description and stop.
+
+### `rescope` as the first word
+
+`/ticket rescope <board> <NN>[,<NN>...] <why>` changes a board that already runs — tk-hub starts it from a ticket, a contract finding or a project, and the developer can type it too. It replaces Phases 1–3 with these steps; nothing on the board changes until the developer applies the result.
+
+1. Run `~/.claude/skills/implement-tickets/scripts/tk.sh rescope <board> <NN>[,<NN>...] --reason "<why>"` from the repo's main checkout. It opens the rescope and prints its seed: the id and folder (`RESCOPE <id> <dir>`), the first free ticket number, each target ticket whole, the tickets that depend on them, every ticket's Provides/Consumes, and where `board.md` is. Read `board.md` and every file the seed names.
+2. Grill the developer with `mattpocock-skills:grilling` on the change only: what the findings and the reason leave open, and what each dependent ticket needs from the new shape. Keep it short — the board is already settled everywhere else.
+3. Write the proposal into the rescope's folder, never into `issues/`: each added, changed or split-into ticket whole, as `<dir>/issues/<NN>-<slug>.md` in the ticket shape below (a changed ticket keeps its number; new ones start at the free number), and `<dir>/plan.json`: `{"summary": "<one line>", "changes": [{"op": "add|change|split|drop", "nn": "<NN>", "file": "<NN>-<slug>.md", "files": ["…"], "why": "<one line>"}]}` — `file` for add and change, `files` for split (the tickets it splits into), no file for drop. Only an open ticket splits or drops; an in-progress one can change, and its agent is told when the rescope applies. Rewire every dependent's `**Blocked by:**` and `**Consumes:**` so nothing waits on a dropped ticket.
+4. Run `tk.sh rescope-propose <board> <id>`. It checks the files against the board; fix what it reports and run it again.
+5. Stop, and say: the rescope is proposed; apply it on tk-hub (the plan diff on the ticket or project), or `tk.sh rescope-apply <board> <id>` in a terminal; `tk.sh rescope-discard <board> <id>` drops it.
+
+See `docs/agents/contracts.md`.
 
 ## Phase 1 — Grill the idea
 
@@ -71,6 +83,12 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 
 **Blocked by:** <blockers, or "None (can start immediately)">
 
+**Owner:** me — <this line only for work the developer does by hand: an account, a token in a repo variable, a call>
+
+**Provides:** <what this ticket makes that others use, `;`-separated: endpoint `GET /api/x`; table `x_items`; env `X_TOKEN`; or "None">
+
+**Consumes:** <what it needs that it doesn't make: function `store.read()` (from 02); rpc `run_planner` (existing); cli `tk.sh x` (api:03); or "None">
+
 **Kind:** doc — <this line, and the next, only for a document ticket>
 
 **Doc type:** <ead|tdd|other>
@@ -98,6 +116,10 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 `**Parent:**` is written only when the task opened with a Jira id: the lowercase id, on every ticket of the run, just above `**Blocked by:**`. Without an id the line is left out entirely — not written empty, not written as `None`.
 
 `**Kind:**` is written only on a ticket whose deliverable is a document — a scope, a proposal, an estimate, a design document — and reads `doc`; no line means `code`, and any other word is refused at launch with the known kinds named. A doc ticket launches with `/ticket`'s unattended doc brief on a `docs` branch: nobody is interviewed, so the ticket carries a `## Outline` section (audience, sections and what each says, in/out of scope, assumptions, estimate method, sources, output path) above its criteria — written from the Phase 1 grilling of the document's content — that outline is the plan, and whatever it leaves open the document marks as an assumption. No outline line may start with a bold `**Label:**` — the board reads such lines from anywhere in the body, so `**Effort:** 40 person-days` would be taken as the ticket's effort and `**Status:** Draft` as its status; write them as `- Effort: …` bullets. Its **Seams under test** line is `None` plus the validator to run (`None — verify with check_ead.py <file>`); its review stays at `TICKET_DOC_REVIEW_*`. `**Doc type:**` picks the guidance: `ead` and `tdd` send the drafter to the installed skill of that name and its `check_<type>.py`, `other` (or no line) is the generic brief.
+
+`**Provides:**` and `**Consumes:**` are the ticket's **contract**, written on every ticket: what it makes that another ticket (or the developer) uses, and what it needs that it does not make. Each item is `<kind> <name>`, items separated by `;`, the kind one of `endpoint function method class type schema table column migration env config file cli rpc event message page component metric resource output variable secret deliverable`, the name in backticks — a name another ticket can repeat word for word, because the validator matches a consume to a provide by kind and name. A consume ends in where it comes from: `(from 02)` for a ticket on this board, `(<repo>:03)` for one on another repo's board, `(existing)` for what is already on the base. A ticket with nothing on one side writes `None`. Every consume needs a provider — a planned ticket, or `(existing)` — and the ticket that provides it is one of its blockers, directly or through another; check that before presenting the breakdown. tk-hub's validator (`validate-contracts`) reads these lines when tickets are planned, when each one merges and when an agent reports something missing, so a ticket that builds the wrong thing is caught before the one that needs it starts (`docs/agents/contracts.md`).
+
+`**Owner:** me` marks a ticket the developer does by hand — create a token and put it in a pipeline variable, register an app, ask a client. No agent launches it: the board shows it as the developer's once its blockers are resolved, tk-hub makes it one of their tasks, and `tk.sh resolve <board> <NN> --no-code "<what was done>"` closes it. Only work later tickets can't run without earns a ticket; by-hand checks ("try it", "run that") stay criteria. No line means an agent runs it.
 
 `**Suggested model:**`, `**Suggested effort:**` and `**Suggested helpers:**` are body lines like the two above them. The first two are what the board session's launch question pre-selects; the third reaches the coordinator inside the ticket body it is sent. A ticket written before these lines existed simply carries none, and the launcher's own defaults stand.
 

@@ -22,7 +22,7 @@ for DEST in "${DESTS[@]}"; do
   mkdir -p "$DEST_SKILLS" "$DEST_AGENTS"
 
   # /implement-tickets ships the board session's scripts and prompt; its launches reuse /ticket's launcher
-  for skill in ticket implement-tickets sweep-tickets; do
+  for skill in ticket implement-tickets sweep-tickets validate-contracts; do
     mkdir -p "$DEST_SKILLS/$skill"
     cp "$SRC/skills/$skill/SKILL.md" "$DEST_SKILLS/$skill/"
     for dir in scripts templates; do
@@ -70,7 +70,7 @@ for DEST in "${DESTS[@]}"; do
     echo "warning: $MODELS_DEST differs from $MODELS_SRC — keeping the destination copy (hand-edited config is never overwritten)"
   fi
 
-  echo "installed: $DEST_SKILLS/{ticket,implement-tickets,sweep-tickets} and $DEST_AGENTS/ticket-*.md"
+  echo "installed: $DEST_SKILLS/{ticket,implement-tickets,sweep-tickets,validate-contracts} and $DEST_AGENTS/ticket-*.md"
 done
 
 # Load the aliases from ~/.bashrc: one line, behind a marker, added once. It
