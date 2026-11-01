@@ -162,6 +162,33 @@ fill_prose() {
   tpl="$out$rest"
 }
 
+# ---- Remote Control -----------------------------------------------------------------
+# Whether the agent starts with `claude --remote-control <name>`, so its
+# session opens in the Claude app (tk-hub's Sessions page links it, read from the pane).
+# TICKET_REMOTE_CONTROL=1|0 wins; else the box policy's `remote_control` (true|false,
+# ${TICKET_BOX_POLICY:-~/.config/tk-daemon/policy.json}, which devboxes writes per client:
+# off where the client's plan has Remote Control turned off); else off, as before.
+# Sets REMOTE_CONTROL (0|1), RC_ORIGIN (env|box|default) and RC_ARGS. Needs AGENT.
+resolve_remote_control() {
+  local v="${TICKET_REMOTE_CONTROL:-}" f
+  RC_ORIGIN="env"
+  if [[ -z "$v" ]]; then
+    f="${TICKET_BOX_POLICY:-$HOME/.config/tk-daemon/policy.json}"
+    RC_ORIGIN="box"
+    [[ -s "$f" ]] && v="$(jq -r 'if type == "object" and (.remote_control | type) == "boolean"
+                                 then (if .remote_control then 1 else 0 end) else empty end' "$f" 2>/dev/null || true)"
+  fi
+  [[ -n "$v" ]] || { v=0; RC_ORIGIN=default; }
+  case "$v" in
+    1|true|on|yes) REMOTE_CONTROL=1 ;;
+    0|false|off|no) REMOTE_CONTROL=0 ;;
+    *) die "TICKET_REMOTE_CONTROL is '$v' — 1 or 0" ;;
+  esac
+  RC_ARGS=()
+  (( REMOTE_CONTROL )) && RC_ARGS=(--remote-control "$(hostname -s 2>/dev/null || hostname)/$AGENT")
+  return 0
+}
+
 # ---- per-repo project memory ------------------------------------------------
 # Sets MEMORY_BLOCK (what the prompt's {{PROJECT_MEMORY}} becomes) and
 # MEMORY_STATUS (the summary's PROJECT_MEMORY= line).
@@ -879,6 +906,7 @@ launcher_main() {
     AGENT="${AGENT:0:28}-$((RANDOM % 900 + 100))"
   fi
 
+  resolve_remote_control
   resolve_project_memory
   resolve_retro_results
   resolve_doc_guidance
@@ -948,6 +976,7 @@ EFFORT=$IMPL_EFFORT
 COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
 REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
+REMOTE_CONTROL=$( (( REMOTE_CONTROL )) && echo "on (${RC_ORIGIN}: ${RC_ARGS[1]})" || echo "off (${RC_ORIGIN})" )
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
 RETRO_RESULTS=$RETRO_STATUS
@@ -1113,6 +1142,7 @@ SUMMARY
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
     --model "$COORD_MODEL" --effort "$COORD_EFFORT" --permission-mode "$PERMISSION_MODE" \
     ${agents_arg[@]+"${agents_arg[@]}"} \
+    ${RC_ARGS[@]+"${RC_ARGS[@]}"} \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
   set -e
