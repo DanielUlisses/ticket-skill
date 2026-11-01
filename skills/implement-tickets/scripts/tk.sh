@@ -31,6 +31,14 @@
 #   tk.sh export  <board>                one JSON object: board info, board.md, retro-results.md and every
 #                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub;
 #                                        merge_mode: pr | push (forge none by policy/env) | local (local mode)
+#                                        rescopes: the rescopes waiting on the developer; each ticket's transcript
+#   tk.sh validate <board> [<NN>]        the contract evidence as JSON: every ticket's Provides/Consumes and
+#                                        body head, consumes nothing here provides, providers that aren't
+#                                        blockers; with <NN>, that ticket's change (diff, EAD/TDD Contracts rows)
+#   tk.sh rescope <board> <NN>[,<NN>] [--reason "<why>"]   open a rescope, print the planner's seed
+#   tk.sh rescope-propose <board> <id>   check the planner's plan.json and files; the rescope waits for the developer
+#   tk.sh rescope-apply <board> <id>     apply a proposed rescope: add, change (run state kept), split, drop
+#   tk.sh rescope-discard <board> <id>   drop a rescope; the board is unchanged
 #   tk.sh help                           every command: board session, tickets tab, shell aliases
 #   tk.sh helpers <board> <NN>...        each ticket's Suggested helpers line (for a wave's shared research)
 #   tk.sh retro   <board>                everything ticket-retro reads: reports, transcript extracts, files, skills
@@ -138,7 +146,8 @@ cmd_digest() {
                   if ($p | length) > 0 then " parent \($p | join(","))" else "" end) ]
              + ($policy | split("\n"))
              + [ $rows[] | select($full == 1 or ($prev.lines == null) or ($was[.nn] != .line)) | .line ]
-             + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.foreign // "") == "") | .nn ] | join(" ") | dash) ]
+             + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.foreign // "") == "" and (.owner // "ai") != "me") | .nn ] | join(" ") | dash) ]
+             + [ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.owner // "ai") == "me") | "ACTION yours \(.nn) — **Owner:** me: the developer does it, then resolve \(.nn) --no-code \"<what was done>\"" ]
              + [ $rows[] | select(.status == "in-progress") |
                  if (.landed | startswith("yes")) then "ACTION resolve \(.nn) — landed (\(.landed | ltrimstr("yes:")))"
                  elif (.landed | startswith("unknown")) then "ACTION check \(.nn) — landed unknown (\(.landed | ltrimstr("unknown:"))); leave it, tell the developer"
@@ -214,6 +223,7 @@ cmd_launch() {
   [[ -n "$type" ]] || die "--type is required for a code ticket — one of feat fix refactor chore docs test perf ci"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == open ]] || die "ticket $nn is $status, not open"
+  [[ "$(jq -r '.owner // "ai"' <<<"$t")" != me ]] || die "ticket $nn is the developer's (**Owner:** me) — no agent runs it; once it's done: tk.sh resolve $BOARD_ID $nn --no-code \"<what was done>\""
   local foreign; foreign="$(foreign_repo "$t")"
   [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its worktree, branch and PR belong there. Move its file to that repo's .scratch/$BOARD_ID/issues/ and launch it from the board there (board.sh $BOARD_ID, run in that repo)"
   open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] + (.xblockers_open // []) | join(",")' <<<"$t")"
@@ -601,7 +611,19 @@ resolve_no_code() {
   st="$(jq -r .status <<<"$t")"
   case "$st" in
     in-progress) ;;
+    open) [[ "$(jq -r '.owner // "ai"' <<<"$t")" == me ]] || die "ticket $nn was never launched (status open) — nothing to resolve"
+          line="**Status:** resolved — done by the developer ($reason) on $(date +%F)"
+          f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+          if grep -q '^\*\*Status:\*\*' "$f"; then
+            LINE="$line" awk '/^\*\*Status:\*\*/ { print ENVIRON["LINE"]; next } { print }' "$f" >"$tmp"
+          else
+            LINE="$line" awk '{ print } /^# [0-9]+:/ && !done { print ""; print ENVIRON["LINE"]; done = 1 }' "$f" >"$tmp"
+          fi
+          mv "$tmp" "$f"
+          grep -qF -- "$line" "$f" || die "ticket $nn: the status line was not written to $f"
+          echo "RESOLVED $nn (the developer's)"; return 0 ;;
     resolved) die "ticket $nn is already resolved" ;;
+    dropped) die "ticket $nn was dropped by a rescope" ;;
     *) die "ticket $nn was never launched (status $st) — nothing to resolve" ;;
   esac
   require_agent_quiet "$(jq -r .agent <<<"$t")" "resolving it with --no-code"
@@ -741,9 +763,11 @@ board_rows_() {
     map(. as $t | (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
       $t + {open_blockers: $open} +
       (if $t.status == "resolved" then {col: "done", note: ""}
+       elif $t.status == "dropped" then {col: "done", note: "dropped"}
        elif ($t.foreign // "") != "" and $t.status == "open" then {col: "needs", note: "belongs on \($t.foreign | split(" ")[0])'"'"'s board"}
        elif $t.status == "open" then
          (if ($open | length) > 0 then {col: "blocked", note: "waiting on \($open | join(", "))"}
+          elif ($t.owner // "ai") == "me" then {col: "needs", note: "yours to do"}
           else {col: "backlog", note: "ready to launch"} end)
        elif ($t.landed | startswith("yes")) then {col: "done", note: "landed — resolve it"}
        elif $t.pr != null then
@@ -775,6 +799,7 @@ board_rows_() {
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
+        elif .col == "needs" and .note == "yours to do" then "resolve \(.nn) --no-code \"<what you did>\""
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
 }
@@ -803,6 +828,17 @@ cmd_boards() {
   printf '%s' "$out" | jq -s '.'
 }
 
+# {"<NN>": "<newest transcript path>"} for every launched ticket whose worktree left one.
+export_transcripts() {
+  local nn wt p out="{}"
+  while IFS=$'\t' read -r nn wt; do
+    [[ -n "$wt" ]] || continue
+    p="$(ticket_transcript "$wt")"
+    [[ -n "$p" ]] && out="$(jq -c --arg n "$nn" --arg p "$p" '. + {($n): $p}' <<<"$out")"
+  done < <(jq -r '.[] | select(.branch != "") | "\(.nn)\t\(.worktree // "")"' <<<"$BOARD_JSON")
+  echo "$out"
+}
+
 cmd_export() {
   (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
   need git; need jq
@@ -826,10 +862,406 @@ cmd_export() {
       merge_mode:$merge_mode, board_path:$board_path,
       board_md: null, retro_results_md: null, tickets: .}' \
     | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
-    | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi
+    | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi \
+    | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" \
+        '.rescopes = $rescopes | .tickets |= map(. + {transcript: ($tr[.nn] // "")})'
   local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
   [[ -s "$errs" ]] && sort -u "$errs" >&2
   return "$rc"
+}
+
+# ---- contracts: what tickets provide and consume, for the validator -------------
+# tk.sh validate gathers the evidence tk-hub's validator (the validate-contracts
+# skill, Opus on the planner box) reads: every ticket's **Provides:** /
+# **Consumes:** items and the head of its body, what this board alone can say
+# about them (a consume no ticket here provides; a provider that isn't a
+# blocker), and, for one ticket, its change as a diff and the Contracts rows of
+# the EAD/TDD files it wrote. Read-only, JSON only on stdout.
+CONTRACT_PATCH_MAX=80000   # bytes of a ticket's patch; the stat is always whole
+CONTRACT_BODY_MAX=1500     # characters of a ticket's body, from **What to build:**
+
+# The newest Claude Code transcript a worktree left, under every config root
+# (an --account ticket logs under its own), or nothing.
+ticket_transcript() {
+  local wt="$1" enc root roots=()
+  [[ -n "$wt" ]] || return 0
+  roots=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}")
+  [[ -d "$HOME/.claude" ]] && roots+=("$HOME/.claude")
+  for root in "$HOME"/.claude-switch/accounts/*; do [[ -d "$root" ]] && roots+=("$root"); done
+  enc="${wt//[^A-Za-z0-9]/-}"
+  for root in "${roots[@]}"; do
+    [[ -d "$root/projects/$enc" ]] && find "$root/projects/$enc" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n'
+  done | sort -rn | head -1 | cut -f2-
+}
+
+# A ticket's body from **What to build:** on, run-state lines left out, capped.
+ticket_body() {
+  awk '/^\*\*What to build:\*\*/ { on = 1 } on && !/^\*\*(Status|Branch|Base|Model|Effort|Account|Agent|Worktree):\*\*/' "$1" \
+    | head -c "$CONTRACT_BODY_MAX"
+}
+
+# The installed checker for an EAD/TDD doc ticket, or nothing.
+doc_checker() {
+  local type="$1" d dir="${TICKET_SKILLS_DIR:-$HOME/.claude/skills}"
+  case "$type" in
+    ead) [[ -f "$dir/ead/scripts/check_ead.py" ]] && echo "$dir/ead/scripts/check_ead.py" ;;
+    tdd) for d in tdd technical-design-doc; do
+           [[ -f "$dir/$d/scripts/check_tdd.py" ]] && { echo "$dir/$d/scripts/check_tdd.py"; return; }
+         done ;;
+  esac
+  return 0
+}
+
+# One ticket's change as JSON: {nn, source, range, stat, patch, truncated, docs}.
+# The worktree when it is still there (committed and uncommitted, against the
+# ticket's base), else the branch (local, then remote-tracking), else the commit
+# its **Status:** line says it was merged as. null when none of them exists.
+ticket_diff() {
+  local t="$1" nn branch base wt file sha="" from="" to="" src="" stat patch tmp names f checker type docs="[]" rows
+  nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"; base="$(jq -r .base <<<"$t")"
+  wt="$(jq -r '.worktree // ""' <<<"$t")"; file="$(jq -r .file <<<"$t")"
+  type="$(jq -r '.doc_type // ""' <<<"$t")"
+  if [[ -n "$wt" && -d "$wt" && -n "$base" ]] && git -C "$wt" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+    src="worktree"; from="$base"
+    stat="$(git -C "$wt" diff --stat=200 "$base" 2>/dev/null)"; patch="$(git -C "$wt" diff "$base" 2>/dev/null)"
+    names="$(git -C "$wt" diff --name-only "$base" 2>/dev/null; git -C "$wt" ls-files --others --exclude-standard 2>/dev/null)"
+  else
+    local ref
+    for ref in "$branch" "${REMOTE:-origin}/$branch"; do
+      [[ -n "$branch" ]] && git -C "$ROOT" rev-parse --verify --quiet "$ref^{commit}" >/dev/null && { to="$ref"; break; }
+    done
+    if [[ -n "$to" ]]; then
+      src="branch"; from="${base:-$(git -C "$ROOT" merge-base "$to" "$BASE_REF" 2>/dev/null)}"
+    else
+      sha="$(sed -n 's/^\*\*Status:\*\* resolved — merged into [^ ]* as \([0-9a-f]\{6,\}\).*/\1/p' "$file" | head -1)"
+      if [[ -z "$sha" ]] || ! git -C "$ROOT" rev-parse --verify --quiet "$sha^{commit}" >/dev/null; then echo null; return; fi
+      src="merge"; to="$sha"; from="$sha^1"
+    fi
+    stat="$(git -C "$ROOT" diff --stat=200 "$from" "$to" 2>/dev/null)"; patch="$(git -C "$ROOT" diff "$from" "$to" 2>/dev/null)"
+    names="$(git -C "$ROOT" diff --name-only "$from" "$to" 2>/dev/null)"
+  fi
+  # An EAD or TDD the ticket wrote: the Contracts rows its checker reads out of it.
+  checker="$(doc_checker "$type")"
+  if [[ -n "$checker" ]] && command -v python3 >/dev/null; then
+    while IFS= read -r f; do
+      [[ "$f" == *.html ]] || continue
+      tmp="$(mktemp --suffix=.html)"
+      if [[ "$src" == worktree ]]; then cp "$wt/$f" "$tmp" 2>/dev/null; else git -C "$ROOT" show "$to:$f" >"$tmp" 2>/dev/null; fi
+      if [[ -s "$tmp" ]] && rows="$(python3 "$checker" --contracts "$tmp" 2>/dev/null)" && jq -e 'type == "array"' <<<"$rows" >/dev/null 2>&1; then
+        docs="$(jq -c --arg f "$f" --arg type "$type" --argjson rows "$rows" '. + [{file: $f, type: $type, contracts: $rows}]' <<<"$docs")"
+      fi
+      rm -f "$tmp"
+    done <<<"$names"
+  fi
+  jq -n --arg nn "$nn" --arg src "$src" --arg range "$from..${to:-worktree}" --arg stat "$stat" --arg patch "$patch" \
+        --argjson max "$CONTRACT_PATCH_MAX" --argjson docs "$docs" \
+    '{nn: $nn, source: $src, range: $range, stat: $stat,
+      patch: ($patch | if utf8bytelength > $max then .[0:$max] else . end),
+      truncated: ($patch | utf8bytelength > $max), docs: $docs}'
+}
+
+cmd_validate() {
+  local usage="usage: tk.sh validate <board> [<NN>]   (JSON on stdout; <NN> adds that ticket's change)"
+  (( $# >= 1 && $# <= 2 )) || die "$usage"
+  need git; need jq
+  resolve_repo_root
+  local arg="$1"; [[ -d "$ROOT/.scratch/$arg" ]] && arg="$ROOT/.scratch/$arg"
+  board_init "$arg" allow-empty
+  local nn="${2:-}" t diff="null" bodies="{}" f
+  while IFS=$'\t' read -r n f; do
+    [[ -n "$n" ]] || continue
+    bodies="$(jq -c --arg n "$n" --arg b "$(ticket_body "$f")" '. + {($n): $b}' <<<"$bodies")"
+  done < <(jq -r '.[] | "\(.nn)\t\(.file)"' <<<"$BOARD_JSON")
+  if [[ -n "$nn" ]]; then t="$(ticket_json "$nn")"; diff="$(ticket_diff "$t")"; fi
+  jq -n --argjson b "$BOARD_JSON" --argjson bodies "$bodies" --argjson diff "$diff" \
+        --arg board_id "$BOARD_ID" --arg repo "$REPO_NAME" --arg base "$BASE_BRANCH" '
+    def norm: tostring | sub("^0+"; "") | if . == "" then "0" else . end;
+    ($b | map({key: (.nn | norm), value: .}) | from_entries) as $by |
+    # Every ticket a ticket waits on, directly or through another (cycles end).
+    def closure($n):
+      def go($seen; $front):
+        ([ $front[] | ($by[.] // {blockers: []}).blockers[] | norm ] | unique - $seen) as $new
+        | if ($new | length) == 0 then $seen else go($seen + $new; $new) end;
+      go([]; [$n | norm]) - [$n | norm];
+    ($b | map(select(.status != "dropped")) | [ .[] | . as $t | .provides[] | {key, nn: $t.nn} ]
+        | group_by(.key) | map({key: .[0].key, value: map(.nn)}) | from_entries) as $prov |
+    { board_id: $board_id, repo: $repo, base: $base,
+      tickets: [ $b[] | {nn, title, status, owner, kind, doc_type, blockers, xrefs, parent, dropped,
+                         declared: ((.provides_raw != "") or (.consumes_raw != "")),
+                         provides, consumes, body: ($bodies[.nn] // "")} ],
+      unprovided: [ $b[] | select(.status != "dropped") | . as $t | .consumes[]
+                    | select(.from != "existing" and (.from | test(":") | not) and ($prov[.key] // [] | map(select(norm != ($t.nn | norm))) | length) == 0
+                             and ((.from | test("^[0-9]+$") | not) or ($by[.from | norm] == null)))
+                    | {nn: $t.nn, item: .text, key} ],
+      order: [ $b[] | select(.status != "dropped") | . as $t | closure($t.nn) as $up | .consumes[]
+               | . as $c
+               | ((if ($c.from | test("^[0-9]+$")) then [$c.from] else ($prov[$c.key] // []) end)
+                  | map(select(norm != ($t.nn | norm)))) as $ps
+               | select(($ps | length) > 0 and ($ps | any(norm | IN($up[])) | not))
+               | {nn: $t.nn, item: $c.text, key: $c.key, providers: $ps} ],
+      diff: $diff }'
+}
+
+# ---- rescope: a planner session's plan diff, applied only on the developer's word --
+# tk.sh rescope opens one under <board>/rescope/<id>/ and prints the seed the
+# planner (/ticket's rescope mode) reads; the planner writes plan.json and the new
+# ticket files there and runs rescope-propose, which checks them; the developer
+# applies it (tk-hub, or rescope-apply) or discards it. Nothing on the board
+# changes before rescope-apply. docs/agents/contracts.md has the file shapes.
+RESCOPE_RUN_LINES='Status|Branch|Base|Model|Effort|Account|Agent|Worktree'
+
+rescope_dir() { echo "$BOARD_PATH/rescope/$1"; }
+
+rescope_meta() {
+  local id="$1" m
+  [[ "$id" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "no rescope '$id' — an id looks like 20261101T120000Z"
+  m="$(rescope_dir "$id")/rescope.json"
+  [[ -f "$m" ]] || die "no rescope $id on board $BOARD_ID"
+  jq -e 'type == "object"' "$m" >/dev/null 2>&1 || die "rescope $id: rescope.json is not a JSON object"
+  cat "$m"
+}
+
+# shellcheck disable=SC2016  # every caller's filter is jq, with jq's $variables
+rescope_set() {   # rescope_set <id> <jq filter> [jq args...]
+  local id="$1" filter="$2" m; shift 2
+  m="$(rescope_dir "$id")/rescope.json"
+  jq "$@" "$filter" "$m" | write_atomic "$m"
+}
+
+# The directory new ticket files go to: where the board's tickets already are.
+issues_dir() {
+  local f; f="$(jq -r 'first(.[].file) // ""' <<<"$BOARD_JSON")"
+  if [[ -n "$f" ]]; then dirname "$f"; else echo "$BOARD_PATH/issues"; fi
+}
+
+# The heading number of a ticket file, or nothing.
+file_nn() { sed -n 's/^# \([0-9]\{1,\}\):.*/\1/p' "$1" | head -1; }
+
+cmd_rescope() {
+  local usage='usage: tk.sh rescope <board> <NN>[,<NN>...] [--reason "<why>"]'
+  board_init "${1:-}"; local list="${2:?$usage}" reason="" id dir nn t
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --reason) reason="${2:-}"; shift 2 ;; *) die "$usage" ;; esac
+  done
+  [[ "$reason" != *$'\n'* ]] || die "the reason must be one line"
+  local nns=()
+  for nn in ${list//,/ }; do t="$(ticket_json "$nn")"; nns+=("$(jq -r .nn <<<"$t")"); done
+  (( ${#nns[@]} > 0 )) || die "$usage"
+  id="$(date -u +%Y%m%dT%H%M%SZ)"; dir="$(rescope_dir "$id")"
+  while [[ -e "$dir" ]]; do sleep 1; id="$(date -u +%Y%m%dT%H%M%SZ)"; dir="$(rescope_dir "$id")"; done
+  mkdir -p "$dir/issues"
+  jq -n --arg id "$id" --arg board "$BOARD_ID" --arg reason "$reason" --arg at "$(date -u +%FT%TZ)" \
+        --args '{id: $id, board: $board, tickets: $ARGS.positional, reason: $reason, state: "open", created_at: $at}' "${nns[@]}" \
+    | write_atomic "$dir/rescope.json"
+  echo "RESCOPE $id $dir"
+  echo "REASON ${reason:-none given}"
+  echo "NEXT $(jq -r '[.[].nn | tonumber] | max // 0 | . + 1 | tostring | if length < 2 then "0" + . else . end' <<<"$BOARD_JSON") — the first free ticket number"
+  for nn in "${nns[@]}"; do
+    t="$(ticket_json "$nn")"
+    echo; echo "TARGET $nn $(jq -r .status <<<"$t") $(jq -r .file <<<"$t")"
+    sed 's/^/  | /' "$(jq -r .file <<<"$t")"
+  done
+  echo
+  # What depends on the targets: tickets they block, directly or through another.
+  jq -r --args '
+    def norm: tostring | sub("^0+"; "") | if . == "" then "0" else . end;
+    . as $b | ($ARGS.positional | map(norm)) as $tg |
+    def downstream($seen): [ $b[] | select((.blockers | map(norm) | any(IN($seen[]))) and ((.nn | norm) | IN($seen[]) | not)) | .nn | norm ] as $n
+      | if ($n | length) == 0 then $seen else downstream($seen + $n) end;
+    (downstream($tg) - $tg) as $down |
+    ("DEPENDENTS " + (if ($down | length) == 0 then "none" else ($down | map(. as $m | $b[] | select((.nn | norm) == $m) | .nn) | join(" ")) end)),
+    ($b[] | select(.nn | norm | IN($down[])) | "  \(.nn) \(.status) \(.title)")' "${nns[@]}" <<<"$BOARD_JSON"
+  echo
+  echo "CONTRACTS"
+  jq -r '.[] | "  \(.nn) \(.status)\(if .owner == "me" then " (owner me)" else "" end) — provides: \(.provides | map(.text) | join("; ") | if . == "" then "-" else . end) — consumes: \(.consumes | map(.text) | join("; ") | if . == "" then "-" else . end)"' <<<"$BOARD_JSON"
+  [[ -f "$BOARD_PATH/board.md" ]] && { echo; echo "BOARD.MD $BOARD_PATH/board.md"; }
+  echo
+  echo "WRITE $dir/plan.json — {\"summary\": \"<one line>\", \"changes\": [{\"op\": \"add|change|split|drop\", \"nn\": \"<NN>\", \"file\": \"<NN>-<slug>.md\" (add, change), \"files\": [...] (split), \"why\": \"<one line>\"}]}"
+  echo "WRITE $dir/issues/<NN>-<slug>.md — each added, changed or split-into ticket, whole, in the board's ticket shape"
+  echo "THEN tk.sh rescope-propose $BOARD_ID $id — checks them; the developer applies it (tk-hub, or tk.sh rescope-apply $BOARD_ID $id)"
+}
+
+# Checks a rescope's plan.json and files against the board as it is now. Prints
+# one ERROR line per problem; the exit status is the count (0: fine).
+rescope_check() {
+  local id="$1" dir plan errs=0 op nn file files f fnn st
+  dir="$(rescope_dir "$id")"; plan="$dir/plan.json"
+  [[ -f "$plan" ]] || { echo "ERROR no plan.json in $dir"; return 1; }
+  jq -e '(.changes | type == "array" and length > 0) and (.summary | type == "string")' "$plan" >/dev/null 2>&1 \
+    || { echo "ERROR plan.json needs a summary (string) and changes (a non-empty array)"; return 1; }
+  local seen=" " new=" "
+  while IFS=$'\x1f' read -r op nn file files; do
+    [[ "$nn" =~ ^0*([0-9]+)$ ]] && nn="${BASH_REMATCH[1]}"
+    st="$(jq -r --arg n "$nn" 'map(select((.nn | tonumber) == ($n | tonumber))) | first | .status // ""' <<<"$BOARD_JSON" 2>/dev/null)"
+    [[ "$seen" == *" $nn "* && "$op" != add ]] && { echo "ERROR ticket $nn appears in more than one change"; errs=$((errs + 1)); }
+    seen+="$nn "
+    case "$op" in
+      change)
+        [[ -n "$st" ]] || { echo "ERROR change $nn: no such ticket"; errs=$((errs + 1)); continue; }
+        [[ "$st" == open || "$st" == in-progress ]] || { echo "ERROR change $nn: it is $st"; errs=$((errs + 1)); }
+        f="$dir/issues/$file"
+        [[ -n "$file" && -f "$f" ]] || { echo "ERROR change $nn: no file issues/$file"; errs=$((errs + 1)); continue; }
+        fnn="$(file_nn "$f")"; [[ -n "$fnn" && $((10#$fnn)) == $((10#$nn)) ]] || { echo "ERROR change $nn: issues/$file is headed '# ${fnn:-?}:', not '# $nn:'"; errs=$((errs + 1)); } ;;
+      add)
+        f="$dir/issues/$file"
+        [[ -n "$file" && -f "$f" ]] || { echo "ERROR add: no file issues/$file"; errs=$((errs + 1)); continue; }
+        fnn="$(file_nn "$f")"
+        [[ -n "$fnn" ]] || { echo "ERROR add: issues/$file has no '# NN: <Title>' heading"; errs=$((errs + 1)); continue; }
+        [[ -z "$(jq -r --arg n "$fnn" 'map(select((.nn | tonumber) == ($n | tonumber))) | first | .nn // ""' <<<"$BOARD_JSON")" ]] \
+          || { echo "ERROR add $fnn: the board already has a ticket $fnn"; errs=$((errs + 1)); }
+        [[ "$new" == *" $((10#$fnn)) "* ]] && { echo "ERROR ticket $fnn is added twice"; errs=$((errs + 1)); }
+        new+="$((10#$fnn)) "
+        [[ ! -e "$(issues_dir)/$file" ]] || { echo "ERROR add $fnn: $(issues_dir)/$file exists"; errs=$((errs + 1)); } ;;
+      split)
+        [[ "$st" == open ]] || { echo "ERROR split $nn: it is ${st:-not on the board} — only an open ticket splits"; errs=$((errs + 1)); }
+        [[ -n "$files" ]] || { echo "ERROR split $nn: no files"; errs=$((errs + 1)); continue; }
+        for file in ${files//,/ }; do
+          f="$dir/issues/$file"
+          [[ -f "$f" ]] || { echo "ERROR split $nn: no file issues/$file"; errs=$((errs + 1)); continue; }
+          fnn="$(file_nn "$f")"
+          [[ -n "$fnn" && -z "$(jq -r --arg n "$fnn" 'map(select((.nn | tonumber) == ($n | tonumber))) | first | .nn // ""' <<<"$BOARD_JSON")" ]] \
+            || { echo "ERROR split $nn: issues/$file must be headed with a new ticket number"; errs=$((errs + 1)); continue; }
+          [[ "$new" == *" $((10#$fnn)) "* ]] && { echo "ERROR ticket $fnn is added twice"; errs=$((errs + 1)); }
+          new+="$((10#$fnn)) "
+        done ;;
+      drop)
+        [[ "$st" == open ]] || { echo "ERROR drop $nn: it is ${st:-not on the board} — an in-progress ticket is stopped and resolved --no-code, not dropped"; errs=$((errs + 1)); } ;;
+      *) echo "ERROR unknown op '$op' — add, change, split or drop"; errs=$((errs + 1)) ;;
+    esac
+  done < <(jq -r '.changes[] | [(.op // ""), (.nn // "" | tostring), (.file // ""), ((.files // []) | join(","))] | join("\u001f")' "$plan")
+  return "$errs"
+}
+
+cmd_rescope_propose() {
+  board_init "${1:-}"; local id="${2:?usage: tk.sh rescope-propose <board> <id>}" st out
+  st="$(rescope_meta "$id" | jq -r .state)"
+  [[ "$st" == open || "$st" == proposed ]] || die "rescope $id is $st"
+  if ! out="$(rescope_check "$id")"; then echo "$out"; die "rescope $id: fix plan.json or its files, then propose again"; fi
+  # shellcheck disable=SC2016  # jq's $at
+  rescope_set "$id" '.state = "proposed" | .proposed_at = $at' --arg at "$(date -u +%FT%TZ)"
+  echo "PROPOSED $id — $(jq -r .summary "$(rescope_dir "$id")/plan.json")"
+  echo "the developer applies it on tk-hub, or: tk.sh rescope-apply $BOARD_ID $id"
+}
+
+# One rescope as tk-hub shows it: the plan diff, each change with its ticket's
+# title and, for a change, the unified diff of the ticket file.
+rescope_json() {
+  local id="$1" dir meta plan ch="[]" op nn file files f old d title
+  dir="$(rescope_dir "$id")"; meta="$(cat "$dir/rescope.json")"; plan="$dir/plan.json"
+  if [[ -f "$plan" ]] && jq -e '.changes | type == "array"' "$plan" >/dev/null 2>&1; then
+    local i c
+    for (( i = 0; i < $(jq '.changes | length' "$plan"); i++ )); do
+      c="$(jq -c --argjson i "$i" '.changes[$i]' "$plan")"
+      op="$(jq -r '.op // ""' <<<"$c")"; nn="$(jq -r '.nn // "" | tostring' <<<"$c")"
+      file="$(jq -r '.file // ""' <<<"$c")"; files="$(jq -r '(.files // []) | join(",")' <<<"$c")"
+      old="$(jq -r --arg n "$nn" 'map(select(($n | test("^[0-9]+$")) and (.nn | tonumber) == ($n | tonumber))) | first | .file // ""' <<<"$BOARD_JSON")"
+      title="$(jq -r --arg n "$nn" 'map(select(($n | test("^[0-9]+$")) and (.nn | tonumber) == ($n | tonumber))) | first | .title // ""' <<<"$BOARD_JSON")"
+      d=""; f=""
+      case "$op" in
+        change) f="$dir/issues/$file"; [[ -f "$f" && -f "$old" ]] && d="$(diff -u --label "a/$nn" --label "b/$nn" \
+                   <(grep -vE "^\*\*($RESCOPE_RUN_LINES):\*\*" "$old") <(grep -vE "^\*\*($RESCOPE_RUN_LINES):\*\*" "$f") | head -c 8000)" ;;
+        add) f="$dir/issues/$file"; [[ -f "$f" ]] && { nn="$(file_nn "$f")"; title="$(sed -n 's/^# [0-9]\{1,\}:[ ]*//p' "$f" | head -1)"; d="$(head -c 8000 "$f")"; } ;;
+      esac
+      ch="$(jq -c --arg op "$op" --arg nn "$nn" --arg title "$title" --arg diff "$d" --arg files "$files" --argjson c "$c" \
+            '. + [{op: $op, nn: $nn, title: $title, why: ($c.why // ""), diff: $diff,
+                   into: (if $op == "split" then [$files | split(",")[] | select(. != "") | {file: .}] else [] end)}]' <<<"$ch")"
+    done
+    # A split's new tickets, by number and title.
+    local n fn tt
+    for i in $(jq -r 'to_entries[] | select(.value.op == "split") | .key' <<<"$ch"); do
+      local into="[]"
+      for fn in $(jq -r --argjson i "$i" '.[$i].into[].file' <<<"$ch"); do
+        [[ -f "$dir/issues/$fn" ]] || continue
+        n="$(file_nn "$dir/issues/$fn")"; tt="$(sed -n 's/^# [0-9]\{1,\}:[ ]*//p' "$dir/issues/$fn" | head -1)"
+        into="$(jq -c --arg n "$n" --arg t "$tt" --arg f "$fn" '. + [{nn: $n, title: $t, file: $f}]' <<<"$into")"
+      done
+      ch="$(jq -c --argjson i "$i" --argjson into "$into" '.[$i].into = $into' <<<"$ch")"
+    done
+  fi
+  jq -c --argjson ch "$ch" --arg summary "$( [[ -f "$plan" ]] && jq -r '.summary // ""' "$plan" 2>/dev/null)" \
+    '. + {summary: $summary, changes: $ch}' <<<"$meta"
+}
+
+# Every rescope still waiting on the developer (open or proposed), as a JSON array.
+rescopes_json() {
+  local d out=""
+  [[ -d "$BOARD_PATH/rescope" ]] || { echo '[]'; return; }
+  for d in "$BOARD_PATH"/rescope/*/rescope.json; do
+    [[ -f "$d" ]] || continue
+    jq -e '.state == "open" or .state == "proposed"' "$d" >/dev/null 2>&1 || continue
+    out+="$(rescope_json "$(basename "$(dirname "$d")")")"$'\n'
+  done
+  printf '%s' "$out" | jq -s 'sort_by(.id)'
+}
+
+# A rescoped ticket's agent hears about it; a failure to tell it is a line, not an error.
+rescope_tell() {
+  local t="$1" id="$2" why="$3" agent st
+  agent="$(jq -r .agent <<<"$t")"; [[ -n "$agent" ]] || return 0
+  st="$( (agent_states || true) | awk -F'\t' -v a="$agent" '$1 == a {print $2}')"
+  case "${st:-gone}" in
+    idle|done|working)
+      herdr agent prompt "$agent" "$(printf 'Message from the developer, via the board session:\n\nYour ticket was rescoped (%s): %s\nRe-read %s before your next step; it is the plan now.' "$id" "$why" "$(jq -r .file <<<"$t")")" >/dev/null 2>&1 \
+        && echo "TOLD $(jq -r .nn <<<"$t") — $agent" || echo "NOT TOLD $(jq -r .nn <<<"$t") — herdr refused; tell $agent yourself" ;;
+    *) echo "NOT TOLD $(jq -r .nn <<<"$t") — $agent is ${st:-gone}; tell it once it can listen" ;;
+  esac
+}
+
+cmd_rescope_apply() {
+  board_init "${1:-}"; local id="${2:?usage: tk.sh rescope-apply <board> <id>}" st dir out op nn file files why t old f tmp target
+  st="$(rescope_meta "$id" | jq -r .state)"
+  [[ "$st" == proposed ]] || die "rescope $id is $st — only a proposed rescope applies (the planner runs tk.sh rescope-propose first)"
+  if ! out="$(rescope_check "$id")"; then echo "$out"; die "rescope $id no longer fits the board — nothing applied; discard it or rescope again"; fi
+  dir="$(rescope_dir "$id")"; target="$(issues_dir)"; mkdir -p "$target"
+  local day; day="$(date +%F)"
+  while IFS=$'\x1f' read -r op nn file files why; do
+    case "$op" in
+      change)
+        t="$(ticket_json "$nn")"; old="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+        # The run state stays: the new body under the old heading block's lines.
+        { awk -v re="^\\\\*\\\\*($RESCOPE_RUN_LINES):\\\\*\\\\*" '$0 ~ re' "$old" >"$tmp.run"
+          awk -v re="^\\\\*\\\\*($RESCOPE_RUN_LINES):\\\\*\\\\*" -v runf="$tmp.run" '
+            $0 ~ re { next }
+            /^\*\*What to build:\*\*/ { body = 1 }
+            !body && /^[[:space:]]*$/ && blank { next }
+            { blank = /^[[:space:]]*$/; print }
+            /^# [0-9]+:/ && !done { done = 1; n = 0; while ((getline l < runf) > 0) { if (!n++) print ""; print l } }' "$dir/issues/$file"; } >"$tmp"
+        rm -f "$tmp.run"; mv "$tmp" "$old"
+        echo "CHANGED $nn — $why"
+        [[ "$(jq -r .status <<<"$t")" == in-progress ]] && rescope_tell "$(ticket_json "$nn")" "$id" "$why" ;;
+      add)
+        cp "$dir/issues/$file" "$target/$file"; echo "ADDED $(file_nn "$target/$file") — $why" ;;
+      split|drop)
+        if [[ "$op" == split ]]; then
+          local into=() fn
+          for fn in ${files//,/ }; do cp "$dir/issues/$fn" "$target/$fn"; into+=("$(file_nn "$target/$fn")"); echo "ADDED ${into[-1]} — split from $nn"; done
+          why="split into ${into[*]} — $why"
+        fi
+        t="$(ticket_json "$nn")"; old="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+        LINE="**Status:** dropped — rescope $id on $day" DROP="**Dropped:** $day — $why (rescope $id)" awk '
+          /^\*\*Status:\*\*/ { next } /^\*\*Dropped:\*\*/ { next }
+          { print }
+          /^# [0-9]+:/ && !done { print ""; print ENVIRON["LINE"]; print ""; print ENVIRON["DROP"]; done = 1 }' "$old" >"$tmp"
+        mv "$tmp" "$old"; echo "DROPPED $nn — $why" ;;
+    esac
+  done < <(jq -r '.changes[] | [(.op // ""), (.nn // "" | tostring), (.file // ""), ((.files // []) | join(",")), (.why // "" | gsub("[\u001f\n]"; " "))] | join("\u001f")' "$dir/plan.json")
+  # shellcheck disable=SC2016  # jq's $at
+  rescope_set "$id" '.state = "applied" | .applied_at = $at' --arg at "$(date -u +%FT%TZ)"
+  load_board
+  jq -r '. as $b | ($b | map(select(.status == "dropped") | .nn | tonumber)) as $d |
+    $b[] | select(.status == "open") | . as $t | ($t.blockers | map(select(tonumber | IN($d[])))) as $hit |
+    select($hit | length > 0) | "WARN \($t.nn) is blocked by dropped \($hit | join(", ")) — it waits until its Blocked by line changes"' <<<"$BOARD_JSON"
+  echo "APPLIED $id"
+}
+
+cmd_rescope_discard() {
+  board_init "${1:-}"; local id="${2:?usage: tk.sh rescope-discard <board> <id>}" st
+  st="$(rescope_meta "$id" | jq -r .state)"
+  [[ "$st" == open || "$st" == proposed ]] || die "rescope $id is $st"
+  # shellcheck disable=SC2016  # jq's $at
+  rescope_set "$id" '.state = "discarded" | .discarded_at = $at' --arg at "$(date -u +%FT%TZ)"
+  echo "DISCARDED $id — the board is unchanged"
 }
 
 cmd_view() {
@@ -1223,6 +1655,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
+  resolve 05 --no-code "<what was done>"
+                                a ticket that is yours (**Owner:** me) — no agent runs it
   resolve 02 --no-code "<reason>"
                                 for a ticket that delivers nothing committable (gitignored
                                   files, say) — only on the developer's word. Refused if its
@@ -1262,7 +1696,8 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkp  [board] NN    open one ticket's PR (Cursor writes message and body)
   tkpu [board] NN    commit and push one ticket's branch, no PR (TICKET_FORGE=none)
   tk <verb> ...      tk.sh directly (digest, view, gates, ready, why, push, helpers, retro,
-                     retro-save, retro-apply, policy, policy-set, boards, export, help)
+                     retro-save, retro-apply, policy, policy-set, boards, export, validate,
+                     rescope, rescope-propose, rescope-apply, rescope-discard, help)
   tkhelp             this list
 
 For tools (JSON on stdout, logs on stderr — tk-hub reads these)
@@ -1274,6 +1709,15 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
                           ticket ships — a PR, a push merged on the forge by you, a local merge).
                           No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
                           keeps it offline
+  tk.sh validate <board> [NN]   the contract evidence: Provides/Consumes per ticket, what this board
+                          can't provide, providers that aren't blockers; NN adds its change (diff,
+                          EAD/TDD Contracts rows). tk-hub's validator (validate-contracts) reads it
+
+Rescope (a planner session proposes, you apply; nothing changes before rescope-apply)
+  tk.sh rescope <board> 04,05 --reason "<why>"   open one, print the planner's seed (/ticket rescope …)
+  tk.sh rescope-propose <board> <id>             the planner's last step: check plan.json and its files
+  tk.sh rescope-apply <board> <id>               add / change (run state kept, its agent told) / split / drop
+  tk.sh rescope-discard <board> <id>             drop it, the board unchanged
 
 Forges (PRs, gates, merge) — picked from the remote URL
   GitHub         gh, logged in
@@ -1312,6 +1756,11 @@ verb="${1:-}"; shift || true
 case "$verb" in
   digest|launch|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
+  validate) cmd_validate "$@" ;;
+  rescope) cmd_rescope "$@" ;;
+  rescope-propose) cmd_rescope_propose "$@" ;;
+  rescope-apply) cmd_rescope_apply "$@" ;;
+  rescope-discard) cmd_rescope_discard "$@" ;;
   retro-apply) cmd_retro_apply "$@" ;;
   policy) cmd_policy "$@" ;;
   policy-set) cmd_policy_set "$@" ;;

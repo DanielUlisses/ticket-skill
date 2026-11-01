@@ -71,6 +71,8 @@ Stop. Report: files changed (one line each), how you verified it (the suite you 
 
 ### `## Remember` — what the next ticket should already know
 
+When something this ticket's **Consumes:** line names is missing or isn't what the line says — no such function, an endpoint with another shape, a column a provider never added — say so in a `## Missing contracts` section of the report, one line each: the item as the Consumes line writes it, then what you found instead (`function store.read() — store.py has read_board(key), no read()`). Leave the section out when nothing was missing. tk-hub's validator reads it and sends the finding to the ticket that should have provided it.
+
 Close the report with a `## Remember` section, built from your own and every subagent's
 `## Remember` — deduplicated, and only what survives the rules below. Repos here are long-running, and the
 next ticket against this repo is briefed from its project memory file; this section

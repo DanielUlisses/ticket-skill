@@ -16,9 +16,13 @@
 #
 # The one output shape is BOARD_JSON: an array of tickets, ordered by number,
 #   {nn, title, ref, file, status, branch, base, model, effort, account,
-#    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type}
+#    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type,
+#    owner, provides:[item], consumes:[item], dropped}
 # (kind and doc_type are the **Kind:** / **Doc type:** lines, lowercased; empty
-# when the ticket has none — a ticket with no Kind is `code`)
+# when the ticket has none — a ticket with no Kind is `code`; owner is `me` or
+# `ai`, from **Owner:**, `ai` when there is none; provides and consumes are the
+# **Provides:** / **Consumes:** lines as contract items, see CONTRACT_KINDS;
+# dropped is the **Dropped:** line a rescope writes beside **Status:** dropped)
 # plus BOARD_ID (what to pass back to every script), BOARD_SLUG (a path-safe
 # name for state files) and BOARD_PATH.
 
@@ -27,6 +31,31 @@ JIRA_RE='^[A-Za-z][A-Za-z0-9]+-[0-9]+$'
 # What a ticket's **Kind:** line may say. An open list: a new kind is a new
 # word here and a branch in tk.sh launch. No line means `code`.
 TICKET_KINDS="code doc"
+
+# What a **Provides:** / **Consumes:** item may name first. Items are separated
+# by `;`, each `<kind> <name>` with the name in backticks or bare, a Consumes
+# item optionally ending in `(from NN)`, `(<repo>:NN)` or `(existing)` — what
+# already exists on the base. A first word not in this list makes the whole
+# item `other`. "None" (or no line) is an empty list. The validator
+# (validate-contracts, tk-hub) matches a consume to a provide by `key`:
+# the kind, a colon, the name lowercased with backticks, spaces and a trailing
+# "()" dropped. docs/agents/contracts.md has the rules.
+CONTRACT_KINDS="endpoint function method class type schema table column migration env config file cli rpc event message page component metric resource output variable secret deliverable other"
+
+# jq: a Provides/Consumes line -> [{kind, name, from, key, text}].
+# shellcheck disable=SC2016  # jq, not shell
+CONTRACT_JQ='
+  def contract_items($kinds):
+    if . == null or (gsub("\\s"; "") | ascii_downcase | test("^$|^none([^a-z0-9_].*)?$")) then []
+    else [ split(";")[] | gsub("^\\s+|\\s+$"; "") | select(. != "") | . as $text |
+      (capture("\\((?<from>[^()]*)\\)\\s*$").from // "" | gsub("^\\s*from\\s+|\\s+$"; "")) as $from |
+      (sub("\\s*\\([^()]*\\)\\s*$"; "")) as $body |
+      ($body | capture("^(?<k>[A-Za-z]+)\\s+(?<n>.+)$") // {k: "", n: $body}) as $m |
+      (if ($kinds | index($m.k | ascii_downcase)) then ($m.k | ascii_downcase) else "other" end) as $kind |
+      (if $kind == "other" and ($m.k | ascii_downcase) != "other" then $body else $m.n end | gsub("`"; "") | gsub("^\\s+|\\s+$"; "")) as $name |
+      { kind: $kind, name: $name, from: ($from | ascii_downcase), text: $text,
+        key: ("\($kind):" + ($name | ascii_downcase | gsub("\\s+"; "") | sub("\\(\\)$"; ""))) } ]
+    end;'
 
 board_state_dir() {
   local d="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME"
@@ -83,18 +112,25 @@ parse_ticket_file() {
     /^\*\*Parent:\*\*/            { parent = tolower(first(val($0))) }
     /^\*\*Kind:\*\*/              { kind = tolower(first(val($0))) }
     /^\*\*Doc type:\*\*/          { doctype = tolower(first(val($0))) }
+    /^\*\*Owner:\*\*/             { owner = tolower(first(val($0))) }
+    /^\*\*Provides:\*\*/          { provides = val($0) }
+    /^\*\*Consumes:\*\*/          { consumes = val($0) }
+    /^\*\*Dropped:\*\*/           { dropped = val($0) }
     /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped
     }' "$f" \
-  | jq -R --arg file "$f" 'split("\u001f") as $v | {
+  | jq -R --arg file "$f" --arg kinds "$CONTRACT_KINDS" "$CONTRACT_JQ"'split("\u001f") as $v | ($kinds | split(" ")) as $k | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
       status: (if $v[2] == "" then "open" else $v[2] end),
       branch: $v[3], base: $v[4], model: $v[5], effort: $v[6], account: $v[7], agent: $v[8],
       blocked_raw: $v[9], smodel: $v[10], seffort: $v[11], parent: $v[12], worktree: $v[13],
-      repo: $v[14], repo_path: $v[15], kind: $v[16], doc_type: $v[17] }'
+      repo: $v[14], repo_path: $v[15], kind: $v[16], doc_type: $v[17],
+      owner: (if $v[18] == "me" then "me" else "ai" end),
+      provides: ($v[19] | contract_items($k)), consumes: ($v[20] | contract_items($k)),
+      provides_raw: $v[19], consumes_raw: $v[20], dropped: $v[21] }'
 }
 
 load_file_board() {
@@ -102,7 +138,7 @@ load_file_board() {
   # .scratch/project-memory.md is repo memory, not a board or a ticket: never load it.
   [[ "$(basename "$BOARD_PATH")" != project-memory.md ]] || die "$BOARD_PATH is project memory, not a board"
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope \) -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
   # tickets — board.md and other notes — not a ticket.
@@ -364,7 +400,7 @@ board_init() {
   # tk.sh export passes "allow-empty": a board folder with no ticket files is an
   # empty board, not an error.
   if [[ "${2:-}" == allow-empty && -d "$BOARD_PATH" ]] &&
-     [[ -z "$(find "$BOARD_PATH" -mindepth 1 -type d -name retro -prune -o -name '*.md' ! -name retro-results.md -type f -print -quit)" ]]; then
+     [[ -z "$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope \) -prune -o -name '*.md' ! -name retro-results.md -type f -print -quit)" ]]; then
     BOARD_JSON='[]'
   else
     load_board
