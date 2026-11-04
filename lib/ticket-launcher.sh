@@ -189,6 +189,83 @@ resolve_remote_control() {
   return 0
 }
 
+# ---- catalog skills ---------------------------------------------------------------
+# The skills-catalog skills this ticket gets (docs/agents/skills.md): devboxes syncs
+# the catalog to ${TICKET_SKILLS_CATALOG:-/opt/skills}/<name>/ (never into
+# ~/.claude/skills, so nothing is on by default), and a board enables some with its
+# policy's `skills` list. `tk.sh launch` passes the board's resolved list as
+# --skills; a launch with no board (/ticket, /small-ticket) reads the box and repo
+# policy layers itself. Each name is linked into the worktree's .claude/skills/
+# and excluded from git, so the agent sees it as a project skill and nothing is
+# committed. A name the catalog doesn't hold is skipped and said, never fatal: the
+# ticket runs without it.
+# Sets SKILLS_WANTED (array), SKILLS_ORIGIN (board|policy|none) and CATALOG_DIR.
+resolve_catalog_skills() {
+  local raw="" f layer
+  CATALOG_DIR="${TICKET_SKILLS_CATALOG:-/opt/skills}"
+  SKILLS_WANTED=()
+  if [[ -n "${SKILLS_REQUESTED+x}" ]]; then
+    raw="$SKILLS_REQUESTED"; SKILLS_ORIGIN="board"
+  else
+    SKILLS_ORIGIN="policy"
+    for f in "${TICKET_BOX_POLICY:-$HOME/.config/tk-daemon/policy.json}" "$ROOT/.scratch/policy.json"; do
+      [[ -s "$f" ]] || continue
+      # Later layer wins, an empty list included (the repo turning the box's off).
+      layer="$(jq -er 'if type == "object" and (.skills | type) == "array"
+                       then .skills | map(tostring) | join(",") else error("no skills") end' "$f" 2>/dev/null)" \
+        && raw="$layer"
+    done
+  fi
+  local name names=()
+  IFS=',' read -r -a names <<<"$raw"
+  for name in ${names[@]+"${names[@]}"}; do
+    name="${name//[[:space:]]/}"
+    [[ -n "$name" ]] || continue
+    [[ "$name" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ && "$name" != *..* ]] \
+      || die "invalid skill name '$name' in the policy's skills — lowercase letters, digits, . _ -"
+    [[ " ${SKILLS_WANTED[*]-} " == *" $name "* ]] || SKILLS_WANTED+=("$name")
+  done
+  (( ${#SKILLS_WANTED[@]} )) || SKILLS_ORIGIN="none"
+  SKILLS_LINKED=(); SKILLS_MISSING=()
+  for name in ${SKILLS_WANTED[@]+"${SKILLS_WANTED[@]}"}; do
+    if [[ -f "$CATALOG_DIR/$name/SKILL.md" ]]; then SKILLS_LINKED+=("$name"); else SKILLS_MISSING+=("$name"); fi
+  done
+  return 0
+}
+
+# Links SKILLS_LINKED into $WT/.claude/skills/<name> (a symlink to the catalog's
+# copy) and adds each to the repo's info/exclude, shared by every worktree. A path
+# the repo already has there (a skill it ships itself) is left alone: the repo's
+# own wins. Rewrites SKILLS_LINKED to what was actually linked.
+link_catalog_skills() {
+  (( ${#SKILLS_LINKED[@]} )) || return 0
+  local name dest exclude kept=()
+  exclude="$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+  mkdir -p "$WT/.claude/skills" "$(dirname "$exclude")"
+  for name in "${SKILLS_LINKED[@]}"; do
+    dest="$WT/.claude/skills/$name"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      log "skill '$name': the repo has its own .claude/skills/$name — keeping it, not the catalog's"
+      SKILLS_MISSING+=("$name(repo's own)")
+      continue
+    fi
+    ln -s "$CATALOG_DIR/$name" "$dest"
+    grep -qxF "/.claude/skills/$name" "$exclude" 2>/dev/null || printf '/.claude/skills/%s\n' "$name" >>"$exclude"
+    kept+=("$name")
+  done
+  SKILLS_LINKED=(${kept[@]+"${kept[@]}"})
+  log "catalog skills linked: ${SKILLS_LINKED[*]:-none}"
+}
+
+# The summary's SKILLS= line: the linked names (comma-separated, `none`), then why.
+skills_summary() {
+  local linked="none"
+  (( ${#SKILLS_LINKED[@]} )) && linked="$(IFS=,; echo "${SKILLS_LINKED[*]}")"
+  printf '%s (%s' "$linked" "$SKILLS_ORIGIN"
+  (( ${#SKILLS_MISSING[@]} )) && printf '; not in %s: %s' "$CATALOG_DIR" "${SKILLS_MISSING[*]}"
+  printf ')'
+}
+
 # ---- per-repo project memory ------------------------------------------------
 # Sets MEMORY_BLOCK (what the prompt's {{PROJECT_MEMORY}} becomes) and
 # MEMORY_STATUS (the summary's PROJECT_MEMORY= line).
@@ -802,6 +879,9 @@ launcher_main() {
       --effort)    [[ $# -ge 2 ]] || die "--effort needs a level — one of: $EFFORT_LEVELS"
                    IMPL_EFFORT="$2"; IMPL_EFFORT_SOURCE="the --effort flag"; shift 2 ;;
       --effort=*)  IMPL_EFFORT="${1#--effort=}"; IMPL_EFFORT_SOURCE="the --effort flag"; shift ;;
+      --skills)    [[ $# -ge 2 ]] || die "--skills needs a comma-separated list (empty for none)"
+                   SKILLS_REQUESTED="$2"; shift 2 ;;
+      --skills=*)  SKILLS_REQUESTED="${1#--skills=}"; shift ;;
       --doc)       DOC=1; shift ;;
       --doc-type)  [[ $# -ge 2 ]] || die "--doc-type needs a type — one of: $DOC_TYPES"
                    DOC_TYPE="$2"; shift 2 ;;
@@ -826,7 +906,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--skills <a,b>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   (( ! ${DOC:-0} )) || TEMPLATE="$DOC_TEMPLATE"
   if [[ -n "$DOC_TYPE" ]]; then
     (( ${DOC:-0} )) || die "--doc-type is only for a --doc launch"
@@ -910,6 +990,7 @@ launcher_main() {
   resolve_project_memory
   resolve_retro_results
   resolve_doc_guidance
+  resolve_catalog_skills
 
   # ---- render the prompt (outside the worktree, so it doesn't dirty git status) -------
   RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/$RUN_NAME"; mkdir -p "$RUN_DIR"
@@ -976,6 +1057,7 @@ EFFORT=$IMPL_EFFORT
 COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
 REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
+SKILLS=$(skills_summary)
 REMOTE_CONTROL=$( (( REMOTE_CONTROL )) && echo "on (${RC_ORIGIN}: ${RC_ARGS[1]})" || echo "off (${RC_ORIGIN})" )
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
 PROJECT_MEMORY=$MEMORY_STATUS
@@ -1030,6 +1112,9 @@ SUMMARY
   # trusted. See trust_worktree_mise for the rest, including what it deliberately
   # does not do.
   trust_worktree_mise
+
+  # ---- 1a'. the catalog skills this ticket gets, before any pane starts ----------
+  link_catalog_skills
 
   # ---- 1b. the account this ticket runs on ------------------------------------
   # Between the worktree and the agent's pane, because the link is keyed by

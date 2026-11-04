@@ -72,3 +72,7 @@ box (`~/.config/tk-daemon/policy.json`), the repo (`.scratch/policy.json`) and t
 policy `forge` acts as `TICKET_FORGE` for every `tk.sh` verb when the env sets none. `base_branch` is
 read from the repo layer only, by every launcher, `tk.sh` verb and `sweep.sh`, and `TICKET_BASE_BRANCH`
 beats it. See `docs/agents/policy.md`.
+
+### Catalog skills
+
+Skills from the private `skills-catalog` repo, synced by devboxes to `/opt/skills` (off by default, never into `~/.claude/skills`), are turned on per board by the policy key `skills` (a list of names; tk-hub's project Skills tab writes it). `tk.sh launch` passes the board's list as `--skills`; the launcher links each one the catalog holds into `<worktree>/.claude/skills/` (git-excluded) and records them as the ticket's `**Skills:**` line, which `tk.sh export` carries. See `docs/agents/skills.md`.
