@@ -62,6 +62,10 @@ changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch a
 
 Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;`-separated, a consume ending `(from NN)`, `(<repo>:NN)` or `(existing)`) and, for the developer's own work, `**Owner:** me` — never launched, resolved with `--no-code` from `open`. `tk.sh validate <board> [NN]` prints the contract evidence tk-hub's validator reads (the new `validate-contracts` skill is its brief and answer format; the hub's daemon prepends it on the planner box). `/ticket rescope <board> <NN> <why>` runs `tk.sh rescope`, writes a plan diff under `.scratch/<board>/rescope/<id>/` and proposes it with `tk.sh rescope-propose`; nothing changes until `tk.sh rescope-apply` (tk-hub's Apply) — add, change (run state kept, its agent told), split, drop (`**Status:** dropped`). `tk.sh export` carries `rescopes` and each ticket's `transcript`. See `docs/agents/contracts.md`.
 
+### Project manager
+
+The `project-manager` skill is the brief tk-hub's weekly project review (Opus) and daily delta check (Haiku) run on the planner box: health, forecast, risks, decisions owed, up to three improvements (a task of the developer's or a rescope), a client status draft or a personal project's keep/pause/drop call. Nothing changes until the developer accepts a proposal on tk-hub's Health tab. By-hand checks stay a ticket's checklist; only a step later tickets can't run without (a token in a pipeline variable) is a *blocking check*, which tk-hub's synthesis marks and the hub turns into the developer's task blocking those tickets. See `docs/agents/project-manager.md`.
+
 ### Board policy
 
 How a board behaves — `forge`, `require_human_before_pr`, `auto_merge`, `night_shift`,
