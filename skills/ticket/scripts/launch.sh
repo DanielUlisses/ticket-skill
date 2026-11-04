@@ -9,7 +9,7 @@
 # ticket must land unstaged for review.
 #
 # Usage:
-#   launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <ead|tdd|other>]] <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <ead|tdd|other>]] [--helper] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #   launch.sh defaults
 #
@@ -51,12 +51,21 @@
 #   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
 #   TICKET_ACCOUNT_LOCK_WAIT (default: 10) — seconds to wait for the lock on ~/.claude-switch/links before refusing to write it
 #   TICKET_SKILLS_DIR      (default: ~/.claude/skills) — where a `--doc-type` ead/tdd skill is looked for (<dir>/<type>/SKILL.md and scripts/check_<type>.py)
+#   TICKET_HELPER_PERMISSION_MODE (default: acceptEdits) — a --helper session's permission mode; the developer is there to answer prompts
 #   TICKET_DRY_RUN         (default: 0) — 1 renders the prompt and prints the summary, then stops: no pull, no worktree, no agent, no Herdr needed
 #
 # `--doc` is a document ticket — a board ticket whose body says `**Kind:** doc`;
 # `tk.sh launch` passes it, with the ticket's `**Doc type:**`. It renders
 # templates/ticket-doc-prompt.md (unattended: the ticket's `## Outline` is the
 # plan) and puts ticket-doc-reviewer in place of ticket-reviewer.
+#
+# `--helper` is a ticket that is the developer's (`**Owner:** me`); `tk.sh launch
+# --helper` passes it, and only on the developer's word. It renders
+# templates/ticket-helper-prompt.md: one session on the ticket's model and effort
+# that waits for the developer, works with them, and checks the ticket (criteria,
+# then review where there is a change) when they say it's ready. No coordinator,
+# no implementer; it starts in TICKET_HELPER_PERMISSION_MODE (default
+# acceptEdits), since the developer is there to answer. ADR 0009.
 #
 # Exit codes: 0 = ok | 1 = error | 3 = agent stopped at a dialog (run the `prompt` subcommand afterward)
 
@@ -94,6 +103,12 @@ TEMPLATE="$SKILL_DIR/templates/ticket-agent-prompt.md"
 # `--doc`: a board ticket whose deliverable is a document (`**Kind:** doc`) —
 # drafted from its outline, humanized, reviewed and validated, never interviewed.
 DOC_TEMPLATE="$SKILL_DIR/templates/ticket-doc-prompt.md"
+# `--helper`: the developer's own ticket (`**Owner:** me`), driven by them with a
+# helper session — never started on its own.
+# shellcheck disable=SC2034  # read by ticket-launcher.sh, as the next one
+HELPER_TEMPLATE="$SKILL_DIR/templates/ticket-helper-prompt.md"
+# shellcheck disable=SC2034
+HELPER_PERMISSION_MODE="${TICKET_HELPER_PERMISSION_MODE:-acceptEdits}"
 RUN_NAME="ticket"
 PERMISSION_MODE="${TICKET_IMPL_PERMISSION_MODE:-bypassPermissions}"
 DISALLOWED_TOOLS=(

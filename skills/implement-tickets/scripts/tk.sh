@@ -147,10 +147,13 @@ cmd_digest() {
              + ($policy | split("\n"))
              + [ $rows[] | select($full == 1 or ($prev.lines == null) or ($was[.nn] != .line)) | .line ]
              + [ "FRONTIER " + ([ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.foreign // "") == "" and (.owner // "ai") != "me") | .nn ] | join(" ") | dash) ]
-             + [ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.owner // "ai") == "me") | "ACTION yours \(.nn) — **Owner:** me: the developer does it, then resolve \(.nn) --no-code \"<what was done>\"" ]
+             + [ $rows[] | select(.status == "open" and (.open_blockers | length) == 0 and (.owner // "ai") == "me") | "ACTION yours \(.nn) — **Owner:** me, ready: the developer starts it with a helper (start \(.nn) → launch --helper, on their word only) or does it by hand, then resolve \(.nn) --no-code \"<what was done>\"" ]
              + [ $rows[] | select(.status == "in-progress") |
                  if (.landed | startswith("yes")) then "ACTION resolve \(.nn) — landed (\(.landed | ltrimstr("yes:")))"
                  elif (.landed | startswith("unknown")) then "ACTION check \(.nn) — landed unknown (\(.landed | ltrimstr("unknown:"))); leave it, tell the developer"
+                 elif (.owner // "ai") == "me" then
+                   (if .state == "gone" and ($was[.nn] != .line) then "ACTION yours \(.nn) — its helper session is closed; the developer ships it (PR, push or merge) or resolves it --no-code \"<what was done>\""
+                    else empty end)
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
                  elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
@@ -197,13 +200,14 @@ record_run_state() {
 
 cmd_launch() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>]}"; shift
-  local type="" model="" effort="" account="" research=""
+  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper]}"; shift
+  local type="" model="" effort="" account="" research="" helper=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type) type="$2"; shift 2 ;; --model) model="$2"; shift 2 ;;
       --effort) effort="$2"; shift 2 ;; --account) account="$2"; shift 2 ;;
-      --research) research="$2"; shift 2 ;; *) die "unknown argument: $1" ;;
+      --research) research="$2"; shift 2 ;; --helper) helper=1; shift ;;
+      *) die "unknown argument: $1" ;;
     esac
   done
   [[ -z "$type" || "$type" =~ ^(feat|fix|refactor|chore|docs|test|perf|ci)$ ]] || die "--type must be one of feat fix refactor chore docs test perf ci"
@@ -223,7 +227,16 @@ cmd_launch() {
   [[ -n "$type" ]] || die "--type is required for a code ticket — one of feat fix refactor chore docs test perf ci"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == open ]] || die "ticket $nn is $status, not open"
-  [[ "$(jq -r '.owner // "ai"' <<<"$t")" != me ]] || die "ticket $nn is the developer's (**Owner:** me) — no agent runs it; once it's done: tk.sh resolve $BOARD_ID $nn --no-code \"<what was done>\""
+  # **Owner:** me (ADR 0009): the developer's ticket. It starts only as a helper
+  # session, and only with --helper — the flag is the developer's word, so the
+  # board session's waves, tk-hub's scheduler and Frontier (which never pass it)
+  # can't start one. --helper on an agent's ticket is refused the same way.
+  if [[ "$(jq -r '.owner // "ai"' <<<"$t")" == me ]]; then
+    (( helper )) || die "ticket $nn is the developer's (**Owner:** me) — no agent starts it on its own. The developer starts it with a helper session (tk.sh launch $BOARD_ID $nn --helper …, on their word only), or does it by hand and then: tk.sh resolve $BOARD_ID $nn --no-code \"<what was done>\""
+    [[ -z "$research" ]] || die "--research is for a wave of agents' tickets, not a helper session"
+  else
+    (( ! helper )) || die "--helper is only for a ticket that is the developer's (**Owner:** me) — ticket $nn is an agent's; launch it without --helper"
+  fi
   local foreign; foreign="$(foreign_repo "$t")"
   [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its worktree, branch and PR belong there. Move its file to that repo's .scratch/$BOARD_ID/issues/ and launch it from the board there (board.sh $BOARD_ID, run in that repo)"
   open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] + (.xblockers_open // []) | join(",")' <<<"$t")"
@@ -260,6 +273,7 @@ cmd_launch() {
 
   local args=() out rc
   [[ -n "$account" ]] && args+=(--account "$account")
+  (( helper )) && args+=(--helper)
   args+=(${doc_args[@]+"${doc_args[@]}"} --effort "$effort" --skills "$skills" "$label" "$branch" "$brief" "$model")
   out="$(mktemp)"
   set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
@@ -274,7 +288,7 @@ cmd_launch() {
       "$branch" "$base" "$(sed -n 's/^MODEL=//p' "$out")" "$(sed -n 's/^EFFORT=//p' "$out")" \
       "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent" \
       "$(sed -n 's/^SKILLS=\([^ ]*\).*/\1/p' "$out" | sed 's/^$/none/')")"
-    echo "RECORDED $nn2 in-progress on $branch"
+    echo "RECORDED $nn2 in-progress on $branch$( ((helper)) && echo " (yours, with a helper)")"
   fi
   rm -f "$out" "$brief"
   return $rc
@@ -716,13 +730,20 @@ cmd_show() {
 #   blocked       open, waiting on unresolved tickets
 #   working       its agent is scouting or implementing
 #   agent review  its agent is verifying, reviewing or fixing review findings
-#   needs you     at a dialog, no live agent, or its landing can't be told
+#   needs you     at a dialog, no live agent, its landing can't be told, or it
+#                 belongs on another repo's board
 #   human review  the agent finished; the developer reviews (or asks for a PR)
 #   pr            a PR is open — checks running/failed, conflict, changes requested, ready to merge
 #   done          resolved
 # The phase comes from the file each ticket's coordinator writes as it moves
 # through its brief ({{PHASE_FILE}}); Herdr alone can't tell implementing from
 # reviewing, since the agent is "working" either way.
+# A ticket that is the developer's (**Owner:** me, ADR 0009) moves through the same
+# columns: blocked, then backlog (yours: started only on the developer's word,
+# with a helper session), working while they drive it, review once they ask for
+# the checks, human when the helper's report is written, then pr and done. It
+# never sits in needs you for being theirs: a helper at a dialog or closed is the
+# developer's own session, so it stays in working.
 board_rows() {
   forge_cache_begin
   board_rows_
@@ -776,7 +797,7 @@ board_rows_() {
        elif ($t.foreign // "") != "" and $t.status == "open" then {col: "needs", note: "belongs on \($t.foreign | split(" ")[0])'"'"'s board"}
        elif $t.status == "open" then
          (if ($open | length) > 0 then {col: "blocked", note: "waiting on \($open | join(", "))"}
-          elif ($t.owner // "ai") == "me" then {col: "needs", note: "yours to do"}
+          elif ($t.owner // "ai") == "me" then {col: "backlog", note: "yours — start it with a helper"}
           else {col: "backlog", note: "ready to launch"} end)
        elif ($t.landed | startswith("yes")) then {col: "done", note: "landed — resolve it"}
        elif $t.pr != null then
@@ -790,6 +811,12 @@ board_rows_() {
              elif .review == "REVIEW_REQUIRED" then "awaiting review"
              else "ready to merge" end))})
        elif ($t.landed | startswith("unknown")) then {col: "needs", note: "landed? \($t.landed | ltrimstr("unknown:"))"}
+       elif ($t.owner // "ai") == "me" then
+         (if ($t.phase | IN("verifying", "reviewing", "fixing", "reporting")) then {col: "review", note: $t.phase}
+          elif $t.phase == "done" then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" else "yours — checked" end)}
+          elif $t.state == "gone" then {col: "working", note: "yours — no helper running"}
+          elif $t.state == "blocked" then {col: "working", note: "yours — helper at a dialog"}
+          else {col: "working", note: "yours + helper"} end)
        elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
        elif $t.state == "gone" then {col: "needs", note: "no live agent"}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" + (if $t.untracked > 0 then " · \($t.untracked) untracked" else "" end)
@@ -799,7 +826,9 @@ board_rows_() {
        else {col: "working", note: (if $t.phase != "-" then $t.phase else $t.state end)} end))
     # What to type into the board session to move the card on, where there is something.
     | map(. + {hint: (
-        if .col == "backlog" then "start \(.nn)"
+        if .col == "backlog" and (.owner // "ai") == "me" then "start \(.nn) — opens your helper"
+        elif .col == "working" and (.owner // "ai") == "me" and .state == "gone" then "resolve \(.nn) --no-code \"<what you did>\", or open a PR"
+        elif .col == "backlog" then "start \(.nn)"
         elif .col == "human" and $off and .pushed != "" then "merge it on the forge"
         elif .col == "human" and $off then "push \(.nn)"
         elif .col == "human" then "open a PR for \(.nn)"
@@ -808,7 +837,6 @@ board_rows_() {
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
-        elif .col == "needs" and .note == "yours to do" then "resolve \(.nn) --no-code \"<what you did>\""
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
 }
@@ -1664,8 +1692,12 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
+  start 06 (a ticket of yours)  a ticket that is yours (**Owner:** me) and ready: opens its worktree
+                                  and a helper session you drive (terminal or Remote Control).
+                                  Only when you name it — never in "start all" or a wave
   resolve 05 --no-code "<what was done>"
-                                a ticket that is yours (**Owner:** me) — no agent runs it
+                                a ticket that is yours, done by hand (or with a helper, nothing
+                                  to commit); with a change, ship it as any ticket (PR 05, merge 05)
   resolve 02 --no-code "<reason>"
                                 for a ticket that delivers nothing committable (gitignored
                                   files, say) — only on the developer's word. Refused if its

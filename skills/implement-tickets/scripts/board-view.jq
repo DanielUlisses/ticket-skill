@@ -98,8 +98,9 @@ def slug: (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | sub("^-+"; "") | 
   | if .branch != "" and (.branch | test("^[a-z]+-[0-9]+-.")) then (.branch | sub("^[a-z]+-[0-9]+-"; ""))
     else $fromtitle end;
 
-# A ticket's card, $cw wide: a rounded border (faint; in NEEDS YOU the accent), then
-#   NN · slug              the ticket and the branch's slug
+# A ticket's card, $cw wide: a rounded border (faint; in NEEDS YOU the accent; a
+# ticket that is the developer's, **Owner:** me, in magenta — tk-hub's plum), then
+#   NN · slug              the ticket and the branch's slug ("yours" for the developer's)
 #   Title                  bold, up to two lines
 #   note · R2              where it stands, in the column's accent, with the review round
 #   [tests] [3/4] [rev 2!] the coordinator's last checks — green pass, yellow partial, red failing
@@ -109,9 +110,11 @@ def slug: (.title | ascii_downcase | gsub("[^a-z0-9]+"; "-") | sub("^-+"; "") | 
 #   → hint                 what to type into the board session to move the card on
 def card($cw; $col):
   ($cw - 4) as $iw
-  | (if $col.c == "needs" then fg("red") else fg("faint") end) as $bk
+  | ((.owner // "ai") == "me") as $mine
+  | (if $col.c == "needs" then fg("red") elif $mine then fg("magenta") else fg("faint") end) as $bk
   | . as $t
-  | [ [seg($t.nn; bold($col.r)), seg(" · " + ($t | slug); fg("dim"))] ]
+  | [ [seg($t.nn; bold(if $mine then "magenta" else $col.r end)), seg(" · " + ($t | slug); fg("dim"))]
+      + (if $mine then [seg(" · yours"; fg("magenta"))] else [] end) ]
     + [ $t.title | wrap($iw; 2)[] | [seg(.; bold("fg"))] ]
     + (if $t.note != "" then
          [[seg($t.note; fg($col.r))] + (if ($t.round // "") != "" then [seg(" · " + ($t.round | ascii_upcase); fg("dim"))] else [] end)]

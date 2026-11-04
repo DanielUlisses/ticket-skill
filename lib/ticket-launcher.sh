@@ -21,6 +21,11 @@
 #                     template's {{DOC_GUIDANCE}}: for ead/tdd, a pointer to the
 #                     installed skill and its validator; for `other`, or a skill
 #                     that isn't installed, nothing — the generic doc brief.
+#   HELPER_TEMPLATE   the template a `--helper` launch renders instead — a
+#                     ticket that is the developer's (`**Owner:** me`), opened
+#                     with a helper session the developer drives. With `--doc`
+#                     too, its review is the doc reviewer's. ADR 0009.
+#   HELPER_PERMISSION_MODE  --permission-mode a helper session starts with
 #
 # The session coordinates on TICKET_COORD_MODEL/EFFORT; only the
 # ticket-implementer subagent gets the ticket's model and effort, since the plan
@@ -869,6 +874,7 @@ launcher_main() {
   # nobody can read back. --account had already established the shape.
   ACCOUNT_REQUESTED="${TICKET_ACCOUNT:-}"
   DOC=0   # only the --doc flag sets it; never inherited from the environment
+  HELPER=0   # only the --helper flag sets it, the same way
   DOC_TYPE=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
@@ -883,6 +889,7 @@ launcher_main() {
                    SKILLS_REQUESTED="$2"; shift 2 ;;
       --skills=*)  SKILLS_REQUESTED="${1#--skills=}"; shift ;;
       --doc)       DOC=1; shift ;;
+      --helper)    HELPER=1; shift ;;
       --doc-type)  [[ $# -ge 2 ]] || die "--doc-type needs a type — one of: $DOC_TYPES"
                    DOC_TYPE="$2"; shift 2 ;;
       --doc-type=*) DOC_TYPE="${1#--doc-type=}"; shift ;;
@@ -906,8 +913,15 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--skills <a,b>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--skills <a,b>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] [--helper] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   (( ! ${DOC:-0} )) || TEMPLATE="$DOC_TEMPLATE"
+  # A helper session: the developer's own ticket, and the developer drives it.
+  # One session on the ticket's model and effort, no coordinator and no
+  # implementer; it waits for the developer instead of starting on its own.
+  if (( HELPER )); then
+    [[ -n "${HELPER_TEMPLATE:-}" ]] || die "--helper: this launcher has no helper template"
+    TEMPLATE="$HELPER_TEMPLATE"
+  fi
   if [[ -n "$DOC_TYPE" ]]; then
     (( ${DOC:-0} )) || die "--doc-type is only for a --doc launch"
     [[ " $DOC_TYPES " == *" $DOC_TYPE "* ]] || die "unknown doc type '$DOC_TYPE' — one of: $DOC_TYPES"
@@ -1037,10 +1051,23 @@ launcher_main() {
   # agent definition costs no worktree. A ticket's session uses the ticket-side
   # roster; the merger, the retro and the PR creator belong to the board session
   # (scripts/board.sh). A document swaps the code reviewer for the doc reviewer.
+  # A helper session has no implementer: the developer and the session itself do
+  # the work, and the rest of the roster checks it when the developer asks.
+  local impl_agent=ticket-implementer
+  (( HELPER )) && impl_agent=""
   if (( ${DOC:-0} )); then
-    build_session_agents ticket-implementer ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+    build_session_agents ${impl_agent:+"$impl_agent"} ticket-doc-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
   else
-    build_session_agents ticket-implementer ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+    build_session_agents ${impl_agent:+"$impl_agent"} ticket-reviewer ticket-tester ticket-scout ticket-researcher ticket-criteria-checker
+  fi
+
+  # What the session itself runs on: the coordinator's setting for an agent, the
+  # ticket's own model and effort for a helper (it does the work with the developer).
+  if (( HELPER )); then
+    SESSION_MODEL="$IMPL_MODEL"; SESSION_EFFORT="$IMPL_EFFORT"
+    SESSION_PERMISSION_MODE="${HELPER_PERMISSION_MODE:-acceptEdits}"
+  else
+    SESSION_MODEL="$COORD_MODEL"; SESSION_EFFORT="$COORD_EFFORT"; SESSION_PERMISSION_MODE="$PERMISSION_MODE"
   fi
 
   summary() {
@@ -1048,13 +1075,14 @@ launcher_main() {
 WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
 BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
 KIND=$KIND_STATUS
+MODE=$( (( HELPER )) && echo "helper (the developer drives; session on $IMPL_MODEL @ $IMPL_EFFORT, $SESSION_PERMISSION_MODE)" || echo "agent" )
 WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
 MODEL=$IMPL_MODEL
 EFFORT=$IMPL_EFFORT
-COORDINATOR=$COORD_MODEL @ $COORD_EFFORT
+COORDINATOR=$( (( HELPER )) && echo "none (helper session)" || echo "$COORD_MODEL @ $COORD_EFFORT" )
 REVIEWER=$( (( ${DOC:-0} )) && echo "$DOCREVIEW_MODEL @ $DOCREVIEW_EFFORT (document)" || echo "$REVIEW_MODEL @ $REVIEW_EFFORT ($REVIEW_EFFORT_WHY)" )
 SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 SKILLS=$(skills_summary)
@@ -1219,13 +1247,17 @@ SUMMARY
   local -a agents_arg=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   sleep 1
-  log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_MODE) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
+  if (( HELPER )); then
+    log "starting '$AGENT' ($AGENT_KIND, helper on $SESSION_MODEL, effort $SESSION_EFFORT, $SESSION_PERMISSION_MODE) in pane $AGENT_PANE — the developer drives"
+  else
+    log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_MODE) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
+  fi
   log "subagents: $SESSION_AGENTS_STATUS"
   set +e
   # --agents goes before --disallowedTools: that one is variadic and would
   # swallow anything after it.
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
-    --model "$COORD_MODEL" --effort "$COORD_EFFORT" --permission-mode "$PERMISSION_MODE" \
+    --model "$SESSION_MODEL" --effort "$SESSION_EFFORT" --permission-mode "$SESSION_PERMISSION_MODE" \
     ${agents_arg[@]+"${agents_arg[@]}"} \
     ${RC_ARGS[@]+"${RC_ARGS[@]}"} \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
