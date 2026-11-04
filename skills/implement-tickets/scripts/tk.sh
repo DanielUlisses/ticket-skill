@@ -1545,7 +1545,7 @@ cmd_retro_save() {
   [[ -t 0 ]] && die "retro-save: stdin is a terminal — pipe ticket-retro's whole output in (tk.sh retro-save <board> < file); nothing written"
   text="$(cat)"   # before board_init: its jq calls would otherwise eat stdin
   [[ -n "${text//[[:space:]]/}" ]] || die "retro-save: empty input — pipe ticket-retro's whole output in on stdin; nothing written"
-  grep -qE '^### [ME][0-9]+' <<<"$text" || echo "WARN: no '### M<n>' / '### E<n>' heading in the input — saving anyway; the proposals can't be answered by id" >&2
+  grep -qE '^### [MES][0-9]+' <<<"$text" || echo "WARN: no '### M<n>' / '### E<n>' / '### S<n>' heading in the input — saving anyway; the proposals can't be answered by id" >&2
   board_init "${1:-}"
   [[ -d "$BOARD_PATH" ]] || die "board path is not a directory: $BOARD_PATH"
   dir="$BOARD_PATH/retro"
@@ -1588,14 +1588,14 @@ cmd_retro_apply() {
     /^[ \t]*(```|~~~)/ { fence = !fence; next }
     fence { next }
     /^##/ { id = "" }
-    /^### [ME][0-9]+ / { id = $2; print "ID " id; next }
+    /^### [MES][0-9]+ / { id = $2; print "ID " id; next }
     id && /^\*\*Mark:\*\*/ {
       cnt[id]++; m = tolower($0); sub(/^\*\*mark:\*\*[ \t]*/, "", m); sub(/[ \t]+$/, "", m)
       if (m !~ /^(approved?|reject(ed)?|defer(red)?)$/) print "BAD " id " (\"" m "\")"
     }
     END { for (i in cnt) if (cnt[i] > 1) print "MULTI " i " " cnt[i] }' "$props")
   known+=" "
-  [[ -n "${known// /}" ]] || die "retro-apply: no '### M<n>' / '### E<n>' block in $props — nothing to mark; nothing written"
+  [[ -n "${known// /}" ]] || die "retro-apply: no '### M<n>' / '### E<n>' / '### S<n>' block in $props — nothing to mark; nothing written"
   for a in "$@"; do
     while [[ "$a" == *[,.\;] ]]; do a="${a%?}"; done   # "approve E1 M2, reject E2."
     [[ -n "$a" ]] || continue
@@ -1605,7 +1605,7 @@ cmd_retro_apply() {
       defer|deferred)   mark=deferred; continue ;;
     esac
     id="${a^^}"
-    [[ "$id" =~ ^[ME][0-9]+$ ]] || die "retro-apply: unknown mark word or id '$a' — use approve|reject|defer followed by ids (M1, E2…); nothing written"
+    [[ "$id" =~ ^[MES][0-9]+$ ]] || die "retro-apply: unknown mark word or id '$a' — use approve|reject|defer followed by ids (M1, E2, S1…); nothing written"
     [[ -n "$mark" ]] || die "retro-apply: '$a' comes before any mark word — say approve, reject or defer first; nothing written"
     [[ "$known" == *" $id "* ]] || die "retro-apply: unknown id '$id' — $props has:${known% }; nothing written"
     [[ -z "${seen[$id]:-}" || "${seen[$id]}" == "$mark" ]] || die "retro-apply: $id is marked both ${seen[$id]} and $mark; nothing written"
@@ -1626,7 +1626,7 @@ cmd_retro_apply() {
   done
   [[ -z "$bad" ]] || die "retro-apply: unknown mark word in $props: ${bad%; } — use approve(d), reject(ed) or defer(red); nothing written"
   if [[ -n "$multi" ]]; then
-    multi="$(sed -E 's/([ME][0-9]+) ([0-9]+)/\1 has \2 **Mark:** lines/g' <<<"${multi%; }")"
+    multi="$(sed -E 's/([MES][0-9]+) ([0-9]+)/\1 has \2 **Mark:** lines/g' <<<"${multi%; }")"
     die "retro-apply: $multi in $props — keep one; nothing written"
   fi
 
@@ -1637,7 +1637,7 @@ cmd_retro_apply() {
       /^[ \t]*(```|~~~)/ { fence = !fence; print; next }
       fence { print; next }
       /^##/ { id = "" }
-      /^### [ME][0-9]+ / { print; id = $2; if (id in want) print "**Mark:** " want[id]; next }
+      /^### [MES][0-9]+ / { print; id = $2; if (id in want) print "**Mark:** " want[id]; next }
       id in want && /^\*\*Mark:\*\*/ { next }
       { print }' "$props")"
     write_atomic "$props" <<<"$marked"
@@ -1662,8 +1662,8 @@ cmd_retro_apply() {
     /^[ \t]*(```|~~~)/ { fence = !fence; if (id && cur) f[cur] = f[cur] "\n" $0; next }
     fence { if (id && cur) f[cur] = f[cur] "\n" $0; next }
     /^##/ { flush() }
-    /^### [ME][0-9]+ / {
-      id = $2; title = $0; sub(/^### [ME][0-9]+[ \t]*(—|--?)?[ \t]*/, "", title)
+    /^### [MES][0-9]+ / {
+      id = $2; title = $0; sub(/^### [MES][0-9]+[ \t]*(—|--?)?[ \t]*/, "", title)
       m = ""; cur = ""; split("", f); next
     }
     !id { next }
@@ -1688,7 +1688,7 @@ cmd_retro_apply() {
       c = 0
       for (i = 1; i <= n; i++) if (mk[i] == "approved") {
         c++
-        head = (ids[i] ~ /^M/) ? "add to .scratch/project-memory.md: " ttl[i] : ttl[i]
+        head = (ids[i] ~ /^M/) ? "add to .scratch/project-memory.md: " ttl[i] : (ids[i] ~ /^S/) ? "write a skill (skills-catalog): " ttl[i] : ttl[i]
         print "- [ ] " ids[i] " " head
         if (chg[i] != "") print "  - Change: " indent(chg[i])
         if (src[i] != "") print "  - Source: " indent(src[i])
@@ -1830,7 +1830,7 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   keep the deliverable OUTSIDE the worktree (the root checkout,
                                   or a path the ticket names); a WARN lists any ignored files left
   why 02                        every step of "has 02 landed?" — when a merge you did isn't seen
-  retro                         mattpocock retro over the board: id'd memory (M1..) and environment (E1..)
+  retro                         mattpocock retro over the board: id'd memory (M1..), environment (E1..) and skill (S1..)
                                   proposals, saved to <board>/retro/proposals.md (tk.sh retro-save)
   approve E1 M2, reject E2, defer M1
                                 mark the saved proposals (tk.sh retro-apply) and regenerate
