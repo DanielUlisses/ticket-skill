@@ -48,6 +48,7 @@ Report from that output only, never from memory. Act on each `ACTION` line:
 - `review NN` → tell the developer the ticket is ready for review, once.
 - `pushed NN` → tell the developer, once, that its branch is pushed and waits on their merge on the forge; the digest resolves it once it lands.
 - `dialog NN`, `orphan NN`, `check NN` → tell the developer, as printed. Never answer an agent's dialog.
+- The developer says to resume NN (an `orphan` ticket: its agent died) → `tk.sh resume {{BOARD}} NN` and show its last line. Never on your own.
 
 A turn where nothing changed is one line saying so.
 

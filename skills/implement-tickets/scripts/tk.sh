@@ -11,6 +11,10 @@
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
+#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]
+#                                        a new agent in the worktree a dead one left (OOM, restart), as it
+#                                        stands: claude --resume on its newest transcript (--fresh: the
+#                                        full brief), a note on what it finds; refused while the old agent lives
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each (local mode: the local gates — four,
 #                                        five with a remote: base, the local base not behind <remote>/<base>)
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (local mode: the local gates)
@@ -155,7 +159,7 @@ cmd_digest() {
                    (if .state == "gone" and ($was[.nn] != .line) then "ACTION yours \(.nn) — its helper session is closed; the developer ships it (PR, push or merge) or resolves it --no-code \"<what was done>\""
                     else empty end)
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
-                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer"
+                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))"
                  else empty end ]
@@ -291,6 +295,123 @@ cmd_launch() {
     echo "RECORDED $nn2 in-progress on $branch$( ((helper)) && echo " (yours, with a helper)")"
   fi
   rm -f "$out" "$brief"
+  return $rc
+}
+
+# ---- resume: a new agent where a dead one stopped ----------------------------
+# A ticket in progress whose agent is gone (an OOM, a container restart) gets a
+# new one in the same worktree, as it stands: the uncommitted work stays, nothing
+# is reset or pulled. The conversation resumes (`claude --resume`) from the
+# newest transcript the worktree left, with a short note on what happened; with
+# no transcript the launcher sends the full brief, note on top. The account is
+# whatever the worktree's link says, and must be the one the ticket ran on.
+# Refused while the old agent is still alive, at a dialog, or Herdr can't say.
+# A stale .git index.lock (no git process in the worktree, older than 2 min) is
+# removed first: a kill mid-`git add` leaves one, and every git call then fails.
+cmd_resume() {
+  board_init "${1:-}"; shift
+  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]}"; shift
+  local model="" effort="" fresh=0 helper=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model) model="$2"; shift 2 ;; --effort) effort="$2"; shift 2 ;;
+      --fresh) fresh=1; shift ;; --helper) helper=1; shift ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+  local t status branch wt agent states st yours
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  status="$(jq -r .status <<<"$t")"
+  [[ "$status" == in-progress ]] || die "ticket $nn is $status, not in progress — nothing to resume (an open ticket launches)"
+  yours=0; [[ "$(jq -r '.owner // "ai"' <<<"$t")" == me ]] && yours=1
+  if (( yours && ! helper )); then
+    die "ticket $nn is the developer's (**Owner:** me) — its helper session restarts only on their word: tk.sh resume $BOARD_ID $nn --helper"
+  elif (( helper && ! yours )); then
+    die "--helper is only for a ticket that is the developer's (**Owner:** me)"
+  fi
+  branch="$(jq -r .branch <<<"$t")"; [[ -n "$branch" ]] || die "ticket $nn has no **Branch:** recorded"
+  wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  [[ -d "$wt" ]] || die "ticket $nn's worktree $wt is gone — nothing to resume; resolve the ticket, or reopen it and launch again"
+  [[ "$wt" == "$(dirname "$ROOT")/${REPO_NAME}--${branch}" ]] || die "ticket $nn's worktree $wt isn't where the launcher puts it — resume it by hand"
+  agent="$(jq -r .agent <<<"$t")"
+  if [[ -n "$agent" ]]; then
+    need herdr
+    states="$(agent_states)" || die "Herdr didn't answer — can't tell whether $agent is still running; not resuming"
+    st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$states")"
+    [[ -z "$st" ]] || die "ticket $nn's agent $agent is still there ($st) — nothing to resume"
+  fi
+  fetch_board_refs
+  case "$(landed "$branch" "$(jq -r .base <<<"$t")")" in
+    yes*) die "ticket $nn has landed — resolve it (tk.sh resolve $BOARD_ID $nn), don't resume it" ;;
+  esac
+
+  # A kill mid-git leaves index.lock behind; every later git call in the worktree
+  # then fails. Removed only when no git process runs there and it's old.
+  local gitdir lock p held=0
+  gitdir="$(git -C "$wt" rev-parse --absolute-git-dir)"; lock="$gitdir/index.lock"
+  if [[ -e "$lock" ]]; then
+    for p in $(pgrep -x git 2>/dev/null || true); do
+      [[ "$(readlink "/proc/$p/cwd" 2>/dev/null)" == "$wt"* ]] && held=1
+    done
+    if (( ! held )) && [[ -n "$(find "$lock" -mmin +2 2>/dev/null)" ]]; then
+      if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then echo "WOULD REMOVE stale $lock"
+      else rm -f "$lock"; echo "REMOVED stale $lock"; fi
+    else
+      die "$lock is there and may be live (a git process in $wt, or under 2 min old) — try again in a minute"
+    fi
+  fi
+
+  # What the new agent is told about the worktree it finds.
+  local note changes last transcript session=""
+  note="$(mktemp -t ticket-resume.XXXXXX.md)"
+  changes="$(git -C "$wt" status --short 2>/dev/null | head -40)"
+  last="$(git -C "$wt" log -1 --format='%h %s (%cr)' 2>/dev/null)"
+  {
+    echo "# Resuming ticket $nn"
+    echo
+    echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
+    echo
+    echo "- Worktree: $wt (branch $branch)"
+    echo "- Last commit: ${last:-none}"
+    echo "- Uncommitted changes:"
+    echo
+    echo '```'
+    echo "${changes:-(none)}"
+    echo '```'
+    echo
+    echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+  } >"$note"
+  if (( ! fresh )); then
+    transcript="$(ticket_transcript "$wt")"
+    [[ -n "$transcript" ]] && session="$(basename "$transcript" .jsonl)"
+  fi
+
+  local kind doc_args=() label account args=() out rc brief
+  kind="$(jq -r '.kind // ""' <<<"$t")"
+  [[ "$kind" == doc ]] && doc_args=(--doc --doc-type "$(jq -r '.doc_type // "" | if . == "" then "other" else . end' <<<"$t")")
+  model="${model:-$(jq -r .model <<<"$t")}"; effort="${effort:-$(jq -r .effort <<<"$t")}"
+  [[ -n "$model" && -n "$effort" ]] || die "ticket $nn has no **Model:**/**Effort:** recorded — pass --model and --effort"
+  label="$(slugify "$(jq -r .title <<<"$t")" | cut -d- -f1-3 | tr '-' ' ')"; label="${label:0:20}"; label="${label% }"
+  [[ -n "$label" ]] || label="ticket $nn"
+  account="$(jq -r '.account // ""' <<<"$t")"
+  brief="$(mktemp -t ticket.XXXXXX.md)"; cp "$(jq -r .file <<<"$t")" "$brief"
+  (( helper )) && args+=(--helper)
+  [[ -n "$account" && "$account" != unknown ]] && args+=(--expect-account "$account")
+  args+=(--resume --resume-note "$note" --session "$session" ${doc_args[@]+"${doc_args[@]}"} --effort "$effort" --skills "" "$label" "$branch" "$brief" "$model")
+  out="$(mktemp)"
+  set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
+  cat "$out"
+  if [[ $rc -eq 0 && "${TICKET_DRY_RUN:-0}" == 1 ]]; then
+    echo "DRY RUN $nn — nothing resumed, nothing recorded"
+  elif [[ $rc -eq 0 || $rc -eq 3 ]]; then
+    local new_agent skills
+    new_agent="$(sed -n 's/^AGENT=\([^ ]*\).*/\1/p' "$out")"
+    skills="$(jq -r '.skills | if length == 0 then "none" else join(",") end' <<<"$t")"
+    record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
+      "$branch" "$(jq -r .base <<<"$t")" "$model" "$effort" "${account:-unknown}" "$wt" "$new_agent" "$skills")"
+    echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))"
+  fi
+  rm -f "$out" "$brief" "$note"
   return $rc
 }
 
@@ -1668,6 +1789,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   start 07 / start 07 and 09    launch frontier tickets (blocked ones are refused); a ticket whose
                                   body says **Kind:** doc launches as a document (branch docs)
   status / what changed?        re-read the board, agents and git; report what moved
+  resume 07                     a new agent where 07's dead one stopped (an OOM, a restart): same
+                                  worktree, nothing reset, its conversation resumed (tk.sh resume)
   open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
                                   DevOps — the Cursor CLI writes message and body (no Claude
                                   tokens, no attribution); TICKET_PR_RUNNER=claude: the Sonnet agent
@@ -1797,7 +1920,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;
@@ -1807,5 +1930,5 @@ case "$verb" in
   retro-apply) cmd_retro_apply "$@" ;;
   policy) cmd_policy "$@" ;;
   policy-set) cmd_policy_set "$@" ;;
-  *) sed -n '2,36p' "$0"; exit 1 ;;
+  *) sed -n '2,40p' "$0"; exit 1 ;;
 esac
