@@ -17,12 +17,13 @@
 # The one output shape is BOARD_JSON: an array of tickets, ordered by number,
 #   {nn, title, ref, file, status, branch, base, model, effort, account,
 #    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type,
-#    owner, provides:[item], consumes:[item], dropped}
+#    owner, provides:[item], consumes:[item], dropped, skills:[name]}
 # (kind and doc_type are the **Kind:** / **Doc type:** lines, lowercased; empty
 # when the ticket has none — a ticket with no Kind is `code`; owner is `me` or
 # `ai`, from **Owner:**, `ai` when there is none; provides and consumes are the
 # **Provides:** / **Consumes:** lines as contract items, see CONTRACT_KINDS;
-# dropped is the **Dropped:** line a rescope writes beside **Status:** dropped)
+# dropped is the **Dropped:** line a rescope writes beside **Status:** dropped;
+# skills is the **Skills:** run-state line: the catalog skills its launch linked)
 # plus BOARD_ID (what to pass back to every script), BOARD_SLUG (a path-safe
 # name for state files) and BOARD_PATH.
 
@@ -116,11 +117,12 @@ parse_ticket_file() {
     /^\*\*Provides:\*\*/          { provides = val($0) }
     /^\*\*Consumes:\*\*/          { consumes = val($0) }
     /^\*\*Dropped:\*\*/           { dropped = val($0) }
+    /^\*\*Skills:\*\*/            { skills = val($0) }
     /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped, skills
     }' "$f" \
   | jq -R --arg file "$f" --arg kinds "$CONTRACT_KINDS" "$CONTRACT_JQ"'split("\u001f") as $v | ($kinds | split(" ")) as $k | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
@@ -130,7 +132,8 @@ parse_ticket_file() {
       repo: $v[14], repo_path: $v[15], kind: $v[16], doc_type: $v[17],
       owner: (if $v[18] == "me" then "me" else "ai" end),
       provides: ($v[19] | contract_items($k)), consumes: ($v[20] | contract_items($k)),
-      provides_raw: $v[19], consumes_raw: $v[20], dropped: $v[21] }'
+      provides_raw: $v[19], consumes_raw: $v[20], dropped: $v[21],
+      skills: ($v[22] | if . == "" or . == "none" then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end) }'
 }
 
 load_file_board() {
@@ -820,10 +823,10 @@ load_models_env() {
 POLICY_CHECK='
   def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
               autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object",
-              base_branch: "branch"};
+              base_branch: "branch", skills: "names"};
   def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
              count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object",
-             branch: "a branch name"};
+             branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)"};
   def ok($t; $v):
     if   $t == "bool"     then ($v | type) == "boolean"
     elif $t == "forge"    then $v | IN("github", "azure", "none")
@@ -831,6 +834,7 @@ POLICY_CHECK='
     elif $t == "count"    then ($v | type) == "number" and $v == ($v | floor) and $v >= 1 and $v <= 1000
     elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
     elif $t == "branch"   then ($v | type) == "string" and $v != ""
+    elif $t == "names"    then ($v | type) == "array" and all($v[]; type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$"))
     else ($v | type) == "object" end;
   to_entries[] | select($only == "" or .key == $only)
   | kinds[.key] as $t | select($t != null) | select(ok($t; .value) | not)
@@ -912,7 +916,7 @@ policy_resolve() {
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
      autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
-     synthesis: {backends: ["agy"], timeout: 300}} * .
+     synthesis: {backends: ["agy"], timeout: 300}, skills: []} * .
     | if $env != "" then .forge = $env else . end
     | if $remote == 0 then .forge = "none" else . end
     | '"$POLICY_NORM" <<<"$POLICY_LAYERS")"

@@ -186,7 +186,7 @@ record_run_state() {
   # Old run-state lines go wherever they were; the new block goes under the
   # heading. Blank lines are squeezed only above the body, never inside it.
   awk -v block="$block" '
-    /^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent):\*\*/ { next }
+    /^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent|Skills):\*\*/ { next }
     /^\*\*What to build:\*\*/ { body = 1 }
     !body && /^[[:space:]]*$/ && blank { next }
     { blank = /^[[:space:]]*$/; print }
@@ -250,9 +250,17 @@ cmd_launch() {
       cat "$research"; } >>"$brief"
   fi
 
+  # The catalog skills this board enables (policy `skills`, docs/agents/skills.md),
+  # resolved here with the board layer, so the launcher links exactly these.
+  # Layers only (no forge detection), and not type-checked: the launcher checks
+  # each name, so a bad unrelated key in the box file can't stop a launch.
+  local skills
+  skills="$(policy_layers - && jq -r '.skills // [] | if type == "array" then map(tostring) | join(",") else "" end' <<<"$POLICY_LAYERS")" \
+    || die "couldn't read the board's policy for its skills — tk.sh policy $BOARD_ID says why"
+
   local args=() out rc
   [[ -n "$account" ]] && args+=(--account "$account")
-  args+=(${doc_args[@]+"${doc_args[@]}"} --effort "$effort" "$label" "$branch" "$brief" "$model")
+  args+=(${doc_args[@]+"${doc_args[@]}"} --effort "$effort" --skills "$skills" "$label" "$branch" "$brief" "$model")
   out="$(mktemp)"
   set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
   cat "$out"
@@ -262,9 +270,10 @@ cmd_launch() {
     local wt agent base
     wt="$(sed -n 's/^WORKTREE=//p' "$out")"; agent="$(sed -n 's/^AGENT=\([^ ]*\).*/\1/p' "$out")"
     base="$(git -C "$wt" rev-parse HEAD 2>/dev/null || echo "?")"
-    record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s' \
+    record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
       "$branch" "$base" "$(sed -n 's/^MODEL=//p' "$out")" "$(sed -n 's/^EFFORT=//p' "$out")" \
-      "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent")"
+      "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent" \
+      "$(sed -n 's/^SKILLS=\([^ ]*\).*/\1/p' "$out" | sed 's/^$/none/')")"
     echo "RECORDED $nn2 in-progress on $branch"
   fi
   rm -f "$out" "$brief"
@@ -896,7 +905,7 @@ ticket_transcript() {
 
 # A ticket's body from **What to build:** on, run-state lines left out, capped.
 ticket_body() {
-  awk '/^\*\*What to build:\*\*/ { on = 1 } on && !/^\*\*(Status|Branch|Base|Model|Effort|Account|Agent|Worktree):\*\*/' "$1" \
+  awk '/^\*\*What to build:\*\*/ { on = 1 } on && !/^\*\*(Status|Branch|Base|Model|Effort|Account|Agent|Worktree|Skills):\*\*/' "$1" \
     | head -c "$CONTRACT_BODY_MAX"
 }
 
@@ -1008,7 +1017,7 @@ cmd_validate() {
 # ticket files there and runs rescope-propose, which checks them; the developer
 # applies it (tk-hub, or rescope-apply) or discards it. Nothing on the board
 # changes before rescope-apply. docs/agents/contracts.md has the file shapes.
-RESCOPE_RUN_LINES='Status|Branch|Base|Model|Effort|Account|Agent|Worktree'
+RESCOPE_RUN_LINES='Status|Branch|Base|Model|Effort|Account|Agent|Worktree|Skills'
 
 rescope_dir() { echo "$BOARD_PATH/rescope/$1"; }
 
@@ -1675,7 +1684,9 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   reported as pending; .scratch/project-memory.md is never written
   policy / set auto_merge true  show this board's policy (tk.sh policy), or change it for this
                                   board only (tk.sh policy-set): forge, require_human_before_pr,
-                                  auto_merge, night_shift, autonomy, max_parallel, usage_gate_pct
+                                  auto_merge, night_shift, autonomy, max_parallel, usage_gate_pct,
+                                  skills (set skills ["terraform","helm"]: catalog skills linked
+                                  into each new ticket's worktree)
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
 
