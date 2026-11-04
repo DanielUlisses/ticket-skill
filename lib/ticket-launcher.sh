@@ -27,6 +27,14 @@
 #                     too, its review is the doc reviewer's. ADR 0009.
 #   HELPER_PERMISSION_MODE  --permission-mode a helper session starts with
 #
+# `--resume` (tk.sh resume) starts a new agent on a ticket whose agent died —
+# an OOM, a container restart — in the worktree it left, as it stands: no pull,
+# no new branch, nothing reset. `--session <id>` resumes that Claude Code
+# conversation (`claude --resume`) and sends only `--resume-note`; without one,
+# or when its transcript isn't under the account the worktree resolves to, the
+# agent gets the full brief with the note on top. `--expect-account` refuses to
+# start under any account other than the one the ticket ran on.
+#
 # The session coordinates on TICKET_COORD_MODEL/EFFORT; only the
 # ticket-implementer subagent gets the ticket's model and effort, since the plan
 # is already settled. See docs/adr/0002-model-tiers-and-agent-roster.md.
@@ -827,6 +835,57 @@ build_session_agents() {
 }
 
 # ---- the launch ---------------------------------------------------------------
+# ---- --resume: a new agent in the worktree a dead one left ---------------------
+# Instead of section 1-2 of launcher_main: the worktree, its branch, its account
+# link and its catalog skills are all there already, so only a workspace, its
+# tabs and the account check are made. The workspace is new: after a container
+# restart the old one is gone, and after an OOM it holds a dead pane.
+resume_workspace() {
+  # The link already exists (or never did): resolve it, write nothing.
+  link_ticket_account
+  if [[ -n "$RESUME_EXPECT_ACCOUNT" && "$RESUME_EXPECT_ACCOUNT" != unknown && "$RESUME_EXPECT_ACCOUNT" != "$ACCOUNT_NAME" ]]; then
+    die "the ticket ran on the '$RESUME_EXPECT_ACCOUNT' account, but $WT now resolves to '$ACCOUNT_NAME' — check 'claude-acc links'; not resuming on another subscription"
+  fi
+
+  # The conversation to resume, if Claude Code can: its transcript must be under
+  # the config root this worktree resolves to (the pane's), and its last line
+  # whole — a kill mid-write can leave half a JSON line, and a resume that
+  # fails to load starts nothing. Otherwise the full brief, note on top.
+  RESUME_WHY=""
+  if [[ -n "$RESUME_SESSION" ]]; then
+    local transcript
+    transcript="${ACCOUNT_CONFIG_DIR:-$HOME/.claude}/projects/${WT//[^A-Za-z0-9]/-}/$RESUME_SESSION.jsonl"
+    if [[ ! -s "$transcript" ]]; then
+      RESUME_WHY="no transcript $RESUME_SESSION under ${ACCOUNT_CONFIG_DIR:-~/.claude}"
+    elif ! tail -n 1 "$transcript" | jq -e . >/dev/null 2>&1; then
+      RESUME_WHY="transcript $RESUME_SESSION ends in a cut-off line"
+    fi
+    if [[ -n "$RESUME_WHY" ]]; then
+      log "not resuming the conversation: $RESUME_WHY — sending the full brief with the resume note"
+      RESUME_SESSION=""
+    else
+      cp "$RESUME_NOTE" "$PROMPT_FILE"
+      log "resuming conversation $RESUME_SESSION"
+    fi
+  fi
+
+  log "creating a workspace for the existing worktree $WT"
+  local -a create=(workspace create --cwd "$WT" --label "$LABEL")
+  has_flag --no-focus workspace create && create+=(--no-focus)
+  local json
+  json="$(herdr_json "herdr workspace create" "${create[@]}")"
+  WORKSPACE_ID="$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' <<<"$json")"
+  ROOT_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$json")"
+  ROOT_PANE="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$json")"
+  [[ -n "$WORKSPACE_ID" ]] || die "couldn't read the workspace from the response: $json"
+  [[ -n "$ROOT_PANE" ]] || die "couldn't read the workspace's root pane from the response: $json"
+  AGENT_TAB="${ROOT_TAB:-?}"; AGENT_PANE="$ROOT_PANE"
+  [[ -n "$ROOT_TAB" ]] && herdr_json "herdr tab rename" tab rename "$ROOT_TAB" agent >/dev/null
+  REVIEW_TAB="-"; REVIEW_SOURCE="none (resumed — run 'herdr-reviewr' in the shell tab)"
+  log "creating the 'shell' tab"
+  create_tab shell; SHELL_TAB="$CREATED_TAB"
+}
+
 launcher_main() {
   # ---- subcommand: defaults -----------------------------------------------------
   # Ahead of everything below, and deliberately: it reads two values and starts
@@ -876,6 +935,7 @@ launcher_main() {
   DOC=0   # only the --doc flag sets it; never inherited from the environment
   HELPER=0   # only the --helper flag sets it, the same way
   DOC_TYPE=""
+  RESUME=0 RESUME_SESSION="" RESUME_NOTE="" RESUME_EXPECT_ACCOUNT=""
   local -a ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -890,6 +950,13 @@ launcher_main() {
       --skills=*)  SKILLS_REQUESTED="${1#--skills=}"; shift ;;
       --doc)       DOC=1; shift ;;
       --helper)    HELPER=1; shift ;;
+      --resume)    RESUME=1; shift ;;
+      --session)   [[ $# -ge 2 ]] || die "--session needs a Claude Code session id (empty for none)"
+                   RESUME_SESSION="$2"; shift 2 ;;
+      --resume-note) [[ $# -ge 2 ]] || die "--resume-note needs a file"
+                   RESUME_NOTE="$2"; shift 2 ;;
+      --expect-account) [[ $# -ge 2 ]] || die "--expect-account needs an account name"
+                   RESUME_EXPECT_ACCOUNT="$2"; shift 2 ;;
       --doc-type)  [[ $# -ge 2 ]] || die "--doc-type needs a type — one of: $DOC_TYPES"
                    DOC_TYPE="$2"; shift 2 ;;
       --doc-type=*) DOC_TYPE="${1#--doc-type=}"; shift ;;
@@ -913,7 +980,7 @@ launcher_main() {
   fi
 
   # ---- arguments ---------------------------------------------------------------
-  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--skills <a,b>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] [--helper] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
+  [[ $# -eq 3 || $# -eq 4 ]] || die "usage: launch.sh [--account <name>] [--effort <level>] [--skills <a,b>] [--doc [--doc-type <$(tr ' ' '|' <<<"$DOC_TYPES")>]] [--helper] [--resume --resume-note <file> [--session <id>] [--expect-account <a>]] <tab-label> <branch> <ticket-file> [model]  |  launch.sh defaults"
   (( ! ${DOC:-0} )) || TEMPLATE="$DOC_TEMPLATE"
   # A helper session: the developer's own ticket, and the developer drives it.
   # One session on the ticket's model and effort, no coordinator and no
@@ -925,6 +992,13 @@ launcher_main() {
   if [[ -n "$DOC_TYPE" ]]; then
     (( ${DOC:-0} )) || die "--doc-type is only for a --doc launch"
     [[ " $DOC_TYPES " == *" $DOC_TYPE "* ]] || die "unknown doc type '$DOC_TYPE' — one of: $DOC_TYPES"
+  fi
+  if (( RESUME )); then
+    [[ -s "$RESUME_NOTE" ]] || die "--resume needs --resume-note <file>: what the new agent is told about the worktree it finds"
+    [[ -z "$RESUME_SESSION" || "$RESUME_SESSION" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || die "invalid session id '$RESUME_SESSION'"
+    [[ -z "$ACCOUNT_REQUESTED" ]] || die "--resume keeps the worktree's account link as it is — use --expect-account, not --account"
+  else
+    [[ -z "$RESUME_SESSION$RESUME_NOTE$RESUME_EXPECT_ACCOUNT" ]] || die "--session, --resume-note and --expect-account are only for --resume"
   fi
   LABEL="$1"; BRANCH="$2"; TICKET_FILE="$3"
   [[ -n "${4:-}" ]] && IMPL_MODEL="$4"
@@ -953,46 +1027,60 @@ launcher_main() {
   resolve_repo_root
   WT="$(dirname "$ROOT")/${REPO_NAME}--${BRANCH}"
 
-  git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && die "branch '$BRANCH' already exists"
-  [[ -e "$WT" ]] && die "worktree path already exists: $WT"
-
-  # ---- update the base branch before creating the worktree -------------------------
-  # `herdr worktree create --base` branches from the root's ref, so the root
-  # needs to be on the base branch and up to date with the remote. A repo with
-  # no remote at all — a presales repo whose output is a PDF, say — has nothing
-  # to update from: it branches from the local base as it stands.
-  HAS_REMOTE=0
-  git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
-  resolve_base_branch
-
-  CURRENT="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
-  [[ "$CURRENT" == "$BASE_BRANCH" ]] \
-    || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
-
-  if (( HAS_REMOTE && DRY_RUN )); then
-    log "dry run — not pulling '$BASE_BRANCH'; branching point is the local '$BASE_BRANCH' as it stands"
-    BASE_SOURCE="dry run, not pulled"
-  elif (( HAS_REMOTE )); then
-    log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
-    run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
-      || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
-    BASE_SOURCE="updated via pull"
+  if (( RESUME )); then
+    # The worktree as the dead agent left it: never pulled, rebased or reset here.
+    git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" || die "branch '$BRANCH' doesn't exist — nothing to resume; launch the ticket instead"
+    [[ -d "$WT" ]] || die "worktree $WT is gone — nothing to resume"
+    WT_BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    [[ "$WT_BRANCH" == "$BRANCH" ]] || die "worktree at $WT is on '${WT_BRANCH:-?}', not '$BRANCH'"
+    HAS_REMOTE=0
+    git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
+    resolve_base_branch
+    BASE_COMMIT="$(git -C "$WT" merge-base HEAD "$BASE_BRANCH" 2>/dev/null || git -C "$WT" rev-parse HEAD)"
+    BASE_SHORT="$(git -C "$WT" rev-parse --short "$BASE_COMMIT")"
+    BASE_SOURCE="resumed: the worktree as it was left"
   else
-    log "no '$REMOTE' remote in $ROOT — branching from the local '$BASE_BRANCH' as it stands"
-    BASE_SOURCE="local, no remote"
-  fi
+    git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && die "branch '$BRANCH' already exists"
+    [[ -e "$WT" ]] && die "worktree path already exists: $WT"
 
-  BASE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-  REMOTE_COMMIT=""
-  (( HAS_REMOTE && ! DRY_RUN )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
-  if [[ -n "$REMOTE_COMMIT" && "$BASE_COMMIT" != "$REMOTE_COMMIT" ]]; then
-    if git -C "$ROOT" merge-base --is-ancestor "$REMOTE_COMMIT" "$BASE_COMMIT"; then
-      log "warning: local '$BASE_BRANCH' has commits not yet pushed to $REMOTE"
+    # ---- update the base branch before creating the worktree -------------------------
+    # `herdr worktree create --base` branches from the root's ref, so the root
+    # needs to be on the base branch and up to date with the remote. A repo with
+    # no remote at all — a presales repo whose output is a PDF, say — has nothing
+    # to update from: it branches from the local base as it stands.
+    HAS_REMOTE=0
+    git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
+    resolve_base_branch
+
+    CURRENT="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+    [[ "$CURRENT" == "$BASE_BRANCH" ]] \
+      || die "root $ROOT is on branch '$CURRENT', not '$BASE_BRANCH'. The worktree branches off the root's '$BASE_BRANCH'; check out '$BASE_BRANCH' there and run again."
+
+    if (( HAS_REMOTE && DRY_RUN )); then
+      log "dry run — not pulling '$BASE_BRANCH'; branching point is the local '$BASE_BRANCH' as it stands"
+      BASE_SOURCE="dry run, not pulled"
+    elif (( HAS_REMOTE )); then
+      log "updating '$BASE_BRANCH' in $ROOT (git pull --ff-only $REMOTE $BASE_BRANCH)"
+      run_git_net pull --ff-only "$REMOTE" "$BASE_BRANCH" >&2 \
+        || die "pull of '$BASE_BRANCH' failed (no fast-forward, conflict with local changes, network, or credentials). Fix it in $ROOT and run again."
+      BASE_SOURCE="updated via pull"
     else
-      die "local '$BASE_BRANCH' ($BASE_COMMIT) doesn't match $REMOTE/$BASE_BRANCH ($REMOTE_COMMIT) after the pull"
+      log "no '$REMOTE' remote in $ROOT — branching from the local '$BASE_BRANCH' as it stands"
+      BASE_SOURCE="local, no remote"
     fi
+
+    BASE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+    REMOTE_COMMIT=""
+    (( HAS_REMOTE && ! DRY_RUN )) && REMOTE_COMMIT="$(git -C "$ROOT" rev-parse "refs/remotes/$REMOTE/$BASE_BRANCH" 2>/dev/null || true)"
+    if [[ -n "$REMOTE_COMMIT" && "$BASE_COMMIT" != "$REMOTE_COMMIT" ]]; then
+      if git -C "$ROOT" merge-base --is-ancestor "$REMOTE_COMMIT" "$BASE_COMMIT"; then
+        log "warning: local '$BASE_BRANCH' has commits not yet pushed to $REMOTE"
+      else
+        die "local '$BASE_BRANCH' ($BASE_COMMIT) doesn't match $REMOTE/$BASE_BRANCH ($REMOTE_COMMIT) after the pull"
+      fi
+    fi
+    BASE_SHORT="$(git -C "$ROOT" rev-parse --short HEAD)"
   fi
-  BASE_SHORT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
   # ---- agent name -----------------------------------------------------------
   AGENT="tk-${BRANCH}"; AGENT="${AGENT:0:32}"; AGENT="${AGENT%-}"
@@ -1046,6 +1134,11 @@ launcher_main() {
   fill_prose '{{TICKET}}' "$ticket"
   fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
   printf '%s\n' "$tpl" > "$PROMPT_FILE"
+  # A resume sends the note on top of the brief; resume_session (after the
+  # account is known) cuts it to the note alone when the conversation resumes.
+  if (( RESUME )); then
+    { cat "$RESUME_NOTE"; echo; echo "---"; echo; printf '%s\n' "$tpl"; } >"$PROMPT_FILE"
+  fi
 
   # The roster this session gets, settled before anything is created so a bad
   # agent definition costs no worktree. A ticket's session uses the ticket-side
@@ -1075,6 +1168,7 @@ launcher_main() {
 WORKSPACE=${WORKSPACE_ID:-?} (labelled '$LABEL')
 BRANCH=$BRANCH (base: $BASE_BRANCH @ $BASE_SHORT, ${BASE_SOURCE:-updated via pull})
 KIND=$KIND_STATUS
+RESUME=$( (( RESUME )) && { [[ -n "$RESUME_SESSION" ]] && echo "conversation $RESUME_SESSION" || echo "fresh brief (${RESUME_WHY:-no conversation to resume})"; } || echo "no" )
 MODE=$( (( HELPER )) && echo "helper (the developer drives; session on $IMPL_MODEL @ $IMPL_EFFORT, $SESSION_PERMISSION_MODE)" || echo "agent" )
 WORKTREE=$WT
 TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
@@ -1102,141 +1196,145 @@ SUMMARY
     exit 0
   fi
 
-  # ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
-  # One call either returns the worktree or fails with Herdr's own error. `--path`
-  # pins it to ../<repo>--<branch>, the convention /sweep-tickets reports against
-  # (and that `gd <repo>--<branch>` still removes by hand).
-  log "creating the worktree $WT (branch '$BRANCH' off '$BASE_BRANCH')"
-  create=(worktree create --cwd "$ROOT" --branch "$BRANCH" --base "$BASE_BRANCH" --path "$WT" --label "$LABEL")
-  has_flag --no-focus worktree create && create+=(--no-focus)
-  WT_JSON="$(herdr_json "herdr worktree create" "${create[@]}")"
-
-  # `--label` above labels the WORKSPACE; the tab that comes with it is labelled
-  # by number ("1"), and section 2 either renames it or replaces it. All three
-  # ids are load-bearing from here on, so read each one and say which was missing.
-  WORKSPACE_ID="$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' <<<"$WT_JSON")"
-  ROOT_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$WT_JSON")"
-  ROOT_PANE="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$WT_JSON")"
-  [[ -n "$WORKSPACE_ID" ]] || die "couldn't read the worktree's workspace from the response: $WT_JSON"
-  [[ -n "$ROOT_TAB" ]] || die "couldn't read the worktree's tab from the response: $WT_JSON"
-  [[ -n "$ROOT_PANE" ]] || die "couldn't read the worktree's root pane from the response: $WT_JSON"
-  WT_PATH="$(jq -r '.result.worktree.path // empty' <<<"$WT_JSON")"
-  [[ "$WT_PATH" == "$WT" ]] \
-    || die "herdr created the worktree at '${WT_PATH:-?}', not at the expected $WT"
-
-  # The branch matters as much as the path: a detached HEAD or a plain checkout of
-  # the base branch would also sit at $BASE_COMMIT.
-  WT_BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  [[ "$WT_BRANCH" == "$BRANCH" ]] \
-    || die "worktree at $WT is on '${WT_BRANCH:-?}', not '$BRANCH'"
-  WT_COMMIT="$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)"
-  [[ "$WT_COMMIT" == "$BASE_COMMIT" ]] \
-    || die "worktree was created at $WT_COMMIT, but the updated '$BASE_BRANCH' is at $BASE_COMMIT"
-
-  # ---- 1a. trust the new directory's mise config, where there is one ----------
-  # Immediately after the worktree is proved onto disk and before anything else
-  # touches it: mise resolves a trust path lexically, so this must not run a line
-  # earlier, and every pane created from here on wants the toolchain already
-  # trusted. See trust_worktree_mise for the rest, including what it deliberately
-  # does not do.
-  trust_worktree_mise
-
-  # ---- 1a'. the catalog skills this ticket gets, before any pane starts ----------
-  link_catalog_skills
-
-  # ---- 1b. the account this ticket runs on ------------------------------------
-  # Between the worktree and the agent's pane, because the link is keyed by
-  # directory (so the worktree must exist) and a pane resolves its account once,
-  # when its shell starts (so no pane the agent will use may exist yet).
-  link_ticket_account
-
-  # ---- 2. the workspace's tabs: agent, review, shell --------------------------
-  # Inheriting the account — the default, and every launch before this existed —
-  # the worktree's own tab is renamed rather than replaced: that keeps the agent
-  # on the root pane, which already has the worktree as its cwd, and nothing was
-  # written for its shell to have missed. The other two are appended, so the
-  # workspace's bar reads agent | review | shell.
-  #
-  # Overriding it, that root pane's shell resolved the *inherited* account before
-  # the link was written, and the PROMPT_COMMAND hook claude-acc installs only
-  # re-resolves when $PWD changes — so it will carry the wrong account for as
-  # long as it lives. The agent gets a tab of its own, created after the link,
-  # and the stale pane is closed at the end of this section once the review tab
-  # has taken whatever it needed from it.
-  if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
-    log "creating a fresh 'agent' tab (the worktree's root pane predates the account link)"
-    create_tab agent; AGENT_TAB="$CREATED_TAB"; AGENT_PANE="$CREATED_PANE"
-    [[ -n "$AGENT_PANE" ]] \
-      || die "couldn't read the new 'agent' tab's pane from Herdr's response — the account override needs a pane created after the link"
+  if (( RESUME )); then
+    resume_workspace
   else
-    AGENT_TAB="$ROOT_TAB"; AGENT_PANE="$ROOT_PANE"
-    log "renaming the worktree's tab to 'agent'"
-    herdr_json "herdr tab rename" tab rename "$AGENT_TAB" agent >/dev/null
-  fi
+    # ---- 1. worktree + its workspace, tab and root pane, in one synchronous call --------
+    # One call either returns the worktree or fails with Herdr's own error. `--path`
+    # pins it to ../<repo>--<branch>, the convention /sweep-tickets reports against
+    # (and that `gd <repo>--<branch>` still removes by hand).
+    log "creating the worktree $WT (branch '$BRANCH' off '$BASE_BRANCH')"
+    create=(worktree create --cwd "$ROOT" --branch "$BRANCH" --base "$BASE_BRANCH" --path "$WT" --label "$LABEL")
+    has_flag --no-focus worktree create && create+=(--no-focus)
+    WT_JSON="$(herdr_json "herdr worktree create" "${create[@]}")"
 
-  # The review pane is the persiyanov.reviewr plugin's, not ours. It auto-opens on
-  # Herdr's `worktree.created` event and places itself from its own config file
-  # (~/.config/herdr/plugins/config/persiyanov.reviewr/config.toml, keys
-  # `toggle_placement` / `toggle_direction`): no launcher flag or event payload
-  # reaches that choice, and the event path always attaches to the workspace's
-  # *first* pane, so with the defaults (`split`, `right`) it lands as a split on
-  # top of the agent. Its placement can't be directed — but the pane it opens can
-  # be relocated afterwards, so wait briefly for it and move it into a tab of its
-  # own. If it never appears (plugin absent or disabled, `auto_open = false`, or
-  # simply slower than the wait), open `review` as a plain shell tab and say so in
-  # the summary rather than fighting the plugin for the slot.
-  REVIEW_PANE=""
-  if [[ "$REVIEWR_WAIT" -gt 0 ]] && should_wait_for_reviewr; then
-    log "waiting up to ${REVIEWR_WAIT}s for the reviewr plugin's pane"
-    # A wall-clock deadline, not an iteration count: each probe costs a `pane
-    # list` plus a `process-info` per pane, so counting iterations would overrun
-    # the seconds the variable promises.
-    REVIEWR_DEADLINE=$((SECONDS + REVIEWR_WAIT))
-    while :; do
-      REVIEW_PANE="$(reviewr_pane)"
-      [[ -n "$REVIEW_PANE" ]] && break
-      (( SECONDS < REVIEWR_DEADLINE )) || break
-      sleep 0.1
-    done
-  fi
+    # `--label` above labels the WORKSPACE; the tab that comes with it is labelled
+    # by number ("1"), and section 2 either renames it or replaces it. All three
+    # ids are load-bearing from here on, so read each one and say which was missing.
+    WORKSPACE_ID="$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' <<<"$WT_JSON")"
+    ROOT_TAB="$(jq -r '.result.tab.tab_id // .result.tab.id // empty' <<<"$WT_JSON")"
+    ROOT_PANE="$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' <<<"$WT_JSON")"
+    [[ -n "$WORKSPACE_ID" ]] || die "couldn't read the worktree's workspace from the response: $WT_JSON"
+    [[ -n "$ROOT_TAB" ]] || die "couldn't read the worktree's tab from the response: $WT_JSON"
+    [[ -n "$ROOT_PANE" ]] || die "couldn't read the worktree's root pane from the response: $WT_JSON"
+    WT_PATH="$(jq -r '.result.worktree.path // empty' <<<"$WT_JSON")"
+    [[ "$WT_PATH" == "$WT" ]] \
+      || die "herdr created the worktree at '${WT_PATH:-?}', not at the expected $WT"
 
-  if [[ -n "$REVIEW_PANE" ]]; then
-    log "moving the reviewr pane $REVIEW_PANE into its own 'review' tab"
-    move=(pane move "$REVIEW_PANE" --new-tab --label review)
-    has_flag --no-focus pane move && move+=(--no-focus)
-    MOVE_JSON="$(herdr_json "herdr pane move" "${move[@]}")"
-    REVIEW_TAB="$(jq -r '.result.move_result.created_tab.tab_id // .result.move_result.created_tab.id // empty' <<<"$MOVE_JSON")"
-    [[ -n "$REVIEW_TAB" ]] || die "couldn't read the new 'review' tab from the response: $MOVE_JSON"
-    # Report the pane as it stands after the move, not the id we passed in.
-    MOVED_PANE="$(jq -r '.result.move_result.pane.pane_id // .result.move_result.pane.id // empty' <<<"$MOVE_JSON")"
-    REVIEW_SOURCE="reviewr pane ${MOVED_PANE:-$REVIEW_PANE}"
-  else
-    log "no reviewr pane to move; opening 'review' as a plain shell tab"
-    create_tab review; REVIEW_TAB="$CREATED_TAB"
-    REVIEW_SOURCE="empty shell (no reviewr pane appeared; run 'herdr-reviewr' in that tab)"
-  fi
+    # The branch matters as much as the path: a detached HEAD or a plain checkout of
+    # the base branch would also sit at $BASE_COMMIT.
+    WT_BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    [[ "$WT_BRANCH" == "$BRANCH" ]] \
+      || die "worktree at $WT is on '${WT_BRANCH:-?}', not '$BRANCH'"
+    WT_COMMIT="$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)"
+    [[ "$WT_COMMIT" == "$BASE_COMMIT" ]] \
+      || die "worktree was created at $WT_COMMIT, but the updated '$BASE_BRANCH' is at $BASE_COMMIT"
 
-  log "creating the 'shell' tab"
-  create_tab shell; SHELL_TAB="$CREATED_TAB"
+    # ---- 1a. trust the new directory's mise config, where there is one ----------
+    # Immediately after the worktree is proved onto disk and before anything else
+    # touches it: mise resolves a trust path lexically, so this must not run a line
+    # earlier, and every pane created from here on wants the toolchain already
+    # trusted. See trust_worktree_mise for the rest, including what it deliberately
+    # does not do.
+    trust_worktree_mise
 
-  # The worktree's original tab, now that the review tab has taken the reviewr
-  # pane out of it. It holds one shell resolved to the account this ticket is
-  # overriding, and leaving it is the invisible wrong-account state this feature
-  # exists to end — so it goes. Only when it holds nothing but the pane Herdr
-  # created with it, though: a reviewr pane that turned up after the wait gave
-  # up is worth more than a tidy bar, and so is anything the developer split off
-  # in the seconds this takes.
-  if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
-    # herdr_json, not a swallowed listing: if this call fails quietly the answer
-    # is an empty list, which reads as "other panes are in there" and leaves the
-    # wrong-account shell standing — the one thing closing the tab is for.
-    ROOT_TAB_PANES="$(herdr_json "herdr pane list" pane list --workspace "$WORKSPACE_ID" \
-      | jq -r --arg t "$ROOT_TAB" '[.result.panes[]? | select(.tab_id == $t) | .pane_id] | @tsv')"
-    if [[ "$ROOT_TAB_PANES" == "$ROOT_PANE" ]]; then
-      log "closing the worktree's original tab $ROOT_TAB (its shell predates the account link)"
-      herdr_json "herdr tab close" tab close "$ROOT_TAB" >/dev/null
+    # ---- 1a'. the catalog skills this ticket gets, before any pane starts ----------
+    link_catalog_skills
+
+    # ---- 1b. the account this ticket runs on ------------------------------------
+    # Between the worktree and the agent's pane, because the link is keyed by
+    # directory (so the worktree must exist) and a pane resolves its account once,
+    # when its shell starts (so no pane the agent will use may exist yet).
+    link_ticket_account
+
+    # ---- 2. the workspace's tabs: agent, review, shell --------------------------
+    # Inheriting the account — the default, and every launch before this existed —
+    # the worktree's own tab is renamed rather than replaced: that keeps the agent
+    # on the root pane, which already has the worktree as its cwd, and nothing was
+    # written for its shell to have missed. The other two are appended, so the
+    # workspace's bar reads agent | review | shell.
+    #
+    # Overriding it, that root pane's shell resolved the *inherited* account before
+    # the link was written, and the PROMPT_COMMAND hook claude-acc installs only
+    # re-resolves when $PWD changes — so it will carry the wrong account for as
+    # long as it lives. The agent gets a tab of its own, created after the link,
+    # and the stale pane is closed at the end of this section once the review tab
+    # has taken whatever it needed from it.
+    if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
+      log "creating a fresh 'agent' tab (the worktree's root pane predates the account link)"
+      create_tab agent; AGENT_TAB="$CREATED_TAB"; AGENT_PANE="$CREATED_PANE"
+      [[ -n "$AGENT_PANE" ]] \
+        || die "couldn't read the new 'agent' tab's pane from Herdr's response — the account override needs a pane created after the link"
     else
-      log "warning: leaving the worktree's original tab $ROOT_TAB open — it holds panes this launch didn't create (${ROOT_TAB_PANES:-none listed}). Its shell is on the inherited account, not '$ACCOUNT_NAME'."
+      AGENT_TAB="$ROOT_TAB"; AGENT_PANE="$ROOT_PANE"
+      log "renaming the worktree's tab to 'agent'"
+      herdr_json "herdr tab rename" tab rename "$AGENT_TAB" agent >/dev/null
+    fi
+
+    # The review pane is the persiyanov.reviewr plugin's, not ours. It auto-opens on
+    # Herdr's `worktree.created` event and places itself from its own config file
+    # (~/.config/herdr/plugins/config/persiyanov.reviewr/config.toml, keys
+    # `toggle_placement` / `toggle_direction`): no launcher flag or event payload
+    # reaches that choice, and the event path always attaches to the workspace's
+    # *first* pane, so with the defaults (`split`, `right`) it lands as a split on
+    # top of the agent. Its placement can't be directed — but the pane it opens can
+    # be relocated afterwards, so wait briefly for it and move it into a tab of its
+    # own. If it never appears (plugin absent or disabled, `auto_open = false`, or
+    # simply slower than the wait), open `review` as a plain shell tab and say so in
+    # the summary rather than fighting the plugin for the slot.
+    REVIEW_PANE=""
+    if [[ "$REVIEWR_WAIT" -gt 0 ]] && should_wait_for_reviewr; then
+      log "waiting up to ${REVIEWR_WAIT}s for the reviewr plugin's pane"
+      # A wall-clock deadline, not an iteration count: each probe costs a `pane
+      # list` plus a `process-info` per pane, so counting iterations would overrun
+      # the seconds the variable promises.
+      REVIEWR_DEADLINE=$((SECONDS + REVIEWR_WAIT))
+      while :; do
+        REVIEW_PANE="$(reviewr_pane)"
+        [[ -n "$REVIEW_PANE" ]] && break
+        (( SECONDS < REVIEWR_DEADLINE )) || break
+        sleep 0.1
+      done
+    fi
+
+    if [[ -n "$REVIEW_PANE" ]]; then
+      log "moving the reviewr pane $REVIEW_PANE into its own 'review' tab"
+      move=(pane move "$REVIEW_PANE" --new-tab --label review)
+      has_flag --no-focus pane move && move+=(--no-focus)
+      MOVE_JSON="$(herdr_json "herdr pane move" "${move[@]}")"
+      REVIEW_TAB="$(jq -r '.result.move_result.created_tab.tab_id // .result.move_result.created_tab.id // empty' <<<"$MOVE_JSON")"
+      [[ -n "$REVIEW_TAB" ]] || die "couldn't read the new 'review' tab from the response: $MOVE_JSON"
+      # Report the pane as it stands after the move, not the id we passed in.
+      MOVED_PANE="$(jq -r '.result.move_result.pane.pane_id // .result.move_result.pane.id // empty' <<<"$MOVE_JSON")"
+      REVIEW_SOURCE="reviewr pane ${MOVED_PANE:-$REVIEW_PANE}"
+    else
+      log "no reviewr pane to move; opening 'review' as a plain shell tab"
+      create_tab review; REVIEW_TAB="$CREATED_TAB"
+      REVIEW_SOURCE="empty shell (no reviewr pane appeared; run 'herdr-reviewr' in that tab)"
+    fi
+
+    log "creating the 'shell' tab"
+    create_tab shell; SHELL_TAB="$CREATED_TAB"
+
+    # The worktree's original tab, now that the review tab has taken the reviewr
+    # pane out of it. It holds one shell resolved to the account this ticket is
+    # overriding, and leaving it is the invisible wrong-account state this feature
+    # exists to end — so it goes. Only when it holds nothing but the pane Herdr
+    # created with it, though: a reviewr pane that turned up after the wait gave
+    # up is worth more than a tidy bar, and so is anything the developer split off
+    # in the seconds this takes.
+    if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
+      # herdr_json, not a swallowed listing: if this call fails quietly the answer
+      # is an empty list, which reads as "other panes are in there" and leaves the
+      # wrong-account shell standing — the one thing closing the tab is for.
+      ROOT_TAB_PANES="$(herdr_json "herdr pane list" pane list --workspace "$WORKSPACE_ID" \
+        | jq -r --arg t "$ROOT_TAB" '[.result.panes[]? | select(.tab_id == $t) | .pane_id] | @tsv')"
+      if [[ "$ROOT_TAB_PANES" == "$ROOT_PANE" ]]; then
+        log "closing the worktree's original tab $ROOT_TAB (its shell predates the account link)"
+        herdr_json "herdr tab close" tab close "$ROOT_TAB" >/dev/null
+      else
+        log "warning: leaving the worktree's original tab $ROOT_TAB open — it holds panes this launch didn't create (${ROOT_TAB_PANES:-none listed}). Its shell is on the inherited account, not '$ACCOUNT_NAME'."
+      fi
     fi
   fi
 
@@ -1244,8 +1342,9 @@ SUMMARY
   # The agent starts unattended (PERMISSION_MODE), so the guardrail is entirely
   # the tool blocks in DISALLOWED_TOOLS.
   # The roster (SESSION_AGENTS_JSON) was settled before the worktree was made.
-  local -a agents_arg=()
+  local -a agents_arg=() RESUME_ARGS=()
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
+  [[ -n "$RESUME_SESSION" ]] && RESUME_ARGS=(--resume "$RESUME_SESSION")
   sleep 1
   if (( HELPER )); then
     log "starting '$AGENT' ($AGENT_KIND, helper on $SESSION_MODEL, effort $SESSION_EFFORT, $SESSION_PERMISSION_MODE) in pane $AGENT_PANE — the developer drives"
@@ -1259,6 +1358,7 @@ SUMMARY
   START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
     --model "$SESSION_MODEL" --effort "$SESSION_EFFORT" --permission-mode "$SESSION_PERMISSION_MODE" \
     ${agents_arg[@]+"${agents_arg[@]}"} \
+    ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"} \
     ${RC_ARGS[@]+"${RC_ARGS[@]}"} \
     --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
   START_RC=$?
