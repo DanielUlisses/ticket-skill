@@ -7,8 +7,9 @@ files, so they outlive the board session, are answered by id, and reach later ti
 
 1. **Run.** The board session runs `tk.sh retro <board>` and dispatches `ticket-retro` with its
    output. The agent returns id'd proposals under `## Project memory` (`M1`, `M2`…),
-   `## Environment` (`E1`, `E2`…) and `## Dropped` (no ids) — the format is in
-   `agents/ticket-retro.md`.
+   `## Environment` (`E1`, `E2`…), `## Skills` (`S1`, `S2`…: know-how for a reusable skill in the
+   skills catalog rather than this repo's memory, usually none) and `## Dropped` (no ids) — the
+   format is in `agents/ticket-retro.md`.
 2. **Save.** `tk.sh retro-save <board> < output` writes it verbatim to
    `.scratch/<board>/retro/proposals.md`. A previous `proposals.md` is moved to
    `proposals.<timestamp>.md` first, never lost.
@@ -23,7 +24,8 @@ files, so they outlive the board session, are answered by id, and reach later ti
 4. **Results.** Every run regenerates `.scratch/<board>/retro-results.md` from the marks — never
    appended to:
    - **Approved** — a checklist, `- [ ] <id> <title>`, with the change, source and reason under
-     each. An approved `M` item reads `add to .scratch/project-memory.md: <fact>`.
+     each. An approved `M` item reads `add to .scratch/project-memory.md: <fact>`, an approved `S`
+     item `write a skill (skills-catalog): <title>`.
    - **Deferred** — `- <id> — <title>`, so a later retro can pick them up.
    - **Rejected** — `- <id> — <title>`, so the next retro doesn't propose them again.
 
@@ -49,3 +51,10 @@ heading or a field, so code in a `**Change:**` reaches the results as written.
 (the board's ticket discovery skips it). Launches point every ticket at each
 `.scratch/*/retro-results.md` by path, and the `/ticket` planner reads them before grilling — see
 `docs/agents/memory.md`, *Retro results*.
+
+## Skills proposals and tk-hub
+
+tk-hub's daemon sends `retro/proposals.md` with the board as `retro_proposals_md`, and the hub reads its
+`## Skills` part: each `S` block becomes a skill idea on the project's Skills tab, where the
+developer accepts it (a task of theirs to write the skill in `skills-catalog`) or dismisses it. A block
+marked `rejected` is never offered. The hub writes nothing back to the board.

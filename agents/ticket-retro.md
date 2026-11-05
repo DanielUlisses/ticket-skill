@@ -31,15 +31,20 @@ changes to and the `SKILL` paths.
 
 Return one block per proposal, each with a stable id the developer answers by. Order by severity
 within each part. Your output is saved verbatim as `retro/proposals.md`, so write nothing before the
-first heading that isn't part of it. Use exactly three parts, as `##` headings in this order:
-`## Project memory`, `## Environment`, `## Dropped`.
+first heading that isn't part of it. Use exactly four parts, as `##` headings in this order:
+`## Project memory`, `## Environment`, `## Skills`, `## Dropped`.
 
 - **Project memory** — `M1`, `M2`… one fact per block, against `.scratch/project-memory.md`.
 - **Environment** — `E1`, `E2`… one change per block: the category in the heading, then what to
   change. Prefer a deterministic check over a steering line.
+- **Skills** — `S1`, `S2`… a lesson that is not about this repo: know-how an agent would need in any
+  repo of the same kind (a tool's conventions, a cloud's quirks, a review checklist), which belongs in
+  a reusable skill in the skills catalog, not in this repo's memory. Propose one only when two or more
+  tickets needed it, and say what the skill would teach. Leave the part empty (the heading alone)
+  when there is none — most boards have none.
 - **Dropped** — one line each for what you considered and left out, and why. No id.
 
-Each proposal heading matches `^### [ME][0-9]+ — ` (an em dash between id and title), and each block reads:
+Each proposal heading matches `^### [MES][0-9]+ — ` (an em dash between id and title), and each block reads:
 
     ### M1 — <short title>
     **Source:** <ticket> and `transcript:line`, or the report's words
@@ -50,6 +55,11 @@ Each proposal heading matches `^### [ME][0-9]+ — ` (an em dash between id and 
     **Source:** <ticket> and `transcript:line`, or the report's words
     **Why:** what happened and why the change would have prevented it
     **Change:** the file, and the exact text to add or the exact check to run
+
+    ### S1 — <the skill's name and what it teaches>
+    **Source:** the tickets and `transcript:line`s that needed it
+    **Why:** what agents had to work out again, ticket after ticket
+    **Change:** what the skill's SKILL.md would say: its steps, checks and when to use it
 
 Bash is read-only: `grep`, `wc`, `jq`, `ls`, `git log`/`show`/`diff`. Nothing that writes, installs or
 changes git state.
