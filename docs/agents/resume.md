@@ -16,7 +16,7 @@ branch that already exists.
 3. Writes a short note: the worktree, its last commit and `git status --short`, and what to do
    (read the worktree as it stands, keep every change, carry on from the interrupted step).
 4. Calls the launcher with `--resume`. It makes a new Herdr workspace on the existing worktree
-   (agent and shell tabs), and starts the session on the same roster, model and effort.
+   (one `agent` tab, agent | shell side by side, as a launch makes), and starts the session on the same roster, model and effort.
    - With a transcript (the newest one `tk.sh export` reports for the worktree), the session
      starts as `claude --resume <session>` and gets only the note.
    - With none, with `--fresh`, when the transcript isn't under the config root the worktree

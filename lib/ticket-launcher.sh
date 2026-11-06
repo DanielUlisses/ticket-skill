@@ -109,12 +109,58 @@ create_tab() {
     // empty' <<<"$json" 2>/dev/null || true)"
 }
 
+# Splits the agent's pane to the right with a shell in the worktree, and sets
+# SHELL_PANE. A global, not printed, for create_tab's reason. The pane is made
+# after the account link, so its shell resolves the ticket's account either way.
+split_shell_pane() {
+  local cmd json
+  log "splitting a 'shell' pane to the right of the agent"
+  cmd=(pane split --pane "$AGENT_PANE" --direction right --cwd "$WT")
+  has_flag --no-focus pane split && cmd+=(--no-focus)
+  json="$(herdr_json "herdr pane split (shell)" "${cmd[@]}")"
+  SHELL_PANE="$(jq -r '.result.pane.pane_id // .result.pane.id // empty' <<<"$json")"
+  [[ -n "$SHELL_PANE" ]] || die "couldn't read the shell pane from the response: $json"
+  herdr pane rename "$SHELL_PANE" shell >/dev/null 2>&1 || true
+}
+
+# Waits up to REVIEWR_WAIT seconds for the reviewr plugin's auto-opened pane and
+# closes it, setting REVIEW_SOURCE to what happened. Both Herdr events open it
+# (`worktree.created` on a launch, `worktree.opened` on a resume), so both paths
+# call this before they split the shell off the agent.
+close_reviewr_pane() {
+  local pane="" deadline
+  if [[ "$REVIEWR_WAIT" -gt 0 ]] && should_wait_for_reviewr; then
+    log "waiting up to ${REVIEWR_WAIT}s for the reviewr plugin's pane, to close it"
+    # A wall-clock deadline, not an iteration count: each probe costs a `pane
+    # list` plus a `process-info` per pane, so counting iterations would overrun
+    # the seconds the variable promises.
+    deadline=$((SECONDS + REVIEWR_WAIT))
+    while :; do
+      pane="$(reviewr_pane)"
+      [[ -n "$pane" ]] && break
+      (( SECONDS < deadline )) || break
+      sleep 0.1
+    done
+  fi
+  if [[ -z "$pane" ]]; then
+    REVIEW_SOURCE="none (no reviewr pane appeared; run 'review' or 'herdr-reviewr' in the shell pane for one)"
+  elif herdr pane close "$pane" >/dev/null 2>&1; then
+    log "closed the reviewr pane $pane (run 'review' or 'herdr-reviewr' in the shell pane to bring it back)"
+    REVIEW_SOURCE="closed reviewr pane $pane (run 'review' or 'herdr-reviewr' in the shell pane to reopen)"
+  else
+    log "warning: couldn't close the reviewr pane $pane; it stays beside the agent"
+    REVIEW_SOURCE="reviewr pane $pane (left open: herdr pane close refused)"
+  fi
+}
+
 # Whether to wait for the reviewr plugin's pane at all — only to skip a wait
-# that could not pay off, when no enabled reviewr is there to open one. A
-# listing that can't be read or parsed (older herdr without `--json`, say)
-# waits anyway: missing reviewr's pane costs more than the wait does.
+# that could not pay off, when no enabled reviewr is there to open one (or its
+# config turns auto_open off). A listing that can't be read or parsed (older
+# herdr without `--json`, say) waits anyway: missing reviewr's pane costs more than the wait does.
 should_wait_for_reviewr() {
-  local list
+  local list conf="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/persiyanov.reviewr/config.toml"
+  # `auto_open = false` in the plugin's own config: it opens nothing to wait for.
+  grep -qE '^[[:space:]]*auto_open[[:space:]]*=[[:space:]]*false' "$conf" 2>/dev/null && return 1
   list="$(herdr plugin list --json 2>/dev/null)" || return 0
   jq -e '.result.plugins[]? | select(.plugin_id == "persiyanov.reviewr" and .enabled)' \
     >/dev/null 2>&1 <<<"$list" && return 0
@@ -882,9 +928,10 @@ resume_workspace() {
   [[ -n "$ROOT_PANE" ]] || die "couldn't read the workspace's root pane from the response: $json"
   AGENT_TAB="${ROOT_TAB:-?}"; AGENT_PANE="$ROOT_PANE"
   [[ -n "$ROOT_TAB" ]] && herdr_json "herdr tab rename" tab rename "$ROOT_TAB" agent >/dev/null
-  REVIEW_TAB="-"; REVIEW_SOURCE="none (resumed — run 'herdr-reviewr' in the shell tab)"
-  log "creating the 'shell' tab"
-  create_tab shell; SHELL_TAB="$CREATED_TAB"
+  # The same one tab as a launch: agent | shell. A workspace on an existing
+  # worktree fires `worktree.opened`, which auto-opens reviewr too.
+  close_reviewr_pane
+  split_shell_pane
 }
 
 launcher_main() {
@@ -1177,7 +1224,7 @@ KIND=$KIND_STATUS
 RESUME=$( (( RESUME )) && { [[ -n "$RESUME_SESSION" ]] && echo "conversation $RESUME_SESSION" || echo "fresh brief (${RESUME_WHY:-no conversation to resume})"; } || echo "no" )
 MODE=$( (( HELPER )) && echo "helper (the developer drives; session on $IMPL_MODEL @ $IMPL_EFFORT, $SESSION_PERMISSION_MODE)" || echo "agent" )
 WORKTREE=$WT
-TABS=agent:${AGENT_TAB:-?} review:${REVIEW_TAB:-?} shell:${SHELL_TAB:-?}
+TABS=agent:${AGENT_TAB:-?} (panes: agent ${AGENT_PANE:-?} | shell ${SHELL_PANE:-?})
 REVIEW=${REVIEW_SOURCE:-?}
 AGENT=$AGENT (pane ${AGENT_PANE:-?})
 MODEL=$IMPL_MODEL
@@ -1253,19 +1300,21 @@ SUMMARY
     # when its shell starts (so no pane the agent will use may exist yet).
     link_ticket_account
 
-    # ---- 2. the workspace's tabs: agent, review, shell --------------------------
+    # ---- 2. the workspace's one tab: agent | shell, side by side ----------------
+    # tk-hub is where tickets are followed and reviewed now, so a ticket's
+    # workspace holds only what the developer reaches for in it: the agent, and a
+    # shell in the worktree split to its right. No review tab.
+    #
     # Inheriting the account — the default, and every launch before this existed —
     # the worktree's own tab is renamed rather than replaced: that keeps the agent
     # on the root pane, which already has the worktree as its cwd, and nothing was
-    # written for its shell to have missed. The other two are appended, so the
-    # workspace's bar reads agent | review | shell.
+    # written for its shell to have missed.
     #
     # Overriding it, that root pane's shell resolved the *inherited* account before
     # the link was written, and the PROMPT_COMMAND hook claude-acc installs only
     # re-resolves when $PWD changes — so it will carry the wrong account for as
     # long as it lives. The agent gets a tab of its own, created after the link,
-    # and the stale pane is closed at the end of this section once the review tab
-    # has taken whatever it needed from it.
+    # and the stale tab is closed below once the reviewr pane is out of it.
     if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
       log "creating a fresh 'agent' tab (the worktree's root pane predates the account link)"
       create_tab agent; AGENT_TAB="$CREATED_TAB"; AGENT_PANE="$CREATED_PANE"
@@ -1277,58 +1326,21 @@ SUMMARY
       herdr_json "herdr tab rename" tab rename "$AGENT_TAB" agent >/dev/null
     fi
 
-    # The review pane is the persiyanov.reviewr plugin's, not ours. It auto-opens on
-    # Herdr's `worktree.created` event and places itself from its own config file
-    # (~/.config/herdr/plugins/config/persiyanov.reviewr/config.toml, keys
-    # `toggle_placement` / `toggle_direction`): no launcher flag or event payload
-    # reaches that choice, and the event path always attaches to the workspace's
-    # *first* pane, so with the defaults (`split`, `right`) it lands as a split on
-    # top of the agent. Its placement can't be directed — but the pane it opens can
-    # be relocated afterwards, so wait briefly for it and move it into a tab of its
-    # own. If it never appears (plugin absent or disabled, `auto_open = false`, or
-    # simply slower than the wait), open `review` as a plain shell tab and say so in
-    # the summary rather than fighting the plugin for the slot.
-    REVIEW_PANE=""
-    if [[ "$REVIEWR_WAIT" -gt 0 ]] && should_wait_for_reviewr; then
-      log "waiting up to ${REVIEWR_WAIT}s for the reviewr plugin's pane"
-      # A wall-clock deadline, not an iteration count: each probe costs a `pane
-      # list` plus a `process-info` per pane, so counting iterations would overrun
-      # the seconds the variable promises.
-      REVIEWR_DEADLINE=$((SECONDS + REVIEWR_WAIT))
-      while :; do
-        REVIEW_PANE="$(reviewr_pane)"
-        [[ -n "$REVIEW_PANE" ]] && break
-        (( SECONDS < REVIEWR_DEADLINE )) || break
-        sleep 0.1
-      done
-    fi
+    # The persiyanov.reviewr plugin auto-opens a pane on Herdr's `worktree.created`
+    # event, as a split on the workspace's *first* pane (its config file,
+    # ~/.config/herdr/plugins/config/persiyanov.reviewr/config.toml, decides; no
+    # launcher flag reaches it). Left alone it would sit between the agent and the
+    # shell, so wait briefly for it and close it: `review` (the devboxes alias) or
+    # `herdr-reviewr` in the shell opens it again on demand. Waited for before the
+    # shell split, so the split lands beside the agent and not beside reviewr.
+    close_reviewr_pane
 
-    if [[ -n "$REVIEW_PANE" ]]; then
-      log "moving the reviewr pane $REVIEW_PANE into its own 'review' tab"
-      move=(pane move "$REVIEW_PANE" --new-tab --label review)
-      has_flag --no-focus pane move && move+=(--no-focus)
-      MOVE_JSON="$(herdr_json "herdr pane move" "${move[@]}")"
-      REVIEW_TAB="$(jq -r '.result.move_result.created_tab.tab_id // .result.move_result.created_tab.id // empty' <<<"$MOVE_JSON")"
-      [[ -n "$REVIEW_TAB" ]] || die "couldn't read the new 'review' tab from the response: $MOVE_JSON"
-      # Report the pane as it stands after the move, not the id we passed in.
-      MOVED_PANE="$(jq -r '.result.move_result.pane.pane_id // .result.move_result.pane.id // empty' <<<"$MOVE_JSON")"
-      REVIEW_SOURCE="reviewr pane ${MOVED_PANE:-$REVIEW_PANE}"
-    else
-      log "no reviewr pane to move; opening 'review' as a plain shell tab"
-      create_tab review; REVIEW_TAB="$CREATED_TAB"
-      REVIEW_SOURCE="empty shell (no reviewr pane appeared; run 'herdr-reviewr' in that tab)"
-    fi
-
-    log "creating the 'shell' tab"
-    create_tab shell; SHELL_TAB="$CREATED_TAB"
-
-    # The worktree's original tab, now that the review tab has taken the reviewr
-    # pane out of it. It holds one shell resolved to the account this ticket is
-    # overriding, and leaving it is the invisible wrong-account state this feature
-    # exists to end — so it goes. Only when it holds nothing but the pane Herdr
-    # created with it, though: a reviewr pane that turned up after the wait gave
-    # up is worth more than a tidy bar, and so is anything the developer split off
-    # in the seconds this takes.
+    # Closing the worktree's original tab, override path only. It holds one shell
+    # resolved to the account this ticket is overriding, and leaving it is the
+    # invisible wrong-account state this feature exists to end — so it goes. Only
+    # when it holds nothing but the pane Herdr created with it, though: a reviewr
+    # pane that turned up after the wait gave up, or anything the developer split
+    # off in the seconds this takes, is worth more than a tidy bar.
     if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
       # herdr_json, not a swallowed listing: if this call fails quietly the answer
       # is an empty list, which reads as "other panes are in there" and leaves the
@@ -1342,6 +1354,8 @@ SUMMARY
         log "warning: leaving the worktree's original tab $ROOT_TAB open — it holds panes this launch didn't create (${ROOT_TAB_PANES:-none listed}). Its shell is on the inherited account, not '$ACCOUNT_NAME'."
       fi
     fi
+
+    split_shell_pane
   fi
 
   # ---- 3. start Claude Code in the 'agent' tab -------------------------------
