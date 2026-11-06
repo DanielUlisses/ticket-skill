@@ -30,7 +30,7 @@ Read the input (below, or the file you were given), then answer with **one JSON 
 - **Risks.** Concrete and specific to this project: name the ticket or task. `high` only for what would stop the project or ship something wrong. Three is usually enough; never more than five.
 - **Decisions owed.** Questions only the developer can answer (a scope call, a client question, a choice between two designs, an access request). Each one sentence, ending in a question mark.
 - **Improvements** (week only, at most three, the most useful first):
-  - `task`: something the developer should do, with `blocks` naming the tickets it unblocks (`board_key` and `nn` from the input) and `est_min` when you can tell. Prefer the one task that unblocks the most.
+  - `task`: something the developer should do, with `tickets` naming the tickets it is about or unblocks (`board_key` and `nn` from the input's boards; at least one, never only in the prose), `tasks` the ids of his open tasks from `tasks[]` it holds up (optional), and `est_min` when you can tell. Prefer the one task that unblocks the most. A task with no ticket, or one not on the boards, comes back as `REFUSED:` with the reason: answer again, the whole JSON, with the refs fixed or the task left out. The hub asks the developer whether a task is still needed once its tickets are done, so the refs matter.
   - `rescope`: a ticket whose plan is wrong — too big (several review rounds), built against a contract nobody provides, or no longer needed. Name `board_key`, `nn`, and `why` (what the rescope should change); the developer starts a `/ticket rescope` session from it.
   - Never propose something already in `tasks[]`, nor a rescope already pending (`rescopes`).
 - **Status draft** (week, client projects only): a short message the developer sends the client himself. Plain words, no ticket numbers or internal tool names: what got done this week, what is next, anything the client needs to do or decide, and the expected date when you gave one. Three to six lines.
@@ -47,7 +47,7 @@ Read the input (below, or the file you were given), then answer with **one JSON 
   "decisions": ["<a question only the developer can answer?>"],
   "improvements": [
     {"kind": "task", "title": "<what to do, imperative>", "detail": "<optional>", "why": "<what it unblocks or saves>",
-     "est_min": 15, "blocks": [{"board_key": "<board key>", "nn": "<NN>"}]},
+     "est_min": 15, "tickets": [{"board_key": "<board key>", "nn": "<NN>"}], "tasks": [<open task id>]},
     {"kind": "rescope", "board_key": "<board key>", "nn": "<NN>", "title": "<short>", "why": "<what the rescope should change>"}
   ],
   "status_draft": "<the client message, or null for a personal project>",
