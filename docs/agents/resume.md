@@ -22,7 +22,11 @@ branch that already exists.
    - With none, with `--fresh`, when the transcript isn't under the config root the worktree
      resolves to, or when its last line was cut off by the kill, the session gets the full
      brief with the note on top.
-5. Records the new agent on the ticket (`**Agent:**`), so the board shows it working again.
+5. Resets the ticket's phase file before it starts anything (`reset_phase`, as a launch does):
+   line 1 becomes `resuming` (`launching` for a launch), line 2, the merge gates'
+   `tests=… criteria=… review=…`, is kept, and `<phase file>.started` marks when this agent
+   started. See *Finished or orphaned* below.
+6. Records the new agent on the ticket (`**Agent:**`), so the board shows it working again.
 
 Nothing is pulled, rebased, reset, stashed or deleted. The account is whatever the worktree's
 `claude-acc` link already says; the launcher refuses when that isn't the account the ticket ran
@@ -44,6 +48,26 @@ starts the new agent for that case:
 
 tk-hub sends it as `resume_ticket` with `respec` (its project chat's Relaunch card). See
 ticket-board `docs/project-chat.md`.
+
+## Finished or orphaned
+
+A gone agent either finished and closed its session, or died with work left. Only the
+second is an orphan to resume. The phase file says which, but only when *this* agent wrote
+it: before the reset, a `done` an earlier agent left survived a resume and read as finished
+while the new agent worked (tk-hub, #04 on dev-bss, 2026-11-06).
+
+The board rows (`tk.sh export`, `tk.sh view`) read a ticket's phase as its current agent's
+when the phase file is not older than its `.started` mark, and say so as `phase_fresh`:
+
+- gone, phase `done`, fresh: **human review**, "agent finished (session closed)"; the
+  digest says `ACTION review NN`, not orphan;
+- gone otherwise (working when it died, a stale `done`, or no mark: an agent launched
+  before the reset existed): **needs you**, "no live agent", `ACTION orphan NN`.
+
+Work that is only on the box rides on a gone agent's card: `unpushed` in the export
+(`14 uncommitted files`, `2 commits not pushed`; commits are not counted in local mode) and
+` · unpushed: …` on the note. `/sweep-tickets` never removes a worktree with uncommitted
+changes, `--force` or not, and needs `--force` for a branch that isn't merged.
 
 ## After a rebase: `tk.sh rebase` and `--rebased`
 
@@ -70,7 +94,9 @@ ticket kept at the human gate; Commit merge leaves it there for review).
 
 - The developer, or the board session on the developer's word (`resume 07`).
 - tk-hub, through the daemon's `resume_ticket` RPC: once per ticket per day on boards that
-  launch on their own, a Resume button everywhere else. See ticket-board `docs/runs.md`.
+  launch on their own, a Resume button everywhere else. See ticket-board `docs/runs.md`. A box
+  whose daemon doesn't run `resume_ticket` gets no Resume there, but "its daemon is out of
+  date: run `install.sh daemon` there".
 
 A ticket that is the developer's (`**Owner:** me`) resumes only with `--helper`, which only
 their own click passes.
