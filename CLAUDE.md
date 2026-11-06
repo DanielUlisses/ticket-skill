@@ -65,7 +65,7 @@ Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;
 
 ### Resume
 
-`tk.sh resume <board> <NN>` starts a new agent where a dead one (an OOM, a restart) stopped: the same worktree as it stands, nothing reset or pulled, `claude --resume` on its newest transcript with a note on what it finds (the full brief when there is none), on the account the worktree's link already names. The launcher's `--resume` path makes only a new workspace. tk-hub calls it through the daemon's `resume_ticket`. See `docs/agents/resume.md`.
+`tk.sh resume <board> <NN>` starts a new agent where a dead one (an OOM, a restart) stopped: the same worktree as it stands, nothing reset or pulled, `claude --resume` on its newest transcript with a note on what it finds (the full brief when there is none), on the account the worktree's link already names. The launcher's `--resume` path makes only a new workspace. tk-hub calls it through the daemon's `resume_ticket`. `tk.sh rebase <board> <NN>` brings a ticket that waited for other work (tk-hub's park "when these merge") onto the base's tip: an unpushed branch only (a PR or pushed branch, exit 13, and a conflict, exit 10, go through the merge flow), the new **Base:** recorded, its agent asked to re-run checks and report (a gone one through `tk.sh resume --rebased`); tk-hub sends it as `rebase_ticket`. See `docs/agents/resume.md`.
 
 ### Questions
 

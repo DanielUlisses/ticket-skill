@@ -308,6 +308,31 @@ pushed_sha() {
   echo "$sha ${untracked:-0}"
 }
 
+# What of a ticket's work is only on this box, as words ("14 uncommitted files,
+# 2 commits not pushed"), empty when nothing is: files changed or untracked in
+# its worktree and, with a remote, commits on its branch that its remote branch
+# (or, never pushed, the base) lacks; not in local mode, where nothing is
+# pushed. A card whose agent is gone carries it as a warning; /sweep-tickets
+# already refuses a dirty or unmerged worktree.
+unpushed_work() {
+  local branch="$1" base_sha="$2" wt="${3:-}" n=0 c=0 ref words=""
+  [[ -n "$branch" ]] || return 0
+  [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  [[ -d "$wt" ]] && n="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c . || true)"
+  if (( HAS_REMOTE )) && ! local_mode && git -C "$ROOT" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then
+    ref="refs/remotes/$REMOTE/$branch"
+    if git -C "$ROOT" show-ref --verify --quiet "$ref"; then
+      c="$(git -C "$ROOT" rev-list --count "$ref..refs/heads/$branch" 2>/dev/null || echo 0)"
+    else
+      [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "refs/heads/$branch" "$BASE_REF" 2>/dev/null || true)"
+      [[ -n "$base_sha" ]] && c="$(git -C "$ROOT" rev-list --count "$base_sha..refs/heads/$branch" 2>/dev/null || echo 0)"
+    fi
+  fi
+  (( ${n:-0} > 0 )) && words="$n uncommitted file$( (( n == 1 )) || echo s)"
+  (( ${c:-0} > 0 )) && words="${words:+$words, }$c commit$( (( c == 1 )) || echo s) not pushed"
+  printf '%s' "$words"
+}
+
 # One round trip for the whole board: the base and every in-progress ticket's
 # remote branch that still exists (one ls-remote, one fetch) — not a fetch per
 # ticket, which on a slow or credential-managed remote is what made every turn
