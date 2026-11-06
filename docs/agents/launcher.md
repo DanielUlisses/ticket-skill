@@ -74,6 +74,14 @@ account it reports is resolved at the directory the worktrees are cut in and tha
 `dirname` of the main checkout — the same value `launcher_main` builds the worktree path from.
 [`session-settings.md`](session-settings.md) has the output and what each line means.
 
+## The workspace a ticket gets
+
+One tab, `agent`: the agent's pane on the left and a shell in the worktree split to its
+right (`herdr pane split --direction right`). tk-hub is where tickets are followed and
+reviewed, so there is no `review` tab: the reviewr plugin's auto-opened pane is waited for
+(`TICKET_REVIEWR_WAIT`, skipped when its config says `auto_open = false`) and closed, and
+`review` or `herdr-reviewr` in the shell pane opens it again. A resume builds the same tab.
+
 ## The one place the tab sequence forks
 
 `launcher_main` builds the `agent` tab two ways, and the fork is not a preference — a pane
