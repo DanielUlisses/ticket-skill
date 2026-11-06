@@ -40,14 +40,14 @@ A rescope is a plan diff a planner session proposes and the developer applies. N
 | `tk.sh rescope-apply <board> <id>` | the developer (tk-hub's Apply, or a terminal) | applies it; state `applied` |
 | `tk.sh rescope-discard <board> <id>` | the developer | state `discarded`, the board unchanged |
 
-`plan.json`: `{"summary": "<one line>", "changes": [{"op", "nn", "file", "files", "why"}]}`.
+`plan.json`: `{"summary": "<one line>", "changes": [{"op", "nn", "file", "files", "why"}], "findings": [<id>, ...]}`. `findings` is optional: the tk-hub validator findings (their ids) the planner says the plan fixes. `rescope-propose` refuses anything but positive whole numbers there; `tk.sh export` carries them as the rescope's `findings` (`[]` when none), and tk-hub marks them **fixes** on the rescope. tk-hub folds every open finding on a proposed rescope's tickets into the rescope whatever this list says.
 
 - `change NN file`: an open or in-progress ticket's new body. Its run-state lines (`Status Branch Base Model Effort Account Agent Worktree`) are kept; an in-progress ticket's agent is told (`TOLD`/`NOT TOLD` line).
 - `add file`: a new ticket, its number from its heading, not on the board yet.
 - `split NN files`: an open ticket into new ones; the old one is dropped with "split into …".
 - `drop NN`: an open ticket gets `**Status:** dropped — rescope <id> on <date>` and `**Dropped:** <date> — <why> (rescope <id>)`. It shows in **done** (`dropped`) and is never launched; a dropped blocker still blocks, and `rescope-apply` warns about any open ticket left blocked by one.
 
-`rescope-apply` checks the plan again against the board as it is then, and applies nothing when it no longer fits. `tk.sh export` lists the rescopes still `open` or `proposed` under `rescopes[]`, each with its plan diff (`changes[]`: `op nn title why diff into`, a change's `diff` the unified diff of the ticket file, an add's the new file). Rescope folders are skipped when tickets are loaded.
+`rescope-apply` checks the plan again against the board as it is then, and applies nothing when it no longer fits. `tk.sh export` lists the rescopes still `open` or `proposed` under `rescopes[]`, each with `findings` and its plan diff (`changes[]`: `op nn title why diff into`, a change's `diff` the unified diff of the ticket file, an add's the new file). Rescope folders are skipped when tickets are loaded.
 
 ## The agent's report
 
