@@ -11,12 +11,16 @@
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
-#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]]
+#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]
 #                                        a new agent in the worktree a dead one left (OOM, restart), as it
 #                                        stands: claude --resume on its newest transcript (--fresh: the
 #                                        full brief), a note on what it finds; refused while the old agent lives.
 #                                        --respec: the spec changed under its work (a rescope applied after
 #                                        its PR): the note carries the ticket as it is now, same branch and PR
+#   tk.sh rebase  <board> <NN>           a ticket that waited for other work (tk-hub's park "when these
+#                                        merge"): rebase its unpushed branch onto the base's tip, record the
+#                                        new **Base:**, ask its agent to re-run checks and report (exit 10:
+#                                        conflicts, aborted — the merge flow takes it; 13: pushed, merge instead)
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each (local mode: the local gates — four,
 #                                        five with a remote: base, the local base not behind <remote>/<base>)
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (local mode: the local gates)
@@ -314,11 +318,12 @@ cmd_launch() {
 # removed first: a kill mid-`git add` leaves one, and every git call then fails.
 cmd_resume() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]]}"; shift
-  local model="" effort="" fresh=0 helper=0 respec=0 rescope=""
+  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]}"; shift
+  local model="" effort="" fresh=0 helper=0 respec=0 rescope="" rebased=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;; --effort) effort="$2"; shift 2 ;;
+      --rebased) rebased="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;; --helper) helper=1; shift ;;
       --respec) respec=1; shift ;; --rescope) rescope="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
@@ -380,7 +385,9 @@ cmd_resume() {
   {
     echo "# Resuming ticket $nn"
     echo
-    if (( respec )); then
+    if [[ -n "$rebased" ]]; then
+      echo "This ticket's work was done and waited for other work to land first. Its branch has now been rebased onto $BASE_BRANCH at $rebased (tk.sh rebase): the commits are the same work on the new base. The session that wrote it has ended."
+    elif (( respec )); then
       echo "This ticket's spec changed after its work was written${rescope:+ (rescope $rescope)}${pr_line:+, while its PR $pr_line was open}. The session that wrote it has ended; you carry the branch to the new spec. Nothing was cleaned up: the worktree is exactly as it was left."
     else
       echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
@@ -394,7 +401,9 @@ cmd_resume() {
     echo "${changes:-(none)}"
     echo '```'
     echo
-    if (( respec )); then
+    if [[ -n "$rebased" ]]; then
+      rebase_ask "$rebased"
+    elif (( respec )); then
       echo "The ticket as it reads now is below; it wins over the brief you started from wherever the two disagree. Read the worktree and the branch's commits (\`git status\`, \`git log\`, \`git diff <base>...\`), keep what still fits the new spec and change what doesn't, then run the brief's checks, review and report again as written. Stay on branch $branch$pr_keep. The developer reviews the change again; an earlier approval doesn't carry over."
       echo
       echo '````markdown'
@@ -444,6 +453,83 @@ cmd_resume() {
   fi
   rm -f "$out" "$brief" "$note"
   return $rc
+}
+
+# ---- rebase: a ticket that waited for other work, onto the base as it is now ----
+# A ticket built ahead of other tickets it must not merge before (tk-hub parks it
+# "when these merge") comes back onto the base once they land. Only a branch
+# nothing outside the box holds is rebased — no PR, never pushed: a rebase
+# rewrites it. A pushed one (exit 13) takes the base by a merge instead
+# (merge-conflict.sh start, ticket-merger), which never force-pushes.
+# Clean: the new **Base:** is recorded and the ticket's agent is asked to run its
+# checks, review and report again (tk.sh say to a live one, tk.sh resume
+# --rebased to a gone one), which brings the card back to the human gate.
+# A conflict (exit 10): the rebase is aborted, the branch is as it was, and the
+# merge flow takes it. Refused while the agent works or at a dialog, or with
+# uncommitted changes.
+# Exit codes: 0 rebased (or already on the tip) | 1 refused/error | 10 conflicts | 13 pushed
+rebase_ask() {
+  echo "Run the brief's checks again on the rebased branch (tests, linters, the seams line's validator), fix anything the new base broke, then review and report as the brief says. Don't merge $BASE_BRANCH in or rebase again, and don't push. The developer reviews it again at the human gate: report \"rebased onto $BASE_BRANCH $1\" at the top of your hand-off."
+}
+
+cmd_rebase() {
+  board_init "${1:-}"; shift
+  local nn="${1:?usage: tk.sh rebase <board> <NN>}"
+  local t status branch wt agent onto old new short msg
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  status="$(jq -r .status <<<"$t")"
+  [[ "$status" == in-progress ]] || die "ticket $nn is $status — only a ticket in progress rebases"
+  branch="$(jq -r .branch <<<"$t")"; [[ -n "$branch" ]] || die "ticket $nn has no **Branch:** recorded"
+  wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  [[ -d "$wt" ]] || die "ticket $nn's worktree $wt is gone — nothing to rebase"
+  [[ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" == "$branch" ]] || die "$wt is not on $branch"
+  agent="$(jq -r .agent <<<"$t")"
+  [[ -z "$agent" ]] || need herdr
+  require_agent_quiet "$agent" "rebasing $wt"
+  [[ -z "$(git -C "$wt" status --porcelain --untracked-files=no)" ]] \
+    || die "$wt has uncommitted changes — the agent commits them (or the developer discards them) before a rebase"
+  git -C "$wt" rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 && die "a rebase is already in progress in $wt"
+  git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && die "a merge is in progress in $wt (merge-conflict.sh)"
+  fetch_board_refs
+  if jq -e '.pr != null' <<<"$t" >/dev/null 2>&1 || [[ -n "$(pushed_sha "$branch" "$(jq -r .base <<<"$t")" "$wt")" ]]; then
+    echo "PUSHED — $branch is on $REMOTE; a rebase would rewrite it: merge $BASE_BRANCH in instead (merge-conflict.sh start $BOARD_ID $nn)"
+    return 13
+  fi
+  if local_mode; then onto="refs/heads/$BASE_BRANCH"; else onto="refs/remotes/$REMOTE/$BASE_BRANCH"; fi
+  git -C "$ROOT" rev-parse -q --verify "$onto" >/dev/null || die "no $onto to rebase onto"
+  old="$(git -C "$wt" rev-parse HEAD)"; new="$(git -C "$ROOT" rev-parse "$onto")"; short="$(git -C "$ROOT" rev-parse --short "$new")"
+  if [[ "$(git -C "$wt" merge-base HEAD "$new")" == "$new" ]]; then
+    echo "UP TO DATE — $branch is already on $BASE_BRANCH $short"
+  else
+    if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then echo "DRY RUN — would rebase $branch onto $BASE_BRANCH $short"; return 0; fi
+    if ! git -C "$wt" rebase --quiet "$new" >/dev/null 2>&1; then
+      local files; files="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | sed 's/^/  /')"
+      git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+      [[ "$(git -C "$wt" rev-parse HEAD)" == "$old" ]] || die "the rebase was aborted but HEAD moved — read 'git -C $wt status'"
+      echo "CONFLICTS rebasing $branch onto $BASE_BRANCH $short — aborted, the branch is as it was:"
+      [[ -n "$files" ]] && echo "$files"
+      echo "merge $BASE_BRANCH in through the merge flow (merge-conflict.sh start $BOARD_ID $nn, ticket-merger)"
+      return 10
+    fi
+    echo "REBASED $branch onto $BASE_BRANCH $short ($(git -C "$wt" rev-list --count "$new..HEAD") commit(s))"
+  fi
+  record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
+    "$branch" "$new" "$(jq -r .model <<<"$t")" "$(jq -r .effort <<<"$t")" "$(jq -r '.account // "unknown" | if . == "" then "unknown" else . end' <<<"$t")" \
+    "$wt" "$agent" "$(jq -r '.skills | if length == 0 then "none" else join(",") end' <<<"$t")")"
+  echo "BASE $nn $new"
+  # The agent runs its checks on the new base and reports: back to the human gate.
+  if [[ -n "$agent" ]]; then
+    agent_of "$t"
+    if [[ "$AGENT_STATE" != gone ]]; then
+      msg="$(mktemp)"
+      { echo "Your branch $branch was rebased onto $BASE_BRANCH $short (tk.sh rebase): the other work it waited for has landed."; echo; rebase_ask "$short"; } >"$msg"
+      herdr agent prompt "$AGENT" "$(printf 'Message from the developer, via the board session:\n\n%s' "$(cat "$msg")")" >/dev/null
+      rm -f "$msg"
+      echo "SENT to $AGENT — it re-runs its checks on the new base and reports"
+      return 0
+    fi
+  fi
+  cmd_resume "$BOARD_ID" "$nn" --rebased "$short"
 }
 
 # ---- gates and merge ---------------------------------------------------------------
@@ -1897,6 +1983,9 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   worktree, nothing reset, its conversation resumed (tk.sh resume)
   resume 07 --respec            the same after a rescope changed 07 under its PR: the agent reads the
                                   new spec, carries the branch to it, and the PR takes the commits
+  rebase 07                     07 waited for other work that has now landed: its unpushed branch
+                                  rebased onto the base, its agent re-runs checks and reports (tk.sh
+                                  rebase; a conflict or a pushed branch goes through the merge flow)
   open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
                                   DevOps — the Cursor CLI writes message and body (no Claude
                                   tokens, no attribution); TICKET_PR_RUNNER=claude: the Sonnet agent
@@ -2028,7 +2117,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;
