@@ -1120,6 +1120,11 @@ launcher_main() {
   PHASE_FILE="$(dirname "$(dirname "$REPORT_FILE")")/phase/$BRANCH"
   mkdir -p "$(dirname "$PHASE_FILE")"
   tpl="${tpl//'{{PHASE_FILE}}'/"$PHASE_FILE"}"
+  # What the agent asks the developer when only they can answer (tk.sh answer,
+  # docs/agents/questions.md): read by tk.sh's board rows and by tk-hub.
+  QUESTIONS_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/questions/$BRANCH.json"
+  mkdir -p "$(dirname "$QUESTIONS_FILE")"
+  tpl="${tpl//'{{QUESTIONS_FILE}}'/"$QUESTIONS_FILE"}"
   # The prose payloads go last, so the replacements above can't reach inside
   # them. RETRO_RESULTS goes first of them: its content is built by the launcher
   # (paths only), so it is safe to fill early, and filling it before TICKET keeps
