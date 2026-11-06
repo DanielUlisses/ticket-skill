@@ -11,10 +11,12 @@
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                                        (a **Kind:** doc ticket launches as a document, branch type docs)
-#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]
+#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]]
 #                                        a new agent in the worktree a dead one left (OOM, restart), as it
 #                                        stands: claude --resume on its newest transcript (--fresh: the
-#                                        full brief), a note on what it finds; refused while the old agent lives
+#                                        full brief), a note on what it finds; refused while the old agent lives.
+#                                        --respec: the spec changed under its work (a rescope applied after
+#                                        its PR): the note carries the ticket as it is now, same branch and PR
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each (local mode: the local gates — four,
 #                                        five with a remote: base, the local base not behind <remote>/<base>)
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (local mode: the local gates)
@@ -312,15 +314,18 @@ cmd_launch() {
 # removed first: a kill mid-`git add` leaves one, and every git call then fails.
 cmd_resume() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]}"; shift
-  local model="" effort="" fresh=0 helper=0
+  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]]}"; shift
+  local model="" effort="" fresh=0 helper=0 respec=0 rescope=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;; --effort) effort="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;; --helper) helper=1; shift ;;
+      --respec) respec=1; shift ;; --rescope) rescope="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
+  [[ -z "$rescope" ]] || (( respec )) || die "--rescope names the rescope a --respec resume follows"
+  [[ -z "$rescope" || "$rescope" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "--rescope takes a rescope id (YYYYMMDDThhmmssZ)"
   local t status branch wt agent states st yours
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
   status="$(jq -r .status <<<"$t")"
@@ -368,10 +373,18 @@ cmd_resume() {
   note="$(mktemp -t ticket-resume.XXXXXX.md)"
   changes="$(git -C "$wt" status --short 2>/dev/null | head -40)"
   last="$(git -C "$wt" log -1 --format='%h %s (%cr)' 2>/dev/null)"
+  local pr_line
+  pr_line="$(jq -r 'if .pr != null then "#\(.pr.number)" else "" end' <<<"$t" 2>/dev/null || true)"
+  local pr_keep=""
+  [[ -z "$pr_line" ]] || pr_keep=": PR $pr_line stays open and takes the new commits, so don't open another"
   {
     echo "# Resuming ticket $nn"
     echo
-    echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
+    if (( respec )); then
+      echo "This ticket's spec changed after its work was written${rescope:+ (rescope $rescope)}${pr_line:+, while its PR $pr_line was open}. The session that wrote it has ended; you carry the branch to the new spec. Nothing was cleaned up: the worktree is exactly as it was left."
+    else
+      echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
+    fi
     echo
     echo "- Worktree: $wt (branch $branch)"
     echo "- Last commit: ${last:-none}"
@@ -381,10 +394,18 @@ cmd_resume() {
     echo "${changes:-(none)}"
     echo '```'
     echo
-    echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+    if (( respec )); then
+      echo "The ticket as it reads now is below; it wins over the brief you started from wherever the two disagree. Read the worktree and the branch's commits (\`git status\`, \`git log\`, \`git diff <base>...\`), keep what still fits the new spec and change what doesn't, then run the brief's checks, review and report again as written. Stay on branch $branch$pr_keep. The developer reviews the change again; an earlier approval doesn't carry over."
+      echo
+      echo '````markdown'
+      cat "$(jq -r .file <<<"$t")"
+      echo '````'
+    else
+      echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+    fi
     # Answers the developer gave since the brief was sent (tk.sh answer): a
     # resumed conversation gets only this note, not the ticket file again.
-    if grep -q '^## Answers$' "$(jq -r .file <<<"$t")"; then
+    if (( ! respec )) && grep -q '^## Answers$' "$(jq -r .file <<<"$t")"; then
       echo
       echo "The developer has answered questions on this ticket. They win over the brief where the two disagree:"
       echo
@@ -419,7 +440,7 @@ cmd_resume() {
     skills="$(jq -r '.skills | if length == 0 then "none" else join(",") end' <<<"$t")"
     record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
       "$branch" "$(jq -r .base <<<"$t")" "$model" "$effort" "${account:-unknown}" "$wt" "$new_agent" "$skills")"
-    echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))"
+    echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))$( (( respec )) && echo " — on the new spec${rescope:+ of rescope $rescope}")"
   fi
   rm -f "$out" "$brief" "$note"
   return $rc
@@ -1874,6 +1895,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   status / what changed?        re-read the board, agents and git; report what moved
   resume 07                     a new agent where 07's dead one stopped (an OOM, a restart): same
                                   worktree, nothing reset, its conversation resumed (tk.sh resume)
+  resume 07 --respec            the same after a rescope changed 07 under its PR: the agent reads the
+                                  new spec, carries the branch to it, and the PR takes the commits
   open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
                                   DevOps — the Cursor CLI writes message and body (no Claude
                                   tokens, no attribution); TICKET_PR_RUNNER=claude: the Sonnet agent

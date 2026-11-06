@@ -28,6 +28,23 @@ Nothing is pulled, rebased, reset, stashed or deleted. The account is whatever t
 `claude-acc` link already says; the launcher refuses when that isn't the account the ticket ran
 on (`**Account:**`). Catalog skills stay linked from the first launch.
 
+## After a rescope: `--respec`
+
+`tk.sh rescope-apply` changes a ticket's spec and keeps its run state, and tells a live agent.
+A ticket whose agent has already ended (it opened its PR and finished) has no one to tell, and
+its branch holds work built on the old spec. `tk.sh resume <board> <NN> --respec [--rescope <id>]`
+starts the new agent for that case:
+
+- The same checks as above (in progress, its worktree there, not landed, no live agent), in any
+  column: a ticket in **pr** resumes too.
+- The note says the spec changed (which rescope, which PR) and carries the ticket file as it
+  reads now, which wins over the brief the conversation started from. The agent keeps what still
+  fits, changes what doesn't, runs the checks, review and report again, and stays on the branch:
+  the PR takes the new commits and no second one is opened. An earlier approval doesn't carry over.
+
+tk-hub sends it as `resume_ticket` with `respec` (its project chat's Relaunch card). See
+ticket-board `docs/project-chat.md`.
+
 ## Who calls it
 
 - The developer, or the board session on the developer's word (`resume 07`).
