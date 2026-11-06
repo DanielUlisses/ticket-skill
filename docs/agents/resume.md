@@ -69,6 +69,27 @@ Work that is only on the box rides on a gone agent's card: `unpushed` in the exp
 ` · unpushed: …` on the note. `/sweep-tickets` never removes a worktree with uncommitted
 changes, `--force` or not, and needs `--force` for a branch that isn't merged.
 
+## After a rebase: `tk.sh rebase` and `--rebased`
+
+A ticket at the human gate can wait for other work: tk-hub's park "when these merge" holds its
+review until the tickets it names land (ticket-board `docs/unplanned.md`, Park). Once they have,
+`tk.sh rebase <board> <NN>` brings it onto the base's tip:
+
+- Refused unless the ticket is in progress, its worktree is on its branch, its agent is quiet (not
+  working, not at a dialog), nothing is uncommitted, and no rebase or merge is in progress there.
+- A branch something outside the box holds (a PR, or pushed) is never rebased: exit 13 `PUSHED`,
+  and the base comes in by a merge instead (`merge-conflict.sh start`, ticket-merger).
+- Clean (`REBASED`, or `UP TO DATE`): the new `**Base:**` is recorded (`BASE <NN> <sha>`), and the
+  agent is asked to run the brief's checks again, review and report with "rebased onto <base>
+  <sha>" at the top of its hand-off. A live agent gets the ask as a message; a gone one gets a new
+  agent through `tk.sh resume --rebased <sha>`, whose note says the same. The report brings the
+  card back to the human gate.
+- A conflict: the rebase is aborted (the branch is as it was), exit 10 `CONFLICTS`, and the merge
+  flow takes it.
+
+tk-hub sends it as the daemon's `rebase_ticket` (exit 10 or 13 starts ticket-merger with the
+ticket kept at the human gate; Commit merge leaves it there for review).
+
 ## Who calls it
 
 - The developer, or the board session on the developer's word (`resume 07`).
