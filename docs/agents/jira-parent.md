@@ -43,3 +43,20 @@ board" — so the developer approves the numbers that will actually be written.
 An append also updates `board.md`: the new tickets' rows, and new decisions under a dated heading.
 
 The board session (`board.sh itm-9909`) reads an appended board like any other: it is one folder.
+
+## Blockers on another repo's board
+
+A plan that changes several repos has one board per repo under the same name, and a ticket
+waiting on another repo's ticket says so as `<repo>:<NN>` in its `**Blocked by:**` line
+(`deployments:43, .github:36`). The board looks each one up on `<repo>`'s board of the same
+name — the path from `.scratch/<board>/repos`, else a sibling directory — and holds the ticket
+until it is resolved there. One it can't find counts as open: launching past a blocker nobody
+could check is the worse mistake.
+
+`tk.sh export` carries each ref twice: `xrefs` (`{repo, nn}`, as written) and `xblockers`
+(`{repo, nn, board, status}`: the board it was looked up on and the found ticket's status, or
+`missing`), plus `xblockers_open`, the ones still holding it, as text. tk-hub resolves each ref
+again against every board of the same client it has: one on another box, or under another
+name. When it sees one resolved that this box can't find (or reads stale), its launch passes
+`tk.sh launch … --cleared <repo:NN>,…`, which launches past exactly those refs. Only the
+ticket's own cross-board refs can be cleared; a blocker on its own board never can.

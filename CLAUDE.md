@@ -55,7 +55,8 @@ lowercased and stripped before the interview. It names the board — `.scratch/<
 feature slug, and every ticket carries `**Parent:** <id>`. A second
 run on the same id appends to that board. No id, no change. A plan that changes several repos gets
 one board per repo under the same name: each ticket (`**Repo:**`) lives on the board of the repo it
-changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch another repo's ticket
+changes, cross-repo blockers read `<repo>:<NN>` (exported as `xblockers`; tk-hub resolves them across the client's
+boards and launches past one it saw resolved with `--cleared`), and a board refuses to launch another repo's ticket
 (ADR 0005 §8). See `docs/agents/jira-parent.md`.
 
 ### Contracts and rescope

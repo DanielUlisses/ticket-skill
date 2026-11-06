@@ -158,7 +158,11 @@ load_file_board() {
 # (the path from .scratch/<board>/repos — "<name> <path>" per line, written by
 # /ticket — else a sibling directory of this repo) and listed in `xblockers_open`
 # until it is resolved there. One that can't be found counts as open: launching
-# past a blocker nobody could check is the worse mistake.
+# past a blocker nobody could check is the worse mistake. `xblockers` is the same
+# lookup structured, one {repo, nn, board, status} per ref — status the found
+# ticket's, or `missing` — for tk-hub, which resolves each ref again against the
+# client's boards it has (a board on another box, under another name) and may
+# launch past one it saw resolved with tk.sh launch --cleared.
 load_board() {
   local raw; raw="$(load_file_board)"
   BOARD_JSON="$(jq '
@@ -186,15 +190,17 @@ load_board() {
     [[ -n "$path" ]] || path="$(dirname "$ROOT")/$r"
     st="missing"
     f="$(find "$path/.scratch/$BOARD_ID/issues" -maxdepth 1 -name '*.md' 2>/dev/null \
-         | awk -F/ -v n="$n" '{ b = $NF; if (match(b, /^[0-9]+/) && substr(b, 1, RLENGTH) + 0 == n + 0) { print; exit } }')"
+         | awk -F/ -v n="$n" '{ b = $NF; if (match(b, /^[0-9]+/) && substr(b, 1, RLENGTH) + 0 == n + 0) { print; exit } }' || true)"   # no such board: find fails, pipefail would end the export
     [[ -n "$f" ]] && st="$(parse_ticket_file "$f" | jq -r .status)"
     xs="$(jq -c --arg k "$r:$n" --arg v "$st" '. + {($k): $v}' <<<"$xs")"
   done < <(jq -r '.[].xrefs[] | "\(.repo)\t\(.nn | sub("^0+"; ""))"' <<<"$BOARD_JSON" | sort -u)
   # foreign: the repo a ticket changes when that isn't this one — it can't run here.
-  BOARD_JSON="$(jq --argjson xs "$xs" --arg name "$REPO_NAME" --arg root "$ROOT" '
+  BOARD_JSON="$(jq --argjson xs "$xs" --arg name "$REPO_NAME" --arg root "$ROOT" --arg board "$BOARD_ID" '
     map(. + { foreign: (if .repo == "" then ""
                         elif .repo_path != "" then (if (.repo_path | rtrimstr("/")) != $root then "\(.repo) (\(.repo_path))" else "" end)
                         elif .repo != $name then .repo else "" end),
+              xblockers: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
+                           | {repo, nn, board: $board, status: ($xs[$k] // "missing")} ],
               xblockers_open: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
                                 | select($xs[$k] != "resolved")
                                 | "\(.repo):\(.nn)" + (if $xs[$k] == "missing" then " (not found)" else "" end) ] })' <<<"$BOARD_JSON")"
