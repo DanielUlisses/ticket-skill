@@ -208,14 +208,16 @@ Print, with the board's name — the Jira id or the feature slug, i.e. the folde
 
 ```
 Board <board> is ready: <NN> tickets, frontier <the tickets with no blockers>.
-In a new Herdr tab at <root>:
+tk-hub picks it up from here: launch, review and merge its tickets on the hub.
+To run it from this box instead, in a new Herdr tab at <root>:
 
   ~/.claude/skills/implement-tickets/scripts/board.sh <board>
 
-It asks which tickets to start and how to run them, then stays on to merge on your word,
-relay messages to ticket agents, and launch what each merge unblocks. The board's goal, done-when
-and settled decisions are in .scratch/<board>/board.md. Come back to a planning
-session — `/ticket <jira-id> …` appends to this board — when the plan itself needs to change.
+The board's goal, done-when and settled decisions are in .scratch/<board>/board.md.
+Come back to a planning session — `/ticket <jira-id> …` appends to this board — when
+the plan itself needs to change.
 ```
+
+Never start `board.sh` yourself, and don't suggest it as the next step: tk-hub runs boards now, and a board session exists only when the developer opens one by hand.
 
 Then stop. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.
