@@ -66,6 +66,10 @@ Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;
 
 `tk.sh resume <board> <NN>` starts a new agent where a dead one (an OOM, a restart) stopped: the same worktree as it stands, nothing reset or pulled, `claude --resume` on its newest transcript with a note on what it finds (the full brief when there is none), on the account the worktree's link already names. The launcher's `--resume` path makes only a new workspace. tk-hub calls it through the daemon's `resume_ticket`. See `docs/agents/resume.md`.
 
+### Questions
+
+An agent that needs something only the developer has (a value, which repo, a scope call) writes it to its `{{QUESTIONS_FILE}}` (`[{id, q, blocks}]`) instead of guessing; a blocking one stops it and its card moves to **needs you** as `asks: …`. `tk.sh answer <board> <NN> <answer.json>` writes the answer under the ticket's `## Answers` (so every later launch, resume and rescope reads it), marks the question answered and sends it to a live agent; `tk.sh export` carries each ticket's `questions` for tk-hub. Never a secret's value: the agent asks where it lives. See `docs/agents/questions.md`.
+
 ### My tickets
 
 A ticket with `**Owner:** me` is the developer's, and it flows through the board's columns like an agent's — blocked, backlog, working, review, human, pr, done, drawn in magenta; **needs you** keeps only what agents and the board ask. Nothing starts it alone: `tk.sh launch --helper` (the board session passes it only for a ticket the developer named; tk-hub never does) opens its worktree and a helper session the developer drives (`templates/ticket-helper-prompt.md`, the ticket's model and effort, no coordinator), which runs the criteria check — and the reviewer where there is a change — when they say it's ready. A change ships as any ticket's; no change is `tk.sh resolve --no-code "<what was done>"`. See `docs/adr/0009-my-tickets-flow-like-agent-tickets.md`.

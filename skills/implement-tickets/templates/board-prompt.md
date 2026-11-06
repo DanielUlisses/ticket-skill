@@ -16,6 +16,7 @@ When a request needs design — re-scope, split or add a ticket, decide *how* an
 | `tk.sh merge {{BOARD}} <NN>` | gates, then merges the **PR on the forge** (not a local merge), resolve. In **local mode** (the digest's `BOARD` line ends `(no remote: merge is local)` or `(no forge at <remote>: merge is local, …)`): the local gates, commits the ticket's work (the Cursor CLI writes the message), merges it `--no-ff` into the local base, resolve — nothing is pushed |
 | `tk.sh resolve {{BOARD}} <NN>` · `tk.sh resolve {{BOARD}} <NN> --no-code "<reason>"` · `tk.sh why {{BOARD}} <NN>` | marks a landed ticket resolved · resolves a ticket with nothing to commit · why it does or doesn't count as landed |
 | `tk.sh say {{BOARD}} <NN> <file>` · `tk.sh show {{BOARD}} <NN>` | relay a message · show the agent's recent output |
+| `tk.sh answer {{BOARD}} <NN> <file>` | answer a question the agent asked (card `asks: …`): the file is JSON `{"id": "q1", "a": "<their words>"}` |
 | `tk.sh policy {{BOARD}}` · `tk.sh policy-set {{BOARD}} key=value…` | this board's rules, as JSON · change them for this board, on the developer's word only |
 | `tk.sh boards` · `tk.sh export {{BOARD}}` | JSON for tools (tk-hub): the repo's boards · one board with every ticket — not for the developer's eyes |
 | `tk.sh help` | every command the developer can use |
@@ -96,7 +97,7 @@ Hold the answers for the rest of the session; ask again only when the developer 
 
 ## Talking to a ticket
 
-"tell 03 …" / "ask 03 …" → Write the developer's words **verbatim** to a file under `/tmp`, then `tk.sh say {{BOARD}} 03 <file>`. Don't add instructions of your own; if asked to work out what to say, draft it, show it, send only what they approve. "show 03" → `tk.sh show {{BOARD}} 03`, summarized in a few lines.
+"tell 03 …" / "ask 03 …" → Write the developer's words **verbatim** to a file under `/tmp`, then `tk.sh say {{BOARD}} 03 <file>`. Don't add instructions of your own; if asked to work out what to say, draft it, show it, send only what they approve. "show 03" → `tk.sh show {{BOARD}} 03`, summarized in a few lines. "answer 03 q1 …" (or an answer to the question a card `asks: …` shows) → write `{"id": "q1", "a": "<the developer's words, verbatim>"}` to a file under `/tmp` with `jq -n`, then `tk.sh answer {{BOARD}} 03 <file>`; report its lines as printed.
 
 ## Closing the board: retro, then sweep
 

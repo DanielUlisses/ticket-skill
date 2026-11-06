@@ -28,6 +28,8 @@
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
+#   tk.sh answer  <board> <NN> <file>    answer a question the ticket's agent asked (file: JSON {id?, q?, a}):
+#                                        written under the ticket's ## Answers, then sent to a live agent
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
 #   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
@@ -54,7 +56,7 @@
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
 #   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
-#   say: 20 agent at a dialog | 21 no live agent
+#   say, answer: 20 agent at a dialog | 21 no live agent (answer: written, not sent)
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -380,6 +382,14 @@ cmd_resume() {
     echo '```'
     echo
     echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+    # Answers the developer gave since the brief was sent (tk.sh answer): a
+    # resumed conversation gets only this note, not the ticket file again.
+    if grep -q '^## Answers$' "$(jq -r .file <<<"$t")"; then
+      echo
+      echo "The developer has answered questions on this ticket. They win over the brief where the two disagree:"
+      echo
+      sed -n '/^## Answers$/,$p' "$(jq -r .file <<<"$t")" | tail -n +2
+    fi
   } >"$note"
   if (( ! fresh )); then
     transcript="$(ticket_transcript "$wt")"
@@ -837,6 +847,74 @@ cmd_say() {
                                   || echo "SENT to $AGENT ($AGENT_STATE)"
 }
 
+# ---- questions: what an agent asks the developer, and the answers ------------------
+# An agent that needs something only the developer has (a value, which repo, a
+# scope call) writes {{QUESTIONS_FILE}}: a JSON array of {id, q, blocks}. A
+# blocking one stops it, and the card moves to needs you ("asks: …"). tk.sh
+# answer writes the answer under the ticket's ## Answers, marks the question
+# answered there (a, at), and sends it to a live agent. docs/agents/questions.md.
+questions_file() { echo "$(board_state_dir)/questions/$1.json"; }
+
+# A ticket's questions, normalised; [] when there are none or the file doesn't parse.
+ticket_questions() {
+  local f; [[ -n "$1" ]] || { echo '[]'; return; }
+  f="$(questions_file "$1")"
+  [[ -s "$f" ]] || { echo '[]'; return; }
+  jq -c 'if type == "array" then
+           [to_entries[] | .key as $i | .value | select(type == "object" and (.q | type) == "string" and (.q | length) > 0)
+            | {id: ((.id // "q\($i + 1)") | tostring | .[0:20]), q: .q[0:2000], blocks: (.blocks == true),
+               a: (if (.a | type) == "string" then .a else null end), at: (.at // null)}]
+         else [] end' "$f" 2>/dev/null || echo '[]'
+}
+
+# Appends one answer under the ticket file's ## Answers (made on first use).
+append_answer() {
+  local file="$1" id="$2" q="$3" a="$4" at="$5"
+  grep -q '^## Answers$' "$file" || printf '\n## Answers\n\nWhat the developer answered while this ticket ran. Where an answer and the text above disagree, the answer wins.\n' >>"$file"
+  {
+    printf '\n- **%s** (%s) %s\n' "${id:-note}" "$at" "${q//$'\n'/ }"
+    printf '  Answer: %s\n' "${a//$'\n'/$'\n'  }"
+  } >>"$file"
+}
+
+cmd_answer() {
+  local usage="usage: tk.sh answer <board> <NN> <answer.json>   ({\"id\": \"q1\", \"a\": \"...\"} or {\"q\": \"...\", \"a\": \"...\"})"
+  board_init "${1:-}"; need jq
+  local nn="${2:?$usage}" file="${3:?$usage}" t id q a branch qf qs now status msg
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  jq -e 'type == "object" and (.a | type) == "string" and (.a | gsub("\\s"; "") | length) > 0' "$file" >/dev/null 2>&1 \
+    || die "the answer file must be JSON with a non-empty a: $usage"
+  id="$(jq -r '.id // "" | tostring' "$file")"; q="$(jq -r '.q // "" | tostring' "$file")"; a="$(jq -r .a "$file")"
+  branch="$(jq -r '.branch // ""' <<<"$t")"; status="$(jq -r .status <<<"$t")"
+  qs="$(ticket_questions "$branch")"
+  if [[ -n "$id" ]]; then
+    local asked; asked="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .q // empty' <<<"$qs")"
+    [[ -n "$asked" ]] || die "ticket $nn's agent asked no question $id — its questions: $(jq -r 'map(.id) | join(", ") | if . == "" then "none" else . end' <<<"$qs")"
+    q="$asked"
+  fi
+  [[ -n "$q" ]] || die "name the question: an id the agent asked, or q"
+  now="$(date -u +%Y-%m-%dT%H:%MZ)"
+  append_answer "$(jq -r .file <<<"$t")" "$id" "$q" "$a" "$now"
+  if [[ -n "$id" ]]; then
+    qf="$(questions_file "$branch")"
+    jq --arg id "$id" --arg a "$a" --arg at "$now" 'map(if (.id // "" | tostring) == $id then . + {a: $a, at: $at} else . end)' "$qf" >"$qf.tmp" && mv "$qf.tmp" "$qf"
+  fi
+  echo "WRITTEN under ticket $nn's ## Answers"
+  if [[ "$status" != in-progress || -z "$(jq -r '.agent // ""' <<<"$t")" ]]; then
+    echo "NOT SENT — ticket $nn is $status with no agent; its launch reads the answer"; return 0
+  fi
+  need herdr
+  agent_of "$t"
+  case "$AGENT_STATE" in
+    idle|done|working) ;;
+    gone) echo "NOT SENT — $AGENT isn't running; tk.sh resume $BOARD_ID $nn tells the new agent"; return 21 ;;
+    *)    echo "NOT SENT — $AGENT is '$AGENT_STATE'; a message typed at a dialog could answer it"; return 20 ;;
+  esac
+  msg="$(printf 'The developer answered%s:\n\n> %s\n\n%s\n\nIt is also in the ticket'"'"'s ## Answers. Carry on from where you stopped.' "${id:+ your question $id}" "${q//$'\n'/ }" "$a")"
+  herdr agent prompt "$AGENT" "$msg" >/dev/null
+  echo "SENT to $AGENT ($AGENT_STATE)"
+}
+
 cmd_show() {
   board_init "${1:-}"; need herdr
   local t; t="$(ticket_json "${2:?usage: tk.sh show <board> <NN> [lines]}")"
@@ -851,8 +929,9 @@ cmd_show() {
 #   blocked       open, waiting on unresolved tickets
 #   working       its agent is scouting or implementing
 #   agent review  its agent is verifying, reviewing or fixing review findings
-#   needs you     at a dialog, no live agent, its landing can't be told, or it
-#                 belongs on another repo's board
+#   needs you     at a dialog, no live agent, stopped on a question for the
+#                 developer, its landing can't be told, or it belongs on another
+#                 repo's board
 #   human review  the agent finished; the developer reviews (or asks for a PR)
 #   pr            a PR is open — checks running/failed, conflict, changes requested, ready to merge
 #   done          resolved
@@ -872,14 +951,15 @@ board_rows() {
 }
 
 board_rows_() {
-  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir rows=""
+  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0
+    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"
     if [[ "$status" == in-progress ]]; then
+      qs="$(ticket_questions "$branch")"
       l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
       ps="$(pushed_sha "$branch" "$(jq -r .base <<<"$t")" "$(jq -r .worktree <<<"$t")")"
       if [[ "$ps" == *" more "* ]]; then ppart="${ps%% *}"; else pushed="${ps%% *}"; fi
@@ -905,8 +985,8 @@ board_rows_() {
         jq -e 'type == "object"' <<<"${pr:-null}" >/dev/null 2>&1 || pr="null"
       fi
     fi
-    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" \
-      '$t + {state:$st, landed:$l, phase:$ph, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" \
+      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
              checks: ($ck | split(" ") | map(select(test("^[a-z]+=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s --argjson off "$(forge_off && echo true || echo false)" '
@@ -940,6 +1020,8 @@ board_rows_() {
           else {col: "working", note: "yours + helper"} end)
        elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
        elif $t.state == "gone" then {col: "needs", note: "no live agent"}
+       elif ($t.state == "idle" or $t.state == "done") and ($t.questions | any(.a == null and .blocks)) then
+         {col: "needs", note: "asks: \($t.questions | map(select(.a == null and .blocks)) | first | .q | gsub("\\s+"; " ") | .[0:80])"}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" + (if $t.untracked > 0 then " · \($t.untracked) untracked" else "" end)
                                                                      elif $t.pushed_partial != "" then "agent finished (pushed \($t.pushed_partial), more unpushed)"
                                                                      else "agent finished" end)}
@@ -956,6 +1038,7 @@ board_rows_() {
         elif .col == "pr" and (.note | test("ready to merge")) then "merge \(.nn)"
         elif .col == "pr" and (.note | test("conflict")) then "merge \(.nn) — sends the merger"
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
+        elif .col == "needs" and (.note | startswith("asks: ")) then "answer \(.nn) \(.questions | map(select(.a == null and .blocks)) | first | .id) <answer>"
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
@@ -1812,6 +1895,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   again to land it in your local main
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
+  answer 03 q1 <answer>         answer a question 03's agent asked (card: asks: …); written
+                                  under the ticket's ## Answers, then sent to its agent
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
@@ -1920,7 +2005,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;
