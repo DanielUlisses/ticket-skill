@@ -163,7 +163,8 @@ cmd_digest() {
                    (if .state == "gone" and ($was[.nn] != .line) then "ACTION yours \(.nn) — its helper session is closed; the developer ships it (PR, push or merge) or resolves it --no-code \"<what was done>\""
                     else empty end)
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
-                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
+                 elif .state == "gone" and .col == "human" then (if $was[.nn] != .line then "ACTION review \(.nn) — agent finished, its session closed; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))\(if .unpushed != "" then " — unpushed: \(.unpushed), keep its worktree" else "" end)" else empty end)
+                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed\(if .unpushed != "" then " (unpushed: \(.unpushed))" else "" end); tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))"
                  else empty end ]
@@ -972,13 +973,13 @@ board_rows() {
 }
 
 board_rows_() {
-  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs rows=""
+  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs fresh unpushed rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"
+    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"; fresh=false; unpushed=""
     if [[ "$status" == in-progress ]]; then
       qs="$(ticket_questions "$branch")"
       l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
@@ -998,7 +999,12 @@ board_rows_() {
         [[ "$round" =~ ^r[0-9]+$ ]] || round=""
         checks="$(sed -n 2p "$phase_dir/$branch" | tr -cd 'a-z0-9=/ -')"
         phase="${phase:--}"
+        # Written by the ticket's current agent: not older than the mark the
+        # launcher leaves as it starts one (reset_phase). No mark: an agent from
+        # before it, whose `done` can't be told from an earlier agent's.
+        [[ -e "$phase_dir/$branch.started" && ! "$phase_dir/$branch.started" -nt "$phase_dir/$branch" ]] && fresh=true
       fi
+      unpushed="$(unpushed_work "$branch" "$(jq -r .base <<<"$t")" "$(jq -r .worktree <<<"$t")")"
       if forge_ok && [[ -n "$branch" ]]; then
         # A failed lookup leaves the card where git and Herdr put it, so the
         # forge's own error goes to the view's footer instead of nowhere.
@@ -1006,8 +1012,8 @@ board_rows_() {
         jq -e 'type == "object"' <<<"${pr:-null}" >/dev/null 2>&1 || pr="null"
       fi
     fi
-    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" \
-      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" --argjson fresh "$fresh" --arg unpushed "$unpushed" \
+      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, phase_fresh:$fresh, unpushed:$unpushed, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
              checks: ($ck | split(" ") | map(select(test("^[a-z]+=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s --argjson off "$(forge_off && echo true || echo false)" '
@@ -1040,7 +1046,10 @@ board_rows_() {
           elif $t.state == "blocked" then {col: "working", note: "yours — helper at a dialog"}
           else {col: "working", note: "yours + helper"} end)
        elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
-       elif $t.state == "gone" then {col: "needs", note: "no live agent"}
+       elif $t.state == "gone" and $t.phase == "done" and $t.phase_fresh then
+         {col: "human", note: ("agent finished (session closed)" + (if $t.pushed != "" then ", pushed \($t.pushed)" else "" end)
+                               + (if $t.unpushed != "" then " · unpushed: \($t.unpushed)" else "" end))}
+       elif $t.state == "gone" then {col: "needs", note: ("no live agent" + (if $t.unpushed != "" then " · unpushed: \($t.unpushed)" else "" end))}
        elif ($t.state == "idle" or $t.state == "done") and ($t.questions | any(.a == null and .blocks)) then
          {col: "needs", note: "asks: \($t.questions | map(select(.a == null and .blocks)) | first | .q | gsub("\\s+"; " ") | .[0:80])"}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" + (if $t.untracked > 0 then " · \($t.untracked) untracked" else "" end)
@@ -1151,8 +1160,12 @@ ticket_transcript() {
   [[ -d "$HOME/.claude" ]] && roots+=("$HOME/.claude")
   for root in "$HOME"/.claude-switch/accounts/*; do [[ -d "$root" ]] && roots+=("$root"); done
   enc="${wt//[^A-Za-z0-9]/-}"
+  # `|| continue`, not `&&`: a last root without the directory would end the
+  # loop on a failed test, and pipefail would turn that into tk.sh resume
+  # exiting 1 with nothing said.
   for root in "${roots[@]}"; do
-    [[ -d "$root/projects/$enc" ]] && find "$root/projects/$enc" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n'
+    [[ -d "$root/projects/$enc" ]] || continue
+    find "$root/projects/$enc" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n'
   done | sort -rn | head -1 | cut -f2-
 }
 

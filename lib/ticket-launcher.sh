@@ -882,6 +882,21 @@ build_session_agents() {
 }
 
 # ---- the launch ---------------------------------------------------------------
+# ---- the phase file, as a new agent starts -------------------------------------
+# A launch writes `launching`, a resume `resuming`, over line 1 of the ticket's
+# phase file; line 2 (tests=… criteria=… review=…, what the merge gates read) is
+# kept. Then `<phase file>.started`, the epoch this agent started: tk.sh's board
+# rows read a `done` as this agent's only when the phase file is not older than
+# the mark, so an earlier agent's `done` can't make a dead one look finished.
+reset_phase() {
+  local word=launching line2=""
+  (( RESUME )) && word=resuming
+  [[ -s "$PHASE_FILE" ]] && line2="$(sed -n 2p "$PHASE_FILE")"
+  date +%s >"$PHASE_FILE.started"
+  printf '%s\n%s\n' "$word" "$line2" >"$PHASE_FILE"
+  log "phase file reset to '$word' (an earlier agent's phase is not this one's)"
+}
+
 # ---- --resume: a new agent in the worktree a dead one left ---------------------
 # Instead of section 1-2 of launcher_main: the worktree, its branch, its account
 # link and its catalog skills are all there already, so only a workspace, its
@@ -1248,6 +1263,15 @@ SUMMARY
     echo "DRY_RUN=1"
     exit 0
   fi
+
+  # ---- 0. the phase file says a new agent is starting -------------------------
+  # Whatever an earlier agent left there (a `done`, say) is not this one's: line
+  # 1 becomes `launching` or `resuming`, line 2 (the gates' tests/criteria/review)
+  # stays. The `.started` mark beside it is when this agent started; tk.sh's
+  # board rows trust a `done` only when the phase file is not older than it
+  # (docs/agents/resume.md, Finished or orphaned). First, so a start that fails
+  # half-way leaves no earlier `done` to read as this agent's.
+  reset_phase
 
   if (( RESUME )); then
     resume_workspace
