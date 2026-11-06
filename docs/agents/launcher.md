@@ -207,8 +207,9 @@ the sweep starts missing its own leftovers.
 `resolve_remote_control` decides whether the agent starts with `--remote-control <host>/<agent>`
 (passed to `claude` through `herdr agent start ... --`), so the session also opens in the Claude app;
 tk-hub's daemon reads the link from the pane (`tk.sh show`) and the Sessions page offers it as
-"Claude app". `TICKET_REMOTE_CONTROL=1|0` wins; else the box policy file's `remote_control`
-boolean, which devboxes writes from the client file; else off, as every launch was before. Off is
-the right value where the client's Claude plan has Remote Control turned off: the session is still
-reached with herdr over Tailscale SSH (the Sessions page's Terminal). The summary prints
+"Claude app". `TICKET_REMOTE_CONTROL=1|0` wins; else the box policy file's `remote_control_tickets`
+boolean, which devboxes writes from the client file; else off. Off is the default: a ticket agent's
+chat is tk-hub's Sessions page, and Remote Control is kept for the grills tk-hub's project chat
+starts (the box policy's `remote_control`, read by tk-hub's daemon). The session is still reached
+with herdr over Tailscale SSH (the Sessions page's Terminal). The summary prints
 `REMOTE_CONTROL=on (<origin>: <name>)` or `off (<origin>)`.
