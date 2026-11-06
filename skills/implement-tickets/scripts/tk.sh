@@ -1339,7 +1339,7 @@ cmd_rescope() {
   jq -r '.[] | "  \(.nn) \(.status)\(if .owner == "me" then " (owner me)" else "" end) — provides: \(.provides | map(.text) | join("; ") | if . == "" then "-" else . end) — consumes: \(.consumes | map(.text) | join("; ") | if . == "" then "-" else . end)"' <<<"$BOARD_JSON"
   [[ -f "$BOARD_PATH/board.md" ]] && { echo; echo "BOARD.MD $BOARD_PATH/board.md"; }
   echo
-  echo "WRITE $dir/plan.json — {\"summary\": \"<one line>\", \"changes\": [{\"op\": \"add|change|split|drop\", \"nn\": \"<NN>\", \"file\": \"<NN>-<slug>.md\" (add, change), \"files\": [...] (split), \"why\": \"<one line>\"}]}"
+  echo "WRITE $dir/plan.json — {\"summary\": \"<one line>\", \"changes\": [{\"op\": \"add|change|split|drop\", \"nn\": \"<NN>\", \"file\": \"<NN>-<slug>.md\" (add, change), \"files\": [...] (split), \"why\": \"<one line>\"}], \"findings\": [<id>, ...] (optional: the tk-hub validator findings the plan fixes)}"
   echo "WRITE $dir/issues/<NN>-<slug>.md — each added, changed or split-into ticket, whole, in the board's ticket shape"
   echo "THEN tk.sh rescope-propose $BOARD_ID $id — checks them; the developer applies it (tk-hub, or tk.sh rescope-apply $BOARD_ID $id)"
 }
@@ -1352,6 +1352,8 @@ rescope_check() {
   [[ -f "$plan" ]] || { echo "ERROR no plan.json in $dir"; return 1; }
   jq -e '(.changes | type == "array" and length > 0) and (.summary | type == "string")' "$plan" >/dev/null 2>&1 \
     || { echo "ERROR plan.json needs a summary (string) and changes (a non-empty array)"; return 1; }
+  jq -e '(.findings // []) | type == "array" and all(type == "number" and . == floor and . > 0)' "$plan" >/dev/null 2>&1 \
+    || { echo "ERROR plan.json findings, when given, is an array of finding ids (positive integers)"; errs=$((errs + 1)); }
   local seen=" " new=" "
   while IFS=$'\x1f' read -r op nn file files; do
     [[ "$nn" =~ ^0*([0-9]+)$ ]] && nn="${BASH_REMATCH[1]}"
@@ -1441,8 +1443,11 @@ rescope_json() {
       ch="$(jq -c --argjson i "$i" --argjson into "$into" '.[$i].into = $into' <<<"$ch")"
     done
   fi
-  jq -c --argjson ch "$ch" --arg summary "$( [[ -f "$plan" ]] && jq -r '.summary // ""' "$plan" 2>/dev/null)" \
-    '. + {summary: $summary, changes: $ch}' <<<"$meta"
+  # The validator findings (tk-hub ids) the planner says the plan fixes: only whole numbers.
+  local fixes="[]"
+  [[ -f "$plan" ]] && fixes="$(jq -c '[(.findings // [])[]? | select(type == "number" and . == floor and . > 0)]' "$plan" 2>/dev/null || echo '[]')"
+  jq -c --argjson ch "$ch" --argjson fixes "${fixes:-[]}" --arg summary "$( [[ -f "$plan" ]] && jq -r '.summary // ""' "$plan" 2>/dev/null)" \
+    '. + {summary: $summary, findings: $fixes, changes: $ch}' <<<"$meta"
 }
 
 # Every rescope still waiting on the developer (open or proposed), as a JSON array.
