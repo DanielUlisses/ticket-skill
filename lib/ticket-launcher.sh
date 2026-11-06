@@ -178,9 +178,10 @@ fill_prose() {
 # ---- Remote Control -----------------------------------------------------------------
 # Whether the agent starts with `claude --remote-control <name>`, so its
 # session opens in the Claude app (tk-hub's Sessions page links it, read from the pane).
-# TICKET_REMOTE_CONTROL=1|0 wins; else the box policy's `remote_control` (true|false,
-# ${TICKET_BOX_POLICY:-~/.config/tk-daemon/policy.json}, which devboxes writes per client:
-# off where the client's plan has Remote Control turned off); else off, as before.
+# TICKET_REMOTE_CONTROL=1|0 wins; else the box policy's `remote_control_tickets`
+# (true|false, ${TICKET_BOX_POLICY:-~/.config/tk-daemon/policy.json}, which devboxes writes
+# per client; its `remote_control` is for the daemon's grills and coworkers, since a ticket
+# agent's chat is tk-hub's Sessions page); else off.
 # Sets REMOTE_CONTROL (0|1), RC_ORIGIN (env|box|default) and RC_ARGS. Needs AGENT.
 resolve_remote_control() {
   local v="${TICKET_REMOTE_CONTROL:-}" f
@@ -188,8 +189,8 @@ resolve_remote_control() {
   if [[ -z "$v" ]]; then
     f="${TICKET_BOX_POLICY:-$HOME/.config/tk-daemon/policy.json}"
     RC_ORIGIN="box"
-    [[ -s "$f" ]] && v="$(jq -r 'if type == "object" and (.remote_control | type) == "boolean"
-                                 then (if .remote_control then 1 else 0 end) else empty end' "$f" 2>/dev/null || true)"
+    [[ -s "$f" ]] && v="$(jq -r 'if type == "object" and (.remote_control_tickets | type) == "boolean"
+                                 then (if .remote_control_tickets then 1 else 0 end) else empty end' "$f" 2>/dev/null || true)"
   fi
   [[ -n "$v" ]] || { v=0; RC_ORIGIN=default; }
   case "$v" in
