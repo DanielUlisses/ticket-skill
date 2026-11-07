@@ -97,3 +97,7 @@ Skills from the private `skills-catalog` repo, synced by devboxes to `/opt/skill
 ### Test plan
 
 Every coordinator report ends with a `## Test plan`: 3 to 6 steps on the deployed environment, each with the evidence that proves it; a ticket with `**Tested in:** <batch>` starts it "Tested in <batch>." and lists only what it adds to the batch's test. `tk.sh export` carries `test_plan` and `tested_in` per ticket; tk-hub verifies from the plan and raises no per-ticket Verify for a batched ticket. See `docs/agents/test-plan.md`.
+
+### Batches
+
+`/ticket` names the batches with the developer: tickets one end-to-end test proves together, a harness ticket among them, each a `.scratch/<board>/batches/<name>.md` (what it proves, env, tickets, harness, the test plan skeleton), and each of their tickets carries `**Tested in:** <name>`. `tk.sh batch <board> <NN> <batch|none>` moves a ticket; `tk.sh export` carries `batches`. See `docs/agents/batches.md`.

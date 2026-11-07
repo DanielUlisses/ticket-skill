@@ -37,6 +37,8 @@
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh answer  <board> <NN> <file>    answer a question the ticket's agent asked (file: JSON {id?, q?, a}):
 #                                        written under the ticket's ## Answers, then sent to a live agent
+#   tk.sh batch   <board> <NN> <batch|none>  put a ticket in a batch (its **Tested in:** line and the
+#                                        batch file's **Tickets:** line), or take it out (none)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
 #   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
@@ -1235,6 +1237,100 @@ export_test_plans() {
   echo "$out"
 }
 
+# ---- batches: tickets proved together by one end-to-end test ----------------------
+# .scratch/<board>/batches/<name>.md, written by /ticket's planning (or tk-hub's
+# backfill agent): what the batch proves, where it is tested, its tickets (the
+# harness among them: the ticket that builds what the test needs) and the test plan
+# skeleton. A ticket's **Tested in:** line is what puts it in a batch; tk.sh batch
+# keeps the batch file's **Tickets:** line in step. See docs/agents/batches.md.
+BATCH_NAME_RE='^[a-z0-9][a-z0-9._-]{0,63}$'
+
+batches_dir() { echo "$BOARD_PATH/batches"; }
+
+# A batch file's one-line field (**Proves:**, **Env:**, **Tickets:**, **Harness:**).
+batch_field() { sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" "$1" | head -1; }
+
+# The ticket numbers a Tickets/Harness value names (`01, 02 — why`): the numbers
+# before any dash or parenthesis, two digits wide.
+batch_nns() {
+  local v="${1%%—*}"; v="${v%%(*}"
+  { grep -oE '[0-9]+' <<<"$v" || true; } | while read -r n; do printf '%02d\n' "$((10#$n))"; done | sort -u
+}
+
+# Every batch of the board as JSON: [{name, file, proves, env, tickets:[nn],
+# harness:[nn], test_plan:[line]}], tickets the union of the file's line and the
+# tickets whose **Tested in:** names it. [] when the board has none.
+batches_json() {
+  local dir f name out="[]" tickets harness plan
+  dir="$(batches_dir)"
+  for f in "$dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f" .md)"
+    [[ "$name" =~ $BATCH_NAME_RE ]] || continue
+    tickets="$( { batch_nns "$(batch_field "$f" Tickets)"; jq -r --arg b "$name" '.[] | select(.tested_in == $b) | .nn' <<<"$BOARD_JSON"; } \
+      | sort -u | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    harness="$(batch_nns "$(batch_field "$f" Harness)" | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    plan="$(awk '
+      /^## / { on = ($0 ~ /^## Test plan[ \t]*$/); next }
+      on && NF { sub(/^[ \t]*([-*]|[0-9]+[.)])[ \t]+/, ""); print substr($0, 1, 300) }
+    ' "$f" | head -30 | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    out="$(jq -c --arg name "$name" --arg file "$f" --arg proves "$(batch_field "$f" Proves)" --arg env "$(batch_field "$f" Env)" \
+      --argjson tickets "$tickets" --argjson harness "$harness" --argjson plan "$plan" \
+      '. + [{name: $name, file: $file, proves: $proves, env: $env, tickets: $tickets, harness: $harness, test_plan: $plan}]' <<<"$out")"
+  done
+  echo "$out"
+}
+
+# Writes (or with "", removes) a ticket file's **Tested in:** line: in place when it
+# has one, else just below **Blocked by:**, else below the heading.
+set_tested_in() {
+  local f="$1" batch="$2"
+  awk -v b="$batch" '
+    /^\*\*Tested in:\*\*/ { if (b != "") print "**Tested in:** " b; done = 1; skip = (b == ""); next }
+    skip && /^[ \t]*$/ { skip = 0; next }
+    { skip = 0; print }
+    !done && b != "" && /^\*\*Blocked by:\*\*/ { print ""; print "**Tested in:** " b; done = 1 }
+    END { if (!done && b != "") { print ""; print "**Tested in:** " b } }
+  ' "$f" | write_atomic "$f"
+}
+
+# Adds nn to (or removes it from) a batch file's **Tickets:** line, keeping the order.
+set_batch_ticket() {
+  local f="$1" nn="$2" op="$3" list
+  list="$( { batch_nns "$(batch_field "$f" Tickets)"; if [[ "$op" == add ]]; then echo "$nn"; fi; } \
+    | sort -u | awk -v op="$op" -v nn="$nn" '!(op == "del" && $0 == nn)' | paste -sd, - | sed 's/,/, /g')"
+  if grep -q '^\*\*Tickets:\*\*' "$f"; then
+    awk -v l="${list:-None}" '/^\*\*Tickets:\*\*/ && !d { print "**Tickets:** " l; d = 1; next } { print }' "$f" | write_atomic "$f"
+  else
+    { cat "$f"; printf '\n**Tickets:** %s\n' "${list:-None}"; } | write_atomic "$f"
+  fi
+}
+
+cmd_batch() {
+  local usage="usage: tk.sh batch <board> <NN> <batch|none>   (the batch's file is .scratch/<board>/batches/<batch>.md)"
+  (( $# == 3 )) || die "$usage"
+  board_init "$1"; need jq
+  local t nn batch="$3" old file dir known
+  t="$(ticket_json "$2")"; nn="$(jq -r .nn <<<"$t")"; file="$(jq -r .file <<<"$t")"
+  old="$(jq -r '.tested_in // ""' <<<"$t")"
+  dir="$(batches_dir)"
+  [[ "$batch" == none ]] && batch=""
+  batch="${batch,,}"
+  if [[ -n "$batch" ]]; then
+    [[ "$batch" =~ $BATCH_NAME_RE ]] || die "a batch name is lowercase letters, digits, . _ - (got '$3')"
+    if [[ ! -f "$dir/$batch.md" ]]; then
+      known="$(find "$dir" -maxdepth 1 -name '*.md' -printf '%f\n' 2>/dev/null | sed 's/\.md$//' | sort | paste -sd, - | sed 's/,/, /g')"
+      die "no batch $batch on this board — its batches: ${known:-none} (write .scratch/<board>/batches/$batch.md first: docs/agents/batches.md)"
+    fi
+  fi
+  if [[ "$old" == "$batch" ]]; then echo "UNCHANGED ticket $nn is in ${batch:-no batch}"; return 0; fi
+  set_tested_in "$file" "$batch"
+  [[ -n "$old" && -f "$dir/$old.md" ]] && set_batch_ticket "$dir/$old.md" "$nn" del
+  [[ -n "$batch" ]] && set_batch_ticket "$dir/$batch.md" "$nn" add
+  if [[ -n "$batch" ]]; then echo "BATCHED ticket $nn in $batch${old:+ (was $old)}"
+  else echo "UNBATCHED ticket $nn (was $old): it is tested alone"; fi
+}
+
 cmd_export() {
   (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
   need git; need jq
@@ -1260,7 +1356,8 @@ cmd_export() {
     | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
     | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi \
     | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" --argjson tp "$(export_test_plans)" \
-        '.rescopes = $rescopes | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})'
+        --argjson batches "$(batches_json)" \
+        '.rescopes = $rescopes | .batches = $batches | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})'
   local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
   [[ -s "$errs" ]] && sort -u "$errs" >&2
   return "$rc"
@@ -2133,6 +2230,11 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
                           can't provide, providers that aren't blockers; NN adds its change (diff,
                           EAD/TDD Contracts rows). tk-hub's validator (validate-contracts) reads it
 
+Batches (tickets one end-to-end test proves; .scratch/<board>/batches/<name>.md)
+  tk.sh batch <board> 04 dev-pipeline   put 04 in a batch: its **Tested in:** line and the batch's
+                          **Tickets:** line; `none` takes it out (tested alone). tk.sh export
+                          carries the batches; tk-hub tests a batch once all its tickets landed
+
 Rescope (a planner session proposes, you apply; nothing changes before rescope-apply)
   tk.sh rescope <board> 04,05 --reason "<why>"   open one, print the planner's seed (/ticket rescope …)
   tk.sh rescope-propose <board> <id>             the planner's last step: check plan.json and its files
@@ -2174,7 +2276,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|batch|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;
