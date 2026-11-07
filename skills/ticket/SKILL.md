@@ -64,6 +64,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Give each ticket a **suggested helpers** line where it would help: what the launched coordinator should fan out to its cheap subagents before and after implementation — the repo questions worth a scout each, the external API worth a researcher, checks worth splitting across testers (`scouts: callers of PaymentService, how retries are done elsewhere · research: Stripe webhook signature, API 2025-09 · tests: split by package`). Leave it out when the ticket is small enough that the coordinator's own judgement covers it.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs. Infrastructure that only runs live (Terraform, Terragrunt, Helm) is `None` too — `None — offline checks only (terragrunt hclfmt, validate); verified by the developer's plan` — never a command that touches a real environment. A `None` there also raises that ticket's review to `TICKET_REVIEW_EFFORT_UNTESTED` (`high`), and the reviewer returns the plan it expects.
 - **One ticket per document.** A document too large for one context window splits by section — each part its own ticket, each blocked by the one before, all writing the same output file — never in parallel, since they share a file. Only the **last** part carries the validator in its seams line; earlier parts read e.g. `None — partial document (sections X–Y); validated by NN`. Each part's outline names the sections it owns and notes that the earlier sections already exist in the file.
+- Group the tickets into **batches**: the tickets one end-to-end test on the deployed environment proves together, so the developer deploys and tests once for several tickets instead of once each. Name each batch (`dev-pipeline`, lowercase), say in one sentence what it proves and where it is tested, and give it a **harness** — the ticket that builds what the test needs (a pipeline, seed data, a script) — adding that ticket when the plan has none. Sketch the batch's test plan: 2 to 6 steps, each with the evidence that proves it. A ticket whose proof stands alone (a doc ticket, an `**Owner:** me` ticket, a one-off fix) is in no batch. Ask the developer to confirm the batches with the breakdown.
 - Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
 Present the breakdown as a numbered list — title, repo (when the plan spans more than one), blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
@@ -82,6 +83,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 **Repo:** <the repo root's directory name> — <its absolute path>
 
 **Blocked by:** <blockers, or "None (can start immediately)">
+
+**Tested in:** <batch — this line only for a ticket in a batch>
 
 **Owner:** me — <this line only for work the developer does by hand: an account, a token in a repo variable, a call>
 
@@ -118,6 +121,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 `**Kind:**` is written only on a ticket whose deliverable is a document — a scope, a proposal, an estimate, a design document — and reads `doc`; no line means `code`, and any other word is refused at launch with the known kinds named. A doc ticket launches with `/ticket`'s unattended doc brief on a `docs` branch: nobody is interviewed, so the ticket carries a `## Outline` section (audience, sections and what each says, in/out of scope, assumptions, estimate method, sources, output path) above its criteria — written from the Phase 1 grilling of the document's content — that outline is the plan, and whatever it leaves open the document marks as an assumption. No outline line may start with a bold `**Label:**` — the board reads such lines from anywhere in the body, so `**Effort:** 40 person-days` would be taken as the ticket's effort and `**Status:** Draft` as its status; write them as `- Effort: …` bullets. Its **Seams under test** line is `None` plus the validator to run (`None — verify with check_ead.py <file>`); its review stays at `TICKET_DOC_REVIEW_*`. `**Doc type:**` picks the guidance: `ead` and `tdd` send the drafter to the installed skill of that name and its `check_<type>.py`, `other` (or no line) is the generic brief.
 
 `**Provides:**` and `**Consumes:**` are the ticket's **contract**, written on every ticket: what it makes that another ticket (or the developer) uses, and what it needs that it does not make. Each item is `<kind> <name>`, items separated by `;`, the kind one of `endpoint function method class type schema table column migration env config file cli rpc event message page component metric resource output variable secret deliverable`, the name in backticks — a name another ticket can repeat word for word, because the validator matches a consume to a provide by kind and name. A consume ends in where it comes from: `(from 02)` for a ticket on this board, `(<repo>:03)` for one on another repo's board, `(existing)` for what is already on the base. A ticket with nothing on one side writes `None`. Every consume needs a provider — a planned ticket, or `(existing)` — and the ticket that provides it is one of its blockers, directly or through another; check that before presenting the breakdown. tk-hub's validator (`validate-contracts`) reads these lines when tickets are planned, when each one merges and when an agent reports something missing, so a ticket that builds the wrong thing is caught before the one that needs it starts (`docs/agents/contracts.md`).
+
+`**Tested in:**` names the batch whose end-to-end test proves the ticket (the planning step above); the ticket's agent then writes only what it adds to that test, and tk-hub raises no Verify of its own for it. No line means the ticket is tested alone. Moving a ticket later is `tk.sh batch <board> <NN> <batch|none>`, never a hand edit, so the batch file stays in step.
 
 `**Owner:** me` marks a ticket the developer does themselves — create a token and put it in a pipeline variable, register an app, ask a client, or a change they want to make by hand. No agent launches it on its own: it moves through the board's columns like any ticket, and once its blockers are resolved the developer starts it with a helper session (`tk.sh launch … --helper`, ADR 0009) or does it by hand; `tk.sh resolve <board> <NN> --no-code "<what was done>"` closes one with nothing to commit, and a change ships as any ticket's. Only work later tickets can't run without earns a ticket; by-hand checks ("try it", "run that") stay criteria. No line means an agent runs it.
 
@@ -170,6 +175,27 @@ ls <root>/.scratch/<board>/issues/ 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)-.*\.
 ```
 
 Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a ticket file that is already there — appending adds ticket files, and updates `board.md` (below).
+
+#### Then write the batches
+
+For each batch, write `.scratch/<board>/batches/<name>.md` beside `issues/` — in the repo of its tickets; a batch spanning repos is written to each repo's board with the same content:
+
+```markdown
+# Batch: <name>
+
+**Proves:** <what working end to end this batch shows, one sentence>
+
+**Env:** <where the developer tests it: dev, a cluster, local>
+
+**Tickets:** <NN, NN, NN — every ticket of it, the harness included>
+
+**Harness:** <NN — what it builds for the test, or "None">
+
+## Test plan
+- <step> → <the evidence that proves it>
+```
+
+No line of a batch file may start with `# <digits>:`. Appending to a board, add new tickets to an existing batch's `**Tickets:**` line or write a new batch file; never remove a batch file a run has tested.
 
 #### Then write `board.md`
 

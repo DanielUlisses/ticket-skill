@@ -21,6 +21,8 @@ Read the input (below, or the file you were given), then answer with **one JSON 
 - `contracts[]`: open contract findings (what a ticket consumes that nothing provides, a provider that built something else).
 - `last_review`: the last weekly review (health, summary, forecast, risks, decisions), or null.
 - `previous[]`: earlier proposals and how the developer decided them (`accepted`, `dismissed`, `superseded`). **Don't propose a dismissed one again** unless something changed; then say what.
+- `batches[]`: the project's batches (tickets one end-to-end test proves together): `name`, `proves`, `tickets` and `landed` (how many have landed), `harness` (the tickets the test needs), `ready` (every ticket landed and nothing since the last run is unchanged: the hub has posted its Batch ready card), `why_not`, and `last` / `last_note` (how its last test ended: `green`, `red` with what failed, or `scheduled`).
+- `hours` (week only): the client's last seven days, `days[]` of `date` and `worked_min` (the developer's real minutes on the client), and `ceiling_h`, the most hours a day the developer gives that client (a maximum, not a target; null: none set). For a client shared by several projects the minutes are the client's, not this project's.
 - `since_review` (day only): the column moves, tasks done and tasks made since the last weekly review.
 
 ## How to judge
@@ -35,6 +37,7 @@ Read the input (below, or the file you were given), then answer with **one JSON 
   - Never propose something already in `tasks[]`, nor a rescope already pending (`rescopes`).
   - Fewer tasks are better: each one is the developer's to clear. Never a task the plan already settled (a ticket's text or its `## Answers`, what grilling decided: re-asking it is noise). Never a check ahead for something review or his test of the deploy on the dev environment would catch: that is found and fixed then. Never a check on, or a wait for, someone else's step ("check whether the client granted access"): when they do it, the developer runs what the tickets built, and that run is the check. A `concerns` verdict over should or nit findings is not a reason for a task.
 - **Status draft** (week, client projects only): a short message the developer sends the client himself. Plain words, no ticket numbers or internal tool names: what got done this week, what is next, anything the client needs to do or decide, and the expected date when you gave one. Three to six lines.
+- **Notes** (week only, at most three, one sentence each): how the week went, in numbers the developer can't see at a glance. The hours against the ceiling (well under it for days, or over it), estimates that keep running long, and a batch worth testing now: one whose tickets are all landed, or nearly, with every error of its last red run fixed (name it). Nothing when the week was ordinary. A note is never a task.
 - **Personal projects** (week, `personal` true): make a `keep`, `pause` or `drop` call. `pause` when it competes with client work or nothing moved for two weeks; `drop` only when it has stalled for a month or its point is gone; `keep` otherwise. No status draft.
 
 ## Answer: weekly review (`kind` week)
@@ -52,7 +55,8 @@ Read the input (below, or the file you were given), then answer with **one JSON 
     {"kind": "rescope", "board_key": "<board key>", "nn": "<NN>", "title": "<short>", "why": "<what the rescope should change>"}
   ],
   "status_draft": "<the client message, or null for a personal project>",
-  "personal": {"call": "keep | pause | drop", "why": "<one sentence>"}
+  "personal": {"call": "keep | pause | drop", "why": "<one sentence>"},
+  "notes": ["<one sentence on how the week went>"]
 }
 ```
 

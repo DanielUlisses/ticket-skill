@@ -80,6 +80,10 @@ Keep the summary it returns, and its `## Remember`.
 
 Stop. Report: files changed (one line each), how you verified it (the suite you ran, or that this repo has none and the exact commands you exercised instead), the criteria table, the review findings (resolved and pending), and how to look at it (`git status` / `git diff` in `{{WORKTREE}}`). Everything stays unstaged — the developer reviews, commits, and pushes it themselves.
 
+### `## Test plan` — how the developer proves it after the deploy
+
+After the final review, write a `## Test plan` section: what the developer does once this ticket is merged and deployed to show it works, in plain words, one step per line as a `- ` bullet, each step ending with what they should see (`- Run the dev pipeline for app-x → it finishes green and the image tag is the new commit.`). The developer is the one who deploys and troubleshoots, so name the environment, the command or page, and the evidence. Three to six steps; no step the tests or the review already proved, no "check the code". When nothing runs the change here, the reviewer's **Expected plan** is where these steps come from. When the ticket has a `**Tested in:**` line, its batch is tested end to end once all its tickets are in: then write only what this ticket adds to that test, and start the section with `Tested in <batch>.` This section replaces any by-hand checklist: tk-hub shows it on the ticket and joins a batch's into one plan.
+
 ### `## Remember` — what the next ticket should already know
 
 When something this ticket's **Consumes:** line names is missing or isn't what the line says — no such function, an endpoint with another shape, a column a provider never added — say so in a `## Missing contracts` section of the report, one line each: the item as the Consumes line writes it, then what you found instead (`function store.read() — store.py has read_board(key), no read()`). Leave the section out when nothing was missing. tk-hub's validator reads it and sends the finding to the ticket that should have provided it.
