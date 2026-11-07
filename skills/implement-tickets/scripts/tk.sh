@@ -10,7 +10,8 @@
 # refuse, and the local base is never pushed.
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
-#                                        (a **Kind:** doc ticket launches as a document, branch type docs)
+#                 [--cleared <repo:NN>,…]   (a **Kind:** doc ticket launches as a document, branch type docs;
+#                                        --cleared: cross-board blockers tk-hub saw resolved, launched past)
 #   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]
 #                                        a new agent in the worktree a dead one left (OOM, restart), as it
 #                                        stands: claude --resume on its newest transcript (--fresh: the
@@ -213,13 +214,14 @@ record_run_state() {
 
 cmd_launch() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper]}"; shift
-  local type="" model="" effort="" account="" research="" helper=0
+  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper] [--cleared <repo:NN>,…]}"; shift
+  local type="" model="" effort="" account="" research="" helper=0 cleared=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type) type="$2"; shift 2 ;; --model) model="$2"; shift 2 ;;
       --effort) effort="$2"; shift 2 ;; --account) account="$2"; shift 2 ;;
       --research) research="$2"; shift 2 ;; --helper) helper=1; shift ;;
+      --cleared) cleared="${cleared:+$cleared,}$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
@@ -252,8 +254,25 @@ cmd_launch() {
   fi
   local foreign; foreign="$(foreign_repo "$t")"
   [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its worktree, branch and PR belong there. Move its file to that repo's .scratch/$BOARD_ID/issues/ and launch it from the board there (board.sh $BOARD_ID, run in that repo)"
-  open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] + (.xblockers_open // []) | join(",")' <<<"$t")"
+  # --cleared: cross-board blockers (<repo>:<NN>) tk-hub saw resolved on the
+  # client's boards it has — one on another box, or under another board name,
+  # that this box can't find or reads stale. Only the ticket's own cross-board
+  # refs can be cleared; a blocker on this board never can.
+  local xnorm='def xnorm: sub(" \\(not found\\)$"; "") | sub(":#"; ":") | capture("^(?<r>.*):0*(?<n>[0-9]+)$") | "\(.r):\(if .n == "" then "0" else .n end)";'
+  if [[ -n "$cleared" ]]; then
+    local bad
+    bad="$(jq -r --arg c "$cleared" "$xnorm"'
+      [ .xrefs[] | "\(.repo):\(.nn)" | xnorm ] as $mine
+      | [ $c | split("[ ,]+"; null)[] | select(. != "")
+          | select((test("^[A-Za-z0-9._-]+:#?[0-9]+$") | not) or ((xnorm | IN($mine[])) | not)) ] | join(", ")' <<<"$t")"
+    [[ -z "$bad" ]] || die "--cleared names what isn't one of ticket $nn's cross-board blockers: $bad"
+  fi
+  open="$(jq -r --argjson b "$BOARD_JSON" --arg c "$cleared" "$xnorm"'
+    [ $c | split("[ ,]+"; null)[] | select(. != "") | xnorm ] as $cl
+    | [.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn]
+      + [ (.xblockers_open // [])[] | select((xnorm | IN($cl[])) | not) ] | join(",")' <<<"$t")"
   [[ -z "$open" ]] || die "ticket $nn is blocked by $open — not on the frontier"
+  [[ -z "$cleared" ]] || echo "launching past cross-board blockers tk-hub saw resolved: ${cleared//,/, }"
   # Run state is written under the `# NN: Title` heading; a file without one
   # would launch and then stay `open` on the board, and launch again.
   grep -qE '^# [0-9]+:' "$(jq -r .file <<<"$t")" || die "ticket $nn has no '# $nn: <Title>' heading — add one, then launch"
