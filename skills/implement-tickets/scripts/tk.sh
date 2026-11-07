@@ -1215,6 +1215,26 @@ export_transcripts() {
   echo "$out"
 }
 
+# Each launched ticket's test plan: the `## Test plan` section of its saved report
+# (the ticket agent writes it after the final review), as {nn: [line]}: one line per
+# step, bullets and numbers stripped, blank lines dropped, at most 20 lines of 300
+# characters. A ticket with no report, or none with the section, is left out.
+export_test_plans() {
+  local reports nn branch f out="{}" lines
+  reports="$(board_state_dir)/reports"
+  while IFS=$'\t' read -r nn branch; do
+    f="$reports/$branch.md"
+    [[ -s "$f" ]] || continue
+    lines="$(awk '
+      /^## / { on = ($0 ~ /^## Test plan[ \t]*$/); next }
+      on && NF { sub(/^[ \t]*([-*]|[0-9]+[.)])[ \t]+/, ""); print substr($0, 1, 300) }
+    ' "$f" | head -20 | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    [[ "$lines" != "[]" ]] || continue
+    out="$(jq -c --arg n "$nn" --argjson l "$lines" '. + {($n): $l}' <<<"$out")"
+  done < <(jq -r '.[] | select(.branch != "") | "\(.nn)\t\(.branch)"' <<<"$BOARD_JSON")
+  echo "$out"
+}
+
 cmd_export() {
   (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
   need git; need jq
@@ -1239,8 +1259,8 @@ cmd_export() {
       board_md: null, retro_results_md: null, tickets: .}' \
     | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
     | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi \
-    | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" \
-        '.rescopes = $rescopes | .tickets |= map(. + {transcript: ($tr[.nn] // "")})'
+    | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" --argjson tp "$(export_test_plans)" \
+        '.rescopes = $rescopes | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})'
   local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
   [[ -s "$errs" ]] && sort -u "$errs" >&2
   return "$rc"

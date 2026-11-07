@@ -17,13 +17,15 @@
 # The one output shape is BOARD_JSON: an array of tickets, ordered by number,
 #   {nn, title, ref, file, status, branch, base, model, effort, account,
 #    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type,
-#    owner, provides:[item], consumes:[item], dropped, skills:[name]}
+#    owner, provides:[item], consumes:[item], dropped, skills:[name], tested_in}
 # (kind and doc_type are the **Kind:** / **Doc type:** lines, lowercased; empty
 # when the ticket has none — a ticket with no Kind is `code`; owner is `me` or
 # `ai`, from **Owner:**, `ai` when there is none; provides and consumes are the
 # **Provides:** / **Consumes:** lines as contract items, see CONTRACT_KINDS;
 # dropped is the **Dropped:** line a rescope writes beside **Status:** dropped;
-# skills is the **Skills:** run-state line: the catalog skills its launch linked)
+# skills is the **Skills:** run-state line: the catalog skills its launch linked;
+# tested_in is the **Tested in:** line, the batch whose end-to-end test covers it,
+# "" when it is tested alone)
 # plus BOARD_ID (what to pass back to every script), BOARD_SLUG (a path-safe
 # name for state files) and BOARD_PATH.
 
@@ -118,11 +120,12 @@ parse_ticket_file() {
     /^\*\*Consumes:\*\*/          { consumes = val($0) }
     /^\*\*Dropped:\*\*/           { dropped = val($0) }
     /^\*\*Skills:\*\*/            { skills = val($0) }
+    /^\*\*Tested in:\*\*/         { testedin = tolower(first(val($0))) }
     /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped, skills
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped, skills, testedin
     }' "$f" \
   | jq -R --arg file "$f" --arg kinds "$CONTRACT_KINDS" "$CONTRACT_JQ"'split("\u001f") as $v | ($kinds | split(" ")) as $k | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
@@ -133,7 +136,8 @@ parse_ticket_file() {
       owner: (if $v[18] == "me" then "me" else "ai" end),
       provides: ($v[19] | contract_items($k)), consumes: ($v[20] | contract_items($k)),
       provides_raw: $v[19], consumes_raw: $v[20], dropped: $v[21],
-      skills: ($v[22] | if . == "" or . == "none" then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end) }'
+      skills: ($v[22] | if . == "" or . == "none" then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end),
+      tested_in: (if $v[23] == "none" then "" else $v[23] end) }'
 }
 
 load_file_board() {
@@ -141,7 +145,7 @@ load_file_board() {
   # .scratch/project-memory.md is repo memory, not a board or a ticket: never load it.
   [[ "$(basename "$BOARD_PATH")" != project-memory.md ]] || die "$BOARD_PATH is project memory, not a board"
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope \) -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope -o -name batches \) -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
   # tickets — board.md and other notes — not a ticket.
