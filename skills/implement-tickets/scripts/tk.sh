@@ -844,7 +844,7 @@ resolve_ticket() {
   elif [[ "$l" == yes:squash:* ]]; then
     sha="${l#yes:squash:}"
   else
-    sha="$(git -C "$ROOT" rev-parse --short "$branch")"
+    sha="$(landed_tip "$branch")"
   fi
   line="**Status:** resolved — merged into $BASE_BRANCH as ${sha:-?} on $(date +%F)"
   local f tmp; f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"

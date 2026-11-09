@@ -284,6 +284,23 @@ landed() {
   echo "no"
 }
 
+# The short sha of the copy of <branch> that landed() found in the base by
+# ancestry: the local branch, else its remote-tracking copy. After a merge the
+# local branch is often deleted (gh pr merge -d, a sweep, by hand) while the
+# remote-tracking ref stays, and landed() said yes from that copy, so the
+# resolve line must read the same one. Nothing when neither is in the base.
+landed_tip() {
+  local branch="$1" t
+  [[ -n "$branch" ]] || return 0
+  for t in "refs/heads/$branch" "refs/remotes/$REMOTE/$branch"; do
+    git -C "$ROOT" show-ref --verify --quiet "$t" || continue
+    if git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_REF" 2>/dev/null \
+       || git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_BRANCH" 2>/dev/null; then
+      git -C "$ROOT" rev-parse --short "$t"; return 0
+    fi
+  done
+}
+
 # Has <branch> been pushed (tk.sh push, a PR, or by hand)? Its remote-tracking
 # copy holds commits past <base_sha> (the ticket's recorded base, else its
 # merge-base with BASE_REF). Prints that copy's short sha when everything is
