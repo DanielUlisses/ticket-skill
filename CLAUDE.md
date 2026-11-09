@@ -77,7 +77,7 @@ A ticket with `**Owner:** me` is the developer's, and it flows through the board
 
 ### Project manager
 
-The `project-manager` skill is the brief tk-hub's weekly project review (Opus) and daily delta check (Haiku) run on the planner box: health, forecast, risks, decisions owed, up to three improvements (a task of the developer's or a rescope), a client status draft or a personal project's keep/pause/drop call. Nothing changes until the developer accepts a proposal on tk-hub's Health tab. By-hand checks stay a ticket's checklist; only a step later tickets can't run without (a token in a pipeline variable) is a *blocking check*, which tk-hub's synthesis marks and the hub turns into the developer's task blocking those tickets. See `docs/agents/project-manager.md`.
+The `project-manager` skill is the brief tk-hub's weekly project review (Opus) and daily delta check (Haiku) run on the planner box: health, forecast, risks, decisions owed, up to three improvements (rescopes; never a task), a client status draft or a personal project's keep/pause/drop call. Nothing changes until the developer accepts a proposal on tk-hub's Health tab. By-hand checks stay a ticket's checklist; only a step later tickets can't run without (a token in a pipeline variable) is a *blocking check*, which tk-hub's synthesis marks and the hub turns into the developer's task blocking those tickets. See `docs/agents/project-manager.md`.
 
 ### Board policy
 

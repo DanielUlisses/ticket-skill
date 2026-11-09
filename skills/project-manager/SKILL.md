@@ -1,6 +1,6 @@
 ---
 name: project-manager
-description: Reviews one project the way a project manager would — its health, when it will be done, its risks, the decisions the developer owes, and two or three improvements (a task of the developer's, or a rescope of tickets), plus a status draft for the client or, for a personal project, a keep/pause/drop call. tk-hub runs it headless on the planner box each week (Opus) and as a short daily delta check (Haiku); run it by hand on the hub's project input.
+description: Reviews one project the way a project manager would — its health, when it will be done, its risks, the decisions the developer owes, and two or three improvements (rescopes of tickets), plus a status draft for the client or, for a personal project, a keep/pause/drop call. tk-hub runs it headless on the planner box each week (Opus) and as a short daily delta check (Haiku); run it by hand on the hub's project input.
 argument-hint: "<tk-hub's project input (kind week or day), or a file holding it>"
 ---
 
@@ -32,10 +32,10 @@ Read the input (below, or the file you were given), then answer with **one JSON 
 - **Risks.** Concrete and specific to this project: name the ticket or task. `high` only for what would stop the project or ship something wrong. Three is usually enough; never more than five.
 - **Decisions owed.** Questions only the developer can answer (a scope call, a client question, a choice between two designs, an access request). Each one sentence, ending in a question mark.
 - **Improvements** (week only, at most three, the most useful first):
-  - `task`: something the developer should do, with `tickets` naming the tickets it is about or unblocks (`board_key` and `nn` from the input's boards; at least one, never only in the prose), `tasks` the ids of his open tasks from `tasks[]` it holds up (optional), and `est_min` when you can tell. Prefer the one task that unblocks the most. A task with no ticket, or one not on the boards, comes back as `REFUSED:` with the reason: answer again, the whole JSON, with the refs fixed or the task left out. The hub asks the developer whether a task is still needed once its tickets are done, so the refs matter.
+  - Never a task. tk-hub makes no tasks for the developer: his list is each ticket's next step plus what he types himself. Something he must do for a ticket is that ticket's step already (its question, its review, its merge, its deploy check); say it under decisions or risks, never as an improvement. An improvement of kind `task` is dropped.
   - `rescope`: a ticket whose plan is wrong — too big (several review rounds), built against a contract nobody provides, or no longer needed. Name `board_key`, `nn`, and `why` (what the rescope should change); the developer starts a `/ticket rescope` session from it.
-  - Never propose something already in `tasks[]`, nor a rescope already pending (`rescopes`).
-  - Fewer tasks are better: each one is the developer's to clear. Never a task the plan already settled (a ticket's text or its `## Answers`, what grilling decided: re-asking it is noise). Never a check ahead for something review or his test of the deploy on the dev environment would catch: that is found and fixed then. Never a check on, or a wait for, someone else's step ("check whether the client granted access"): when they do it, the developer runs what the tickets built, and that run is the check. A `concerns` verdict over should or nit findings is not a reason for a task.
+  - Never propose a rescope already pending (`rescopes`).
+  - Fewer is better, and none is a good week's answer. Never a rescope of what the plan already settled (a ticket's text or its `## Answers`, what grilling decided).
 - **Status draft** (week, client projects only): a short message the developer sends the client himself. Plain words, no ticket numbers or internal tool names: what got done this week, what is next, anything the client needs to do or decide, and the expected date when you gave one. Three to six lines.
 - **Notes** (week only, at most three, one sentence each): how the week went, in numbers the developer can't see at a glance. The hours against the ceiling (well under it for days, or over it), estimates that keep running long, and a batch worth testing now: one whose tickets are all landed, or nearly, with every error of its last red run fixed (name it). Nothing when the week was ordinary. A note is never a task.
 - **Personal projects** (week, `personal` true): make a `keep`, `pause` or `drop` call. `pause` when it competes with client work or nothing moved for two weeks; `drop` only when it has stalled for a month or its point is gone; `keep` otherwise. No status draft.
@@ -50,8 +50,6 @@ Read the input (below, or the file you were given), then answer with **one JSON 
   "risks": [{"text": "<one sentence>", "level": "low | medium | high"}],
   "decisions": ["<a question only the developer can answer?>"],
   "improvements": [
-    {"kind": "task", "title": "<what to do, imperative>", "detail": "<optional>", "why": "<what it unblocks or saves>",
-     "est_min": 15, "tickets": [{"board_key": "<board key>", "nn": "<NN>"}], "tasks": [<open task id>]},
     {"kind": "rescope", "board_key": "<board key>", "nn": "<NN>", "title": "<short>", "why": "<what the rescope should change>"}
   ],
   "status_draft": "<the client message, or null for a personal project>",
