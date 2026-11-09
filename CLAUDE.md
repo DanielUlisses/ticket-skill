@@ -101,3 +101,7 @@ Every coordinator report ends with a `## Test plan`: 3 to 6 steps on the deploye
 ### Batches
 
 `/ticket` names the batches with the developer: tickets one end-to-end test proves together, a harness ticket among them, each a `.scratch/<board>/batches/<name>.md` (what it proves, env, tickets, harness, the test plan skeleton), and each of their tickets carries `**Tested in:** <name>`. `tk.sh batch <board> <NN> <batch|none>` moves a ticket; `tk.sh export` carries `batches`. See `docs/agents/batches.md`.
+
+### Next step
+
+`tk.sh export` gives every ticket a `next`: its one next step, computed from the row the status board draws (`scripts/next-step.jq`), never stored. `owner` is `agent` (build, review, fix, conflict), `hub` (launch, resume, resolve, pr, merge under `auto_merge`), `daniel` (review, merge, answer, start/work for an `**Owner:** me` ticket) or `none` (blocked, wait, done); `step` is the word, `since` when the ticket last changed, `reason` one line. tk-hub's Day list is the tickets whose step is the developer's, and the hub adds what only it knows (a park, a ready batch's Test, the Deploy he ticks, a refused resolve). See `docs/agents/next-step.md`.
