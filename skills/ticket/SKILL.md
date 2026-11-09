@@ -38,7 +38,8 @@ If the task is empty — including a task that was only an id — ask for a desc
 2. Grill the developer with `mattpocock-skills:grilling` on the change only: what the findings and the reason leave open, and what each dependent ticket needs from the new shape. Keep it short — the board is already settled everywhere else.
 3. Write the proposal into the rescope's folder, never into `issues/`: each added, changed or split-into ticket whole, as `<dir>/issues/<NN>-<slug>.md` in the ticket shape below (a changed ticket keeps its number; new ones start at the free number), and `<dir>/plan.json`: `{"summary": "<one line>", "changes": [{"op": "add|change|split|drop", "nn": "<NN>", "file": "<NN>-<slug>.md", "files": ["…"], "why": "<one line>"}]}` — `file` for add and change, `files` for split (the tickets it splits into), no file for drop. When the seed or the reason names tk-hub validator findings the plan fixes (`finding #86`), list their ids as `"findings": [86, 87]` in `plan.json`, so tk-hub can mark them on the rescope; leave it out when none are named — never guess an id. Only an open ticket splits or drops; an in-progress one can change, and its agent is told when the rescope applies. Rewire every dependent's `**Blocked by:**` and `**Consumes:**` so nothing waits on a dropped ticket.
 4. Run `tk.sh rescope-propose <board> <id>`. It checks the files against the board; fix what it reports and run it again.
-5. Stop, and say: the rescope is proposed; apply it on tk-hub (the plan diff on the ticket or project), or `tk.sh rescope-apply <board> <id>` in a terminal; `tk.sh rescope-discard <board> <id>` drops it.
+5. Write `.scratch/<board>/.planned` with `Write`, holding the `RESCOPE <id>` line: the planning session's done marker (Phase 3), which lets tk-hub close this session and free the repo.
+6. Stop, and say: the rescope is proposed; apply it on tk-hub (the plan diff on the ticket or project), or `tk.sh rescope-apply <board> <id>` in a terminal; `tk.sh rescope-discard <board> <id>` drops it.
 
 See `docs/agents/contracts.md`.
 
@@ -245,5 +246,7 @@ the plan itself needs to change.
 ```
 
 Never start `board.sh` yourself, and don't suggest it as the next step: tk-hub runs boards now, and a board session exists only when the developer opens one by hand.
+
+Last, with `Write`, write `.scratch/<board>/.planned` in this repo — one board per repo, so on a plan spanning repos only this repo's board — holding the `Board <board> is ready: …` line. It is the planning session's done marker: when tk-hub started this session, its daemon sees the file, closes the session a little later (the transcript stays readable on the hub), frees the repo for the next grilling and files the board under the hub project that holds the repo. Write it again on every run that appends to the board; it is never a ticket (no `# NN:` heading).
 
 Then stop. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.
