@@ -47,6 +47,7 @@
 #                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub;
 #                                        merge_mode: pr | push (forge none by policy/env) | local (local mode)
 #                                        rescopes: the rescopes waiting on the developer; each ticket's transcript
+#                                        and next: its one next step {owner, step, since, reason} (next-step.jq)
 #   tk.sh validate <board> [<NN>]        the contract evidence as JSON: every ticket's Provides/Consumes and
 #                                        body head, consumes nothing here provides, providers that aren't
 #                                        blockers; with <NN>, that ticket's change (diff, EAD/TDD Contracts rows)
@@ -1237,6 +1238,30 @@ export_test_plans() {
   echo "$out"
 }
 
+# When each ticket last changed, as {nn: "YYYY-MM-DDTHH:MM:SSZ"}: the newest of its
+# file, its phase file and its questions file (next.since, next-step.jq).
+export_since() {
+  local nn file branch phase_dir qdir f m newest out="{}"
+  phase_dir="$(board_state_dir)/phase"; qdir="$(board_state_dir)/questions"
+  while IFS=$'\t' read -r nn file branch; do
+    newest=0
+    for f in "$file" ${branch:+"$phase_dir/$branch" "$qdir/$branch.json"}; do
+      [[ -f "$f" ]] || continue
+      m="$(stat -c %Y "$f" 2>/dev/null)" || continue
+      (( m > newest )) && newest="$m"
+    done
+    (( newest > 0 )) || continue
+    out="$(jq -c --arg n "$nn" --arg t "$(date -u -d "@$newest" +%Y-%m-%dT%H:%M:%SZ)" '. + {($n): $t}' <<<"$out")"
+  done < <(jq -r '.[] | "\(.nn)\t\(.file)\t\(.branch // "")"' <<<"$BOARD_JSON")
+  echo "$out"
+}
+
+# The board's policy for next-step.jq (auto_merge, require_human_before_pr), {} when it
+# can't be read: in a subshell, so FORGE and TICKET_FORGE stay board_init's.
+export_policy() {
+  ( policy_resolve - 2>/dev/null && echo "$POLICY_JSON" ) || echo '{}'
+}
+
 # ---- batches: tickets proved together by one end-to-end test ----------------------
 # .scratch/<board>/batches/<name>.md, written by /ticket's planning (or tk-hub's
 # backfill agent): what the batch proves, where it is tested, its tickets (the
@@ -1357,7 +1382,9 @@ cmd_export() {
     | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi \
     | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" --argjson tp "$(export_test_plans)" \
         --argjson batches "$(batches_json)" \
-        '.rescopes = $rescopes | .batches = $batches | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})'
+        '.rescopes = $rescopes | .batches = $batches | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})' \
+    | jq --argjson pol "$(export_policy)" --argjson since "$(export_since)" \
+        --argjson off "$(forge_off && echo true || echo false)" -f "$SKILL_DIR/scripts/next-step.jq"
   local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
   [[ -s "$errs" ]] && sort -u "$errs" >&2
   return "$rc"
@@ -2224,6 +2251,9 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
                           branch name, not a sha; `has_remote` tells a repo with no remote from
                           one with a remote but forge none; `merge_mode: pr|push|local` is how a
                           ticket ships — a PR, a push merged on the forge by you, a local merge).
+                          Each ticket's `next` is its one next step: owner agent|hub|daniel|none,
+                          step (build, review, merge, answer, launch, resolve, blocked, ...),
+                          since (when it last changed) and reason (docs/agents/next-step.md).
                           No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
                           keeps it offline
   tk.sh validate <board> [NN]   the contract evidence: Provides/Consumes per ticket, what this board
