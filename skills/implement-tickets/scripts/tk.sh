@@ -65,7 +65,7 @@
 #   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
-#   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
+#   gates/merge: 10 conflicting (send ticket-merger; wins over failed or pending checks) | 11 checks pending | 12 another gate failed
 #   say, answer: 20 agent at a dialog | 21 no live agent (answer: written, not sent)
 set -euo pipefail
 
@@ -557,8 +557,12 @@ cmd_rebase() {
 
 # ---- gates and merge ---------------------------------------------------------------
 # Sets PR_NUMBER. Prints one GATE line per gate; returns 0 / 10 / 11 / 12.
+# A conflicting PR returns 10 even when its checks failed or are still running:
+# GitHub runs no CI on a PR that conflicts with its base, so its checks are stale
+# or missing until the merger has merged the base in. Only a ready or review
+# failure (or a forge that couldn't be asked) beats the conflict.
 run_gates() {
-  local t="$1" branch json fail=0 conflicting=0 pending=0 forge
+  local t="$1" branch json fail=0 checks_fail=0 conflicting=0 pending=0 forge
   branch="$(jq -r .branch <<<"$t")"
   PR_NUMBER=""; forge="$(forge_name)"
   [[ -n "$branch" ]] || { echo "GATE pr FAIL ticket has no branch recorded"; return 12; }
@@ -576,17 +580,20 @@ run_gates() {
     CONFLICTING) echo "GATE mergeable FAIL conflicts with $BASE_BRANCH — send ticket-merger"; conflicting=1 ;;
     *)           echo "GATE mergeable FAIL $forge hasn't computed it yet — ask again in a minute"; fail=1 ;;
   esac
-  local checks; checks="$(jq -c .checks <<<"$json")"
+  local checks stale=""; checks="$(jq -c .checks <<<"$json")"
+  (( conflicting )) && stale=" ($forge runs no CI on a conflicting PR: the merger goes first)"
   if [[ "$(jq '[.[] | select(.s == "bad")] | length' <<<"$checks")" -gt 0 ]]; then
-    echo "GATE checks FAIL failed: $(jq -r '[.[] | select(.s == "bad") | .n] | join(", ")' <<<"$checks")"; fail=1
+    echo "GATE checks FAIL failed: $(jq -r '[.[] | select(.s == "bad") | .n] | join(", ")' <<<"$checks")$stale"; checks_fail=1
   elif [[ "$(jq '[.[] | select(.s == "pending")] | length' <<<"$checks")" -gt 0 ]]; then
-    echo "GATE checks FAIL still running: $(jq -r '[.[] | select(.s == "pending") | .n] | join(", ")' <<<"$checks")"; pending=1
+    echo "GATE checks FAIL still running: $(jq -r '[.[] | select(.s == "pending") | .n] | join(", ")' <<<"$checks")$stale"; pending=1
   else echo "GATE checks PASS ($(jq length <<<"$checks") checks)"; fi
   case "$(jq -r .review <<<"$json")" in
     APPROVED|"") echo "GATE review PASS" ;;
     *) echo "GATE review FAIL $(jq -r .review <<<"$json")"; fail=1 ;;
   esac
-  (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
+  (( fail )) && return 12
+  (( conflicting )) && return 10
+  (( checks_fail )) && return 12; (( pending )) && return 11; return 0
 }
 
 # A repo in local mode (local_mode: no remote, or no forge) has no PR to gate:
