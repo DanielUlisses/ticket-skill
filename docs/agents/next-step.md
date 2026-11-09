@@ -17,14 +17,13 @@ ticket moves, its step changes.
 | `agent` | `build` | working: the agent scouts or implements |
 | `agent` | `review` | agent review: verifying, reviewing, fixing findings, reporting |
 | `agent` | `fix` | a PR with changes requested or failed checks |
-| `agent` | `conflict` | a PR with a conflict: the merger resolves it |
 | `hub` | `launch` | backlog, an agent's ticket: ready to launch |
 | `hub` | `resume` | needs you, no live agent: `tk.sh resume` starts a new one |
 | `hub` | `resolve` | done but not resolved: it landed, `tk.sh resolve` records it |
 | `hub` | `pr` | human, under `night_shift` with `require_human_before_pr: false` and the review passed |
 | `hub` | `merge` | a PR ready to merge, with `auto_merge: true` |
 | `daniel` | `review` | human (the gate), or a PR awaiting review |
-| `daniel` | `merge` | a PR ready to merge, or a branch pushed with the forge off |
+| `daniel` | `merge` | a PR ready to merge, a PR that conflicts with the base (`merge NN` sends the merger: nothing else starts it), or a branch pushed with the forge off |
 | `daniel` | `answer` | an agent's blocking question, an agent at a dialog, a landing nobody can tell, a ticket on the wrong repo's board |
 | `daniel` | `start` / `work` | an `**Owner:** me` ticket in backlog / working |
 | `none` | `blocked` | open, waiting on tickets not resolved |

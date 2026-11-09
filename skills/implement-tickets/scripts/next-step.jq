@@ -4,11 +4,12 @@
 # resolve).
 #
 #   owner   agent   the ticket's agent: build, review (its own review loop), fix (a PR's
-#                   changes or failed checks), conflict (the merger)
+#                   changes or failed checks)
 #           hub     tk-hub or the board session acts on its own: launch, resume (no live
 #                   agent), resolve (landed), pr (night_shift, no human gate, review passed),
 #                   merge (auto_merge)
-#           daniel  the developer: review (the human gate, a PR awaiting review), merge,
+#           daniel  the developer: review (the human gate, a PR awaiting review), merge
+#                   (a conflicting PR too: nothing sends the merger until "merge NN" does),
 #                   answer (a question, a dialog, a landing nobody can tell, a misfiled
 #                   ticket), start / work (a ticket of his own, Owner: me)
 #           none    nobody: blocked, wait (checks running, a draft), done
@@ -51,7 +52,7 @@ def next_of($pol):
            (if $pol.auto_merge == true then step("hub"; "merge"; "PR #\(.pr.number) ready to merge, auto_merge on")
             else step("daniel"; "merge"; "PR #\(.pr.number) ready to merge") end)
          elif $s == "awaiting review" then step("daniel"; "review"; "PR #\(.pr.number) awaiting review")
-         elif $s == "conflict" then step("agent"; "conflict"; "PR #\(.pr.number) has a conflict: the merger resolves it")
+         elif $s == "conflict" then step("daniel"; "merge"; "PR #\(.pr.number) conflicts with the base: merge \(.nn) sends the merger")
          elif $s == "changes requested" or $s == "checks failed" then step("agent"; "fix"; "PR #\(.pr.number): \($s)")
          else step("none"; "wait"; "PR #\(.pr.number): \($s)") end)
     elif .col == "human" then
