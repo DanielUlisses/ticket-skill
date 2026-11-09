@@ -21,7 +21,7 @@ ticket moves, its step changes.
 | `hub` | `launch` | backlog, an agent's ticket: ready to launch |
 | `hub` | `resume` | needs you, no live agent: `tk.sh resume` starts a new one |
 | `hub` | `resolve` | done but not resolved: it landed, `tk.sh resolve` records it |
-| `hub` | `pr` | human, with `require_human_before_pr: false`: no gate before the PR |
+| `hub` | `pr` | human, under `night_shift` with `require_human_before_pr: false` and the review passed |
 | `hub` | `merge` | a PR ready to merge, with `auto_merge: true` |
 | `daniel` | `review` | human (the gate), or a PR awaiting review |
 | `daniel` | `merge` | a PR ready to merge, or a branch pushed with the forge off |

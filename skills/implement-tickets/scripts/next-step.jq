@@ -6,7 +6,8 @@
 #   owner   agent   the ticket's agent: build, review (its own review loop), fix (a PR's
 #                   changes or failed checks), conflict (the merger)
 #           hub     tk-hub or the board session acts on its own: launch, resume (no live
-#                   agent), resolve (landed), pr (open one, no human gate), merge (auto_merge)
+#                   agent), resolve (landed), pr (night_shift, no human gate, review passed),
+#                   merge (auto_merge)
 #           daniel  the developer: review (the human gate, a PR awaiting review), merge,
 #                   answer (a question, a dialog, a landing nobody can tell, a misfiled
 #                   ticket), start / work (a ticket of his own, Owner: me)
@@ -15,7 +16,7 @@
 #   since   when the ticket last changed (its file, phase or questions), ISO UTC, or null
 #   reason  one line: why this step, in words
 #
-# Arguments: $pol (tk.sh policy's object: auto_merge, require_human_before_pr),
+# Arguments: $pol (tk.sh policy's object: auto_merge, night_shift, require_human_before_pr),
 # $off (true when the forge is off: a pushed branch is merged on the forge by hand) and
 # $since ({nn: iso}). Input: the export object; output: it, each ticket with `next`.
 
@@ -56,7 +57,8 @@ def next_of($pol):
     elif .col == "human" then
       (if $off and .pushed != "" then step("daniel"; "merge"; "pushed \(.pushed): merge it on the forge")
        elif $who == "me" then step("daniel"; "review"; "yours: checked, ship it")
-       elif $pol.require_human_before_pr == false then step("hub"; "pr"; "agent finished; no human gate before the PR")
+       elif $pol.night_shift == true and $pol.require_human_before_pr == false and (.checks.review // "") == "ok"
+         then step("hub"; "pr"; "review passed; night shift ships it with no human gate")
        else step("daniel"; "review"; .note) end)
     elif .col == "review" then step("agent"; "review"; .note)
     elif .col == "working" then
