@@ -4,12 +4,12 @@ tk-hub reviews each active project the way a project manager would: once a week 
 
 | run | when | model | answer |
 |---|---|---|---|
-| weekly review | Monday 07:30 (`TK_HUB_PM_WEEK_AT`) | Opus, high | health, forecast, risks, decisions owed, up to three improvements (a task of the developer's, or a rescope), a client status draft or a personal project's keep/pause/drop call, and up to three notes on how the week went (hours against the client's ceiling, estimates, a batch worth testing: what tk-hub's weekly Insights review used to say) |
+| weekly review | Monday 07:30 (`TK_HUB_PM_WEEK_AT`) | Opus, high | health, forecast, risks, decisions owed, up to three improvements (rescopes; never a task), a client status draft or a personal project's keep/pause/drop call, and up to three notes on how the week went (hours against the client's ceiling, estimates, a batch worth testing: what tk-hub's weekly Insights review used to say) |
 | daily check | working days 07:45 (`TK_HUB_PM_DAY_AT`) | Haiku, low | health now, whether it changed, risks and decisions |
 
 The hub's daemon prepends the skill's body to the hub's input when it runs `claude -p` on the planner box (`run_planner` with `skill: project-manager`, no tools), the way `validate-contracts` runs. The planner box therefore needs this repo's `install.sh` run, or the runs fail with "the project-manager skill isn't installed on this box".
 
-Nothing the review proposes changes anything until the developer accepts it on tk-hub's Health tab: a task becomes one of the developer's tasks blocking the tickets it names; a rescope starts `/ticket rescope <board> <NN> <why>` on the board's box (contracts.md); pause and drop change the project's stage.
+Nothing the review proposes changes anything until the developer accepts it on tk-hub's Health tab: a rescope starts `/ticket rescope <board> <NN> <why>` on the board's box (contracts.md); pause and drop change the project's stage.
 
 The input also carries the project's batches (`batches[]`, see `docs/agents/batches.md`) and, for the weekly review, the client's last seven days of worked minutes against its ceiling (`hours`).
 
