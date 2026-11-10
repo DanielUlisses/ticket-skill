@@ -101,3 +101,8 @@ still being checked.
 - An agent loses `az` until per-project read-only MCPs exist; a box whose agents need it stays off.
 - The agent's Claude has no user-level skills or plugins of the developer's: its subagents come
   through `--agents` (on by default), catalog skills through the worktree.
+- Reading the forge came back on purpose (2026-11-10): an agent fixing its PR's CI asked for the logs it
+  could no longer read. devboxes' `agent_gh_token_ref` gives the agent user a read-only GitHub token
+  (fine-grained: Actions, Checks, Contents, Metadata, Pull requests, read) as `GH_TOKEN`, and the brief
+  says `gh` is for reading its PR, checks and CI logs. Pushing, opening PRs and merging stay on the board
+  side, as the developer. Azure DevOps has no equivalent yet.

@@ -152,7 +152,7 @@ agent_summary() {
 agent_brief_note() {
   agent_on || return 0
   cat <<NOTE
-**You run as your own user on this box, \`$TKA_USER\`, not as the developer.** There are no cloud CLIs here (no az, aws or gcloud logins), no gh and no SSH keys: never try to sign in to one. Mock cloud and forge calls in tests. When the ticket needs a live fact only a cloud account holds (a resource's name, a setting's value), ask it as a question in the questions file. Your report, phase and questions files already exist: Read each one before you Write it. Git metadata is read-only to you (no \`git add\`, commit, stash, checkout or branch): leave the change in the worktree, as below. \`docker\` is rootless and yours.
+**You run as your own user on this box, \`$TKA_USER\`, not as the developer.** There are no cloud CLIs here (no az, aws or gcloud logins) and no SSH keys: never try to sign in to one. \`gh\` works only when this box gives you a read-only GitHub token (\`gh auth status\` says so): use it to read your PR, its checks and its CI logs (\`gh pr checks\`, \`gh run view --log-failed\`), never to push, comment, approve or merge, which the board does. Without one, ask for the failing job's log in the questions file. Mock cloud and forge calls in tests. When the ticket needs a live fact only a cloud account holds (a resource's name, a setting's value), ask it as a question in the questions file. Your report, phase and questions files already exist: Read each one before you Write it. Git metadata is read-only to you (no \`git add\`, commit, stash, checkout or branch): leave the change in the worktree, as below. \`docker\` is rootless and yours.
 NOTE
 }
 
