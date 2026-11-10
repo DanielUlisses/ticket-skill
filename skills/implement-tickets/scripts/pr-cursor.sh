@@ -199,8 +199,14 @@ args=(-p "$(cat "$PROMPT")" --output-format json --trust)
 [[ -n "${TICKET_PR_CURSOR_MODEL:-}" ]] && args+=(--model "$TICKET_PR_CURSOR_MODEL")
 # shellcheck disable=SC2206
 [[ -n "${TICKET_CURSOR_ARGS:-}" ]] && args+=(${TICKET_CURSOR_ARGS})
+# With the agent user on, Cursor runs in an empty directory, not the worktree:
+# the agent writes the worktree, and Cursor would load its .cursor/ rules and
+# MCP servers there, as the developer. The prompt already holds the diff.
+resolve_agent_user
+run_in="$WT"
+if agent_on; then run_in="$(mktemp -d)"; trap 'rm -f "$PROMPT"; rm -rf "$run_in"' EXIT; fi
 rc=0
-out="$(cd "$WT" && TICKET_NET_TIMEOUT="${TICKET_CURSOR_TIMEOUT:-300}" quiet_net "$CURSOR" "${args[@]}" 2>"$PROMPT.err")" || rc=$?
+out="$(cd "$run_in" && TICKET_NET_TIMEOUT="${TICKET_CURSOR_TIMEOUT:-300}" quiet_net "$CURSOR" "${args[@]}" 2>"$PROMPT.err")" || rc=$?
 if (( rc != 0 )); then
   cat "$PROMPT.err" >&2; rm -f "$PROMPT.err"
   (( rc == 124 )) && die "the Cursor CLI timed out after ${TICKET_CURSOR_TIMEOUT:-300}s — run '$CURSOR -p hello' in a shell: it may need 'cursor-agent login'"

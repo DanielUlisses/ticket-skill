@@ -435,6 +435,10 @@ repo_init() {
   resolve_repo_root
   HAS_REMOTE=0
   git -C "$ROOT" remote get-url "$REMOTE" >/dev/null 2>&1 && HAS_REMOTE=1
+  # With the agent user on, the developer's git runs no repo hooks from here on
+  # (agent_git_guard): a hook path inside a worktree is the agent's to write.
+  resolve_agent_user
+  agent_git_guard
   return 0
 }
 

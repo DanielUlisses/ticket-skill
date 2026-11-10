@@ -22,6 +22,8 @@ printf '%s\n%s\n' "helping" "" > {{PHASE_FILE}}
 
 Write `helping` now, before your first message.
 
+{{AGENT_USER_NOTE}}
+
 {{PROJECT_MEMORY}}
 
 {{RETRO_RESULTS}}

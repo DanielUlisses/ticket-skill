@@ -491,6 +491,10 @@ The ticket's doc type is **$DOC_TYPE**, and the \`$DOC_TYPE\` skill is installed
 # checkout. That is also why this runs after the worktree has been verified onto
 # disk and not a line before it.
 trust_worktree_mise() {
+  # With the agent user on, the developer never trusts a worktree's mise config:
+  # the agent writes it, and a trusted one runs as whoever's shell loads it. The
+  # wrapper trusts it in the agent's own trust store instead.
+  if agent_on; then log "agent user: mise trust left to $TKA_USER's own store (the wrapper)"; return 0; fi
   local wt_real shown out rc
   command -v mise >/dev/null 2>&1 || return 0
 
@@ -618,6 +622,7 @@ link_ticket_account() {
 # carries on.
 verify_ticket_account() {
   local actual rc
+  if agent_on; then verify_agent_user; return 0; fi
   have_claude_acc || return 0
 
   set +e
@@ -643,6 +648,37 @@ verify_ticket_account() {
   fi
   ACCOUNT_STATUS="verified in pane $AGENT_PANE"
   log "account verified: '$AGENT' is running under ${actual:-the standard ~/.claude}"
+}
+
+# With the agent user on, the pane's foreground job is sudo (root's, so its
+# environment can't be read) and the agent's claude runs under it as TKA_USER.
+# What is checked is that: a process of TKA_USER's in the pane's process tree.
+# Its config root follows from the account by the wrapper's own rule
+# (agent_config_dir_for), so that is what ACCOUNT= reports. Nothing found dies
+# whatever the account: a `claude` that started as the developer (the shim not
+# on the pane's PATH) is the fallback this switch exists to prevent.
+verify_agent_user() {
+  local deadline info pids p found="" tree
+  deadline=$((SECONDS + ${ACCOUNT_VERIFY_WAIT:-5}))
+  while :; do
+    info="$(herdr pane process-info --pane "$AGENT_PANE" 2>/dev/null || true)"
+    pids="$(jq -r '.result.process_info.foreground_processes[]?.pid // empty' <<<"$info" 2>/dev/null || true)"
+    tree="$(ps -e -o pid=,ppid=,user= 2>/dev/null || true)"
+    for p in $pids; do
+      found="$(awk -v root="$p" -v u="$TKA_USER" '
+        { parent[$1] = $2; owner[$1] = $3 }
+        END { for (q in parent) { x = q; for (i = 0; i < 20 && x != ""; i++) { if (x == root) { if (owner[q] == u) { print q; exit } break } x = parent[x] } } }' <<<"$tree")"
+      [[ -n "$found" ]] && break
+    done
+    [[ -n "$found" ]] && break
+    (( SECONDS < deadline )) || break
+    sleep 0.2
+  done
+  [[ -n "$found" ]] \
+    || die "started '$AGENT' but no process of $TKA_USER's runs in pane $AGENT_PANE — with the agent user on, claude must run through $TKA_WRAPPER (the claude shim on the pane's PATH, from devboxes' .bashrc hook). Not sending the ticket: it may be running as $(id -un). Remove the workspace with /sweep-tickets and try again."
+  ACCOUNT_CONFIG_DIR="$(agent_config_dir_for "$ACCOUNT_NAME")"
+  ACCOUNT_STATUS="verified: pid $found runs as $TKA_USER; config root by the wrapper's rule"
+  log "agent user verified: '$AGENT' runs as $TKA_USER (pid $found), config root $ACCOUNT_CONFIG_DIR"
 }
 
 # ---- shared model config (config/models.env, installed as ticket-models.env) ----
@@ -934,6 +970,9 @@ start_agent_retrying() {
 # tabs and the account check are made. The workspace is new: after a container
 # restart the old one is gone, and after an OOM it holds a dead pane.
 resume_workspace() {
+  # With the agent user on, the worktree is made the agent's again (files a
+  # merge or rebase added since), before any pane of this workspace starts.
+  agent_on && agent_prepare_worktree "$WT"
   # The link already exists (or never did): resolve it, write nothing.
   link_ticket_account
   if [[ -n "$RESUME_EXPECT_ACCOUNT" && "$RESUME_EXPECT_ACCOUNT" != unknown && "$RESUME_EXPECT_ACCOUNT" != "$ACCOUNT_NAME" ]]; then
@@ -947,9 +986,12 @@ resume_workspace() {
   RESUME_WHY=""
   if [[ -n "$RESUME_SESSION" ]]; then
     local transcript
-    transcript="${ACCOUNT_CONFIG_DIR:-$HOME/.claude}/projects/${WT//[^A-Za-z0-9]/-}/$RESUME_SESSION.jsonl"
+    local troot="${ACCOUNT_CONFIG_DIR:-$HOME/.claude}"
+    # The agent's own config root for this account, with the agent user on.
+    agent_on && troot="$(agent_config_dir_for "$ACCOUNT_NAME")"
+    transcript="$troot/projects/${WT//[^A-Za-z0-9]/-}/$RESUME_SESSION.jsonl"
     if [[ ! -s "$transcript" ]]; then
-      RESUME_WHY="no transcript $RESUME_SESSION under ${ACCOUNT_CONFIG_DIR:-~/.claude}"
+      RESUME_WHY="no transcript $RESUME_SESSION under $troot"
     elif ! tail -n 1 "$transcript" | jq -e . >/dev/null 2>&1; then
       RESUME_WHY="transcript $RESUME_SESSION ends in a cut-off line"
     fi
@@ -1001,6 +1043,9 @@ launcher_main() {
   # Again here, not only where ticket-account.sh is sourced: the config file is
   # read between the two, and it may set either of these.
   resolve_account_env
+  # The agent user (ticket-agent.sh): off unless the box policy or
+  # TICKET_AGENT_USER names one. Read here, so a dry run shows it too.
+  resolve_agent_user
 
   # TICKET_DRY_RUN=1 does every check and renders the prompt, then prints the
   # summary and stops: no pull, no worktree, no tabs, no agent — so it needs
@@ -1208,17 +1253,35 @@ launcher_main() {
   # where it outlives the worktree for ticket-retro to read.
   REPORT_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/reports/$BRANCH.md"
   mkdir -p "$(dirname "$REPORT_FILE")"
-  tpl="${tpl//'{{REPORT_FILE}}'/"$REPORT_FILE"}"
+  # With the agent user on, the brief names the shared copies (agent_state_file:
+  # made in the box's shared state dir, linked from these paths, which are the
+  # ones the board reads); a dry run only says where they would be.
+  BRIEF_REPORT="$REPORT_FILE"
+  if agent_on; then
+    if (( DRY_RUN )); then BRIEF_REPORT="$(agent_state_path "$REPORT_FILE")"
+    else BRIEF_REPORT="$(agent_state_file "$REPORT_FILE")"; fi
+  fi
+  tpl="${tpl//'{{REPORT_FILE}}'/"$BRIEF_REPORT"}"
   # One word, rewritten at each phase of the brief, for `tk.sh view`: Herdr shows
   # an agent as "working" whether it's implementing or reviewing.
   PHASE_FILE="$(dirname "$(dirname "$REPORT_FILE")")/phase/$BRANCH"
   mkdir -p "$(dirname "$PHASE_FILE")"
-  tpl="${tpl//'{{PHASE_FILE}}'/"$PHASE_FILE"}"
+  BRIEF_PHASE="$PHASE_FILE"
+  if agent_on; then
+    if (( DRY_RUN )); then BRIEF_PHASE="$(agent_state_path "$PHASE_FILE")"
+    else BRIEF_PHASE="$(agent_state_file "$PHASE_FILE")"; fi
+  fi
+  tpl="${tpl//'{{PHASE_FILE}}'/"$BRIEF_PHASE"}"
   # What the agent asks the developer when only they can answer (tk.sh answer,
   # docs/agents/questions.md): read by tk.sh's board rows and by tk-hub.
   QUESTIONS_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-skill/$REPO_NAME/questions/$BRANCH.json"
   mkdir -p "$(dirname "$QUESTIONS_FILE")"
-  tpl="${tpl//'{{QUESTIONS_FILE}}'/"$QUESTIONS_FILE"}"
+  BRIEF_QUESTIONS="$QUESTIONS_FILE"
+  if agent_on; then
+    if (( DRY_RUN )); then BRIEF_QUESTIONS="$(agent_state_path "$QUESTIONS_FILE")"
+    else BRIEF_QUESTIONS="$(agent_state_file "$QUESTIONS_FILE" '[]')"; fi
+  fi
+  tpl="${tpl//'{{QUESTIONS_FILE}}'/"$BRIEF_QUESTIONS"}"
   # The prose payloads go last, so the replacements above can't reach inside
   # them. RETRO_RESULTS goes first of them: its content is built by the launcher
   # (paths only), so it is safe to fill early, and filling it before TICKET keeps
@@ -1229,6 +1292,7 @@ launcher_main() {
   # template's own. DOC_GUIDANCE is launcher-built too (paths only), so it goes
   # with RETRO_RESULTS, ahead of the ticket.
   fill_prose '{{RETRO_RESULTS}}' "$RETRO_BLOCK"
+  fill_prose '{{AGENT_USER_NOTE}}' "$(agent_brief_note)"
   fill_prose '{{DOC_GUIDANCE}}' "$DOC_GUIDANCE_BLOCK"
   fill_prose '{{TICKET}}' "$ticket"
   fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
@@ -1281,6 +1345,8 @@ SUBAGENTS=${SESSION_AGENTS_STATUS:-?}
 SKILLS=$(skills_summary)
 REMOTE_CONTROL=$( (( REMOTE_CONTROL )) && echo "on (${RC_ORIGIN}: ${RC_ARGS[1]})" || echo "off (${RC_ORIGIN})" )
 ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claude}, ${ACCOUNT_STATUS:-?})
+AGENT_USER=$(agent_summary)
+START=$( agent_on && echo "herdr agent start … -- <args> → claude shim → sudo -n -u $TKA_USER $TKA_WRAPPER --account ${ACCOUNT_NAME:-default} --cwd $WT -- <args>" || echo "herdr agent start … -- <args> → claude as $(id -un)" )
 PROJECT_MEMORY=$MEMORY_STATUS
 RETRO_RESULTS=$RETRO_STATUS
 REPORT_FILE=${REPORT_FILE:-?}
@@ -1349,6 +1415,9 @@ SUMMARY
     # earlier, and every pane created from here on wants the toolchain already
     # trusted. See trust_worktree_mise for the rest, including what it deliberately
     # does not do.
+    # ---- 1a. with the agent user on: its files the agent's to write, git not ---------
+    agent_on && agent_prepare_worktree "$WT"
+
     trust_worktree_mise
 
     # ---- 1a'. the catalog skills this ticket gets, before any pane starts ----------
@@ -1375,8 +1444,12 @@ SUMMARY
     # re-resolves when $PWD changes — so it will carry the wrong account for as
     # long as it lives. The agent gets a tab of its own, created after the link,
     # and the stale tab is closed below once the reviewr pane is out of it.
-    if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
-      log "creating a fresh 'agent' tab (the worktree's root pane predates the account link)"
+    #
+    # With the agent user on, the same fresh tab, whatever the account: the root
+    # pane's shell started before agent_prepare_worktree gave the worktree to
+    # tkwork, so its prompt hook may not have the claude shim on PATH yet.
+    if [[ "$ACCOUNT_ORIGIN" == "linked" ]] || agent_on; then
+      log "creating a fresh 'agent' tab (the worktree's root pane predates the account link or the agent user's worktree)"
       create_tab agent; AGENT_TAB="$CREATED_TAB"; AGENT_PANE="$CREATED_PANE"
       [[ -n "$AGENT_PANE" ]] \
         || die "couldn't read the new 'agent' tab's pane from Herdr's response — the account override needs a pane created after the link"
@@ -1401,7 +1474,7 @@ SUMMARY
     # when it holds nothing but the pane Herdr created with it, though: a reviewr
     # pane that turned up after the wait gave up, or anything the developer split
     # off in the seconds this takes, is worth more than a tidy bar.
-    if [[ "$ACCOUNT_ORIGIN" == "linked" ]]; then
+    if [[ "$ACCOUNT_ORIGIN" == "linked" ]] || agent_on; then
       # herdr_json, not a swallowed listing: if this call fails quietly the answer
       # is an empty list, which reads as "other panes are in there" and leaves the
       # wrong-account shell standing — the one thing closing the tab is for.

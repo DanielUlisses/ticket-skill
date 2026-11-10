@@ -90,3 +90,8 @@ run_git_net() {
   GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" \
     "${t[@]}" git -C "$ROOT" "$@" </dev/null
 }
+
+# The agent user's helpers (ticket-agent.sh, installed beside this file): every
+# script that resolves a repo can tell whether tickets run as their own user.
+# shellcheck source=lib/ticket-agent.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ticket-agent.sh"

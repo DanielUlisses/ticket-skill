@@ -227,6 +227,25 @@ link can still be taken back *through claude-acc* is while the directory exists,
 two kinds already take it there. Past that moment the entry can only be reconciled, which is what this
 does.
 
+## Agent user
+
+With the box's agent user on (devboxes' `agent_user: true`, ADR 0011), the account is still picked here
+and linked the same way, but the agent runs as `<user>-agent` with **its own** config root for that
+account: `~/.claude` for the default, `~/.claude-switch/accounts/<name>` under the agent's home. The
+claude shim reads the pane's `CLAUDE_CONFIG_DIR`, passes the account's name to the root-owned wrapper,
+and the wrapper maps it (`agent_config_dir_for` in `lib/ticket-agent.sh` is the same rule). The
+developer's own config root is never handed to the agent: it holds settings, hooks and plugins his
+own sessions load, and an agent that could write there could plant a hook that runs as him.
+
+So each account is signed in once as the agent (`claude login`, or a `claude setup-token` token saved
+as `~/.config/tk-agent/oauth-token-<name>` in the agent's home; devboxes' README has the commands).
+
+Verification changes with it. The pane's foreground process is `sudo`, whose environment can't be
+read, and the agent's claude belongs to another user. The launcher checks instead that a process of
+the agent user's runs in the pane's process tree, and reports the config root by the wrapper's rule:
+`ACCOUNT=<name> (…, /home/<user>-agent/…, verified: pid N runs as <user>-agent; …)`. Finding none
+dies, linked or not: a claude that started as the developer is what the switch exists to prevent.
+
 ## Provider switching is out of scope
 
 `herdr agent start --kind` accepts 24 kinds, and Codex uses the same

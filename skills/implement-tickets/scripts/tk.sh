@@ -1099,7 +1099,8 @@ cmd_answer() {
   append_answer "$(jq -r .file <<<"$t")" "$id" "$q" "$a" "$now"
   if [[ -n "$id" ]]; then
     qf="$(questions_file "$branch")"
-    jq --arg id "$id" --arg a "$a" --arg at "$now" 'map(if (.id // "" | tostring) == $id then . + {a: $a, at: $at} else . end)' "$qf" >"$qf.tmp" && mv "$qf.tmp" "$qf"
+    jq --arg id "$id" --arg a "$a" --arg at "$now" 'map(if (.id // "" | tostring) == $id then . + {a: $a, at: $at} else . end)' "$qf" >"$qf.tmp" \
+      && cat "$qf.tmp" >"$qf" && rm -f "$qf.tmp"   # in place: with the agent user on, $qf is a link to the shared file
   fi
   echo "WRITTEN under ticket $nn's ## Answers"
   if [[ "$status" != in-progress || -z "$(jq -r '.agent // ""' <<<"$t")" ]]; then
@@ -1485,6 +1486,9 @@ ticket_transcript() {
   roots=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}")
   [[ -d "$HOME/.claude" ]] && roots+=("$HOME/.claude")
   for root in "$HOME"/.claude-switch/accounts/*; do [[ -d "$root" ]] && roots+=("$root"); done
+  # With the agent user on, its own config roots too: that is where an agent's
+  # transcripts land (readable to the developer through devboxes' ACL).
+  while IFS= read -r root; do [[ -n "$root" ]] && roots+=("$root"); done < <(agent_config_roots)
   enc="${wt//[^A-Za-z0-9]/-}"
   # `|| continue`, not `&&`: a last root without the directory would end the
   # loop on a failed test, and pipefail would turn that into tk.sh resume

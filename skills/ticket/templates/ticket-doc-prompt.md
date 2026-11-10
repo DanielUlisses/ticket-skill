@@ -22,6 +22,8 @@ printf '%s\n%s\n' "reviewing r1" "tests=pass criteria=3/4 review=2-blocking" > {
 
 **Your marked assumptions are questions too.** Each one you list in the hand-off also goes into `{{QUESTIONS_FILE}}` (a JSON array, created with the Write tool; never drop an entry), as `{"id": "q1", "q": "<the assumption, as a question>", "blocks": false}`, so the developer can confirm it from tk-hub. Keep going — a doc ticket never stops to ask. Never ask for a secret's value. Read the ticket's `## Answers` section first, if it has one.
 
+{{AGENT_USER_NOTE}}
+
 {{PROJECT_MEMORY}}
 
 {{RETRO_RESULTS}}

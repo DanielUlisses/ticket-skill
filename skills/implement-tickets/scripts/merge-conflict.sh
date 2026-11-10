@@ -72,10 +72,13 @@ case "$verb" in
       in_merge || { echo "UP TO DATE — $BRANCH already contains $BASE_REF_MERGE; nothing to merge or push"; exit 0; }
       echo "CLEAN — $BASE_REF_MERGE merged into $BRANCH without conflicts, not committed yet"
       echo "WORKTREE $WT"
+      agent_on && echo "RUN_CHECKS_AS $(agent_run_prefix "$WT")"
       exit 0
     fi
     in_merge || die "git merge failed without starting a merge — read 'git -C $WT status'"
     echo "CONFLICTS in $WT:"; unmerged | sed 's/^/  /'
+    # With the agent user on, the merger runs the repo's checks as the agent.
+    agent_on && echo "RUN_CHECKS_AS $(agent_run_prefix "$WT")"
     exit 2 ;;
   status)
     in_merge || { echo "no merge in progress in $WT"; exit 0; }
