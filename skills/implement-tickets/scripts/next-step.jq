@@ -11,7 +11,8 @@
 #           daniel  the developer: review (the human gate, a PR awaiting review), merge
 #                   (a conflicting PR too: nothing sends the merger until "merge NN" does),
 #                   answer (a question, a dialog, a landing nobody can tell, a misfiled
-#                   ticket), start / work (a ticket of his own, Owner: me)
+#                   ticket, a PR to fix with no agent on it), start / work (a ticket of
+#                   his own, Owner: me)
 #           none    nobody: blocked, wait (checks running, a draft), done
 #   step    one of the words above
 #   since   when the ticket last changed (its file, phase or questions), ISO UTC, or null
@@ -53,6 +54,8 @@ def next_of($pol):
             else step("daniel"; "merge"; "PR #\(.pr.number) ready to merge") end)
          elif $s == "awaiting review" then step("daniel"; "review"; "PR #\(.pr.number) awaiting review")
          elif $s == "conflict" then step("daniel"; "merge"; "PR #\(.pr.number) conflicts with the base: merge \(.nn) sends the merger")
+         elif ($s == "changes requested" or $s == "checks failed") and (.state | IN("idle", "done", "gone", "-"))
+           then step("daniel"; "answer"; "PR #\(.pr.number): \($s), no agent is fixing it")
          elif $s == "changes requested" or $s == "checks failed" then step("agent"; "fix"; "PR #\(.pr.number): \($s)")
          else step("none"; "wait"; "PR #\(.pr.number): \($s)") end)
     elif .col == "human" then
