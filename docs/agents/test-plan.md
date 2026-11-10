@@ -18,3 +18,17 @@ ticket adds to that test. `board-lib.sh` parses the line as `tested_in`.
 the report has none). tk-hub makes the plan the ticket's **Merge and verify**
 and **Verify after deploy** checklist, and raises no per-ticket Verify for a
 ticket tested in a batch.
+
+## Deploy result
+
+What the deploy proved lives on the board, so it outlives tk-hub's own
+record (a fresh start, a board split). `tk.sh deployed <board> <NN> ok|red
+[note]` writes the ticket's `**Deployed:**` line below **Status:**: `ok
+<time>[: note]`, or `red <time>: <what failed>` (red needs the note); `clear`
+removes it. Only a ticket that landed takes one (not open, not dropped).
+`board-lib.sh` parses the line, and `tk.sh export` carries `deployed`:
+`{result: ok|red, at, note}`, null when the ticket has none.
+
+tk-hub's Deploy card sends it (the daemon's `deploy_result`) when the
+developer ends a deploy **Deployed** or **Red**; a Red posts to the
+project's chat for a fix (a new ticket or a rescope).
