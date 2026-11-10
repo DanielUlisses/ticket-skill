@@ -1000,3 +1000,20 @@ write_atomic() {
   mv "$tmp" "$f" || die "couldn't write $f"
   trap - EXIT
 }
+
+# Paths that may hold a secret, from a list of paths on stdin: the ones printed are
+# never committed by an agent (pr-open.sh) and never sent to the Cursor CLI
+# (pr-cursor.sh), whatever the repo's .gitignore says.
+risky() { grep -iE '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_[a-z0-9]+|.*credentials.*|.*secret.*)$' || true; }
+
+# Does <text> look like it holds a key or token? A short regex set, not a scanner:
+# private keys, the common token prefixes (AWS, GitHub, Slack, OpenAI/Anthropic,
+# Google, 1Password), and a quoted or .env-style value given to a name like a key's.
+# Takes the text as an argument, never a pipe: grep -q stops at the first match, and
+# the writer's SIGPIPE would turn a match into a failure under pipefail.
+secret_like() {
+  grep -qiE -e '-----BEGIN [A-Z ]*PRIVATE KEY' \
+    -e '(^|[^A-Za-z0-9])(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|ops_[A-Za-z0-9_-]{20,})' \
+    -e '(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key)["'\'']?[[:space:]]*[:=][[:space:]]*["'\''][^"'\''[:space:]]{8,}' \
+    -e '^[+]?[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*=[^[:space:]$]{8,}' <<<"$1"
+}

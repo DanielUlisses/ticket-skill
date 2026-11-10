@@ -79,8 +79,7 @@ preflight() {
 # Files the ticket changed: tracked modifications and untracked files, one per line.
 changed() { g status --porcelain --untracked-files=all | sed -E 's/^.. //; s/^"(.*)"$/\1/; s/.* -> //'; }
 
-# Paths that should never be committed by an agent, whatever it was told.
-risky() { grep -iE '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_[a-z0-9]+|.*credentials.*|.*secret.*)$' || true; }
+# risky(): board-lib.sh, shared with pr-cursor.sh.
 
 # Commits on the branch the remote doesn't have yet: past the remote's own copy
 # when it has one, else past the base. The remote is asked (ls-remote), not the
