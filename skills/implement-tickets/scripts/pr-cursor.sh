@@ -112,6 +112,7 @@ no prose, no code fence:
 
 Rules:
 - paths: only from CHANGED below; leave out build output, logs, editor files and anything under RISKY.
+  A WITHHELD file is a real change whose contents you are not shown: decide on its name alone.
   If nothing in CHANGED belongs to the ticket (the work is already committed: see UNPUSHED or COMMITS), paths is [].
 - commit_message: the repo's convention as RECENT COMMITS show it (conventional commits, a ticket
   prefix), else "<type>: <ticket title>". Name the PARENT id where there is one.
@@ -131,6 +132,7 @@ no prose, no code fence:
 
 Rules:
 - paths: only from CHANGED below; leave out build output, logs, editor files and anything under RISKY.
+  A WITHHELD file is a real change whose contents you are not shown: decide on its name alone.
   If CHANGED is empty (the work is already committed), paths is [].
 - commit_message: the repo's convention as RECENT COMMITS show it (conventional commits, a ticket
   prefix), else "<type>: <ticket title>".
@@ -153,11 +155,40 @@ EOF
     [[ -n "$ps" ]] || ps="$(field PR_SKILL)"
     [[ -f "$ps" ]] && { section "PR SKILL"; cap 12000 <"$ps"; }
   fi
+  # Cursor's servers see every change but the ones that may hold a secret: a risky()
+  # name (what pr-open.sh refuses to commit) or contents secret_like() flags. Those
+  # go by name only, under WITHHELD, whether or not the repo ignores them — an
+  # agent can write a .env into a worktree whose .gitignore doesn't name it. An
+  # untracked symlink is never followed: it can point anywhere on the box.
+  declare -A withheld=()
+  gq() { git -C "$WT" -c core.quotePath=false "$@" 2>/dev/null || true; }
+  tracked="$( { gq diff --name-only "$BASE_AT...HEAD"; gq diff --name-only HEAD; } | sort -u)"
+  untracked="$(gq ls-files --others --exclude-standard)"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && withheld[$f]="its name says it may hold a secret"
+  done <<<"$(risky <<<"$tracked"$'\n'"$untracked")"
+  while IFS= read -r f; do
+    [[ -n "$f" && -z "${withheld[$f]:-}" ]] || continue
+    added="$( { gq diff "$BASE_AT...HEAD" -- "$f"; gq diff HEAD -- "$f"; } | grep '^+' || true)"
+    secret_like "$added" && withheld[$f]="its change looks like it holds a key or token"
+  done <<<"$tracked"
+  while IFS= read -r f; do
+    [[ -n "$f" && -z "${withheld[$f]:-}" ]] || continue
+    if [[ -L "$WT/$f" ]]; then withheld[$f]="a symlink, not followed"; continue; fi
+    secret_like "$(head -c 4000 "$WT/$f" 2>/dev/null | tr -d '\0' || true)" && withheld[$f]="its contents look like they hold a key or token"
+  done <<<"$untracked"
+  exclude=(); for f in "${!withheld[@]}"; do exclude+=(":(exclude,literal)$f"); done
   section "DIFF (committed on the branch, then uncommitted)"
-  { git -C "$WT" diff "$BASE_AT...HEAD" 2>/dev/null; git -C "$WT" diff HEAD 2>/dev/null
-    (cd "$WT" && git ls-files --others --exclude-standard -z 2>/dev/null \
-      | xargs -0 -r -I{} sh -c 'printf "\n--- new file: %s\n" "$1"; head -c 4000 "$1"' _ {})
+  { gq diff "$BASE_AT...HEAD" -- . "${exclude[@]}"; gq diff HEAD -- . "${exclude[@]}"
+    while IFS= read -r f; do
+      [[ -n "$f" && -z "${withheld[$f]:-}" ]] || continue
+      printf '\n--- new file: %s\n' "$f"; head -c 4000 "$WT/$f" 2>/dev/null || true
+    done <<<"$untracked"
   } | cap 50000
+  if (( ${#withheld[@]} )); then
+    section "WITHHELD (changed, contents not shown: judge them by name, never guess what they hold)"
+    for f in "${!withheld[@]}"; do printf '  %s — %s\n' "$f" "${withheld[$f]}"; done | sort
+  fi
 } >"${PROMPT:=$(mktemp)}"
 trap 'rm -f "$PROMPT"' EXIT
 
