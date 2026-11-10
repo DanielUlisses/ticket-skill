@@ -12,10 +12,13 @@
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
 #                 [--cleared <repo:NN>,…]   (a **Kind:** doc ticket launches as a document, branch type docs;
 #                                        --cleared: cross-board blockers tk-hub saw resolved, launched past)
-#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]
+#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>] [--note <file>]
 #                                        a new agent in the worktree a dead one left (OOM, restart), as it
 #                                        stands: claude --resume on its newest transcript (--fresh: the
-#                                        full brief), a note on what it finds; refused while the old agent lives.
+#                                        full brief), a note on what it finds (--note: more text under it).
+#                                        An agent still there at its prompt without its own done (stopped
+#                                        halfway) is told to carry on instead, or sent the brief a launch
+#                                        stopped at a dialog kept; refused while the old agent works.
 #                                        --respec: the spec changed under its work (a rescope applied after
 #                                        its PR): the note carries the ticket as it is now, same branch and PR
 #   tk.sh rebase  <board> <NN>           a ticket that waited for other work (tk-hub's park "when these
@@ -91,15 +94,16 @@ cmd_digest() {
   fetch_board_refs
   t1=$SECONDS
   forge_cache_begin
-  local agents facts="" t nn status branch base agent st tab l pushed ps
+  local agents facts="" t nn status branch base agent st tab l pushed ps ph phf
   local herdr_ok=1
   export LANDED_ERRS; LANDED_ERRS="$(mktemp)"
   agents="$(agent_states)" || { herdr_ok=0; echo "WARN Herdr didn't answer — agent states unknown"; }
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; base="$(jq -r .base <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    l="-"; st="-"; tab="-"; pushed=""
+    l="-"; st="-"; tab="-"; pushed=""; ph="-"; phf=false
     if [[ "$status" == in-progress ]]; then
+      read -r ph phf < <(phase_state "$branch")
       l="$(landed "$branch" "$base")"
       ps="$(pushed_sha "$branch" "$base" "$(jq -r .worktree <<<"$t")")"
       # Fully pushed: "<sha>", or "<sha>+<n>untracked" with untracked files beside it;
@@ -115,7 +119,7 @@ cmd_digest() {
       else st="gone"  # a launch that stopped before its agent started (board_rows_)
       fi
     fi
-    facts+="$(jq -cn --arg nn "$nn" --arg l "$l" --arg s "$st" --arg tab "${tab:--}" --arg p "$pushed" '{nn:$nn, landed:$l, state:$s, tab:$tab, pushed:$p}')"$'\n'
+    facts+="$(jq -cn --arg nn "$nn" --arg l "$l" --arg s "$st" --arg tab "${tab:--}" --arg p "$pushed" --arg ph "$ph" --argjson phf "$phf" '{nn:$nn, landed:$l, state:$s, tab:$tab, pushed:$p, phase:$ph, phase_fresh:$phf}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   # The forge failing makes a squash merge whose content changed in review look
   # unmerged — say so once, with its own words, rather than per ticket or never.
@@ -145,7 +149,7 @@ cmd_digest() {
     def dash: if . == null or . == "" then "-" else . end;
     [ $board[] | . as $t | $f[$t.nn] as $x |
       (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
-      $t + {landed: $x.landed, state: $x.state, tab: $x.tab, pushed: ($x.pushed // ""), open_blockers: $open,
+      $t + {landed: $x.landed, state: $x.state, tab: $x.tab, pushed: ($x.pushed // ""), phase: ($x.phase // "-"), phase_fresh: ($x.phase_fresh // false), open_blockers: $open,
             line: ([ $t.nn, $t.status, $t.ref,
                      ($t.branch | dash),
                      (if $t.agent != "" then "agent:\($x.state)" else "-" end),
@@ -174,6 +178,8 @@ cmd_digest() {
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
                  elif .state == "gone" and .col == "human" then (if $was[.nn] != .line then "ACTION review \(.nn) — agent finished, its session closed; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))\(if .unpushed != "" then " — unpushed: \(.unpushed), keep its worktree" else "" end)" else empty end)
                  elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed\(if .unpushed != "" then " (unpushed: \(.unpushed))" else "" end); tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
+                 elif ((.state == "idle" or .state == "done") and (.phase != "done" or (.phase_fresh | not)) and .phase != "asking") then
+                   (if $was[.nn] != .line then "ACTION stopped \(.nn) — agent at its prompt without its report (phase \(.phase)): it stopped halfway; tell the developer (resume \(.nn) tells it to carry on, on their word)" else empty end)
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))"
                  else empty end ]
@@ -370,6 +376,8 @@ cmd_launch() {
       "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent" \
       "$(sed -n 's/^SKILLS=\([^ ]*\).*/\1/p' "$out" | sed 's/^$/none/')")"
     echo "RECORDED $nn2 in-progress on $branch$( ((helper)) && echo " (yours, with a helper)")"
+    rm -f "$(board_state_dir)/pending/$branch.md"
+    (( rc != 3 )) || keep_pending_brief "$branch" "$out"
   else
     # The launcher failed. Once it had made the worktree (WORKTREE_MADE=) the
     # branch exists and a relaunch would refuse it, so the ticket is recorded in
@@ -385,6 +393,37 @@ cmd_launch() {
   return $rc
 }
 
+# ---- nudge: an agent that stopped halfway, still at its prompt -------------------
+# tk.sh resume on a ticket whose agent is still there, idle or done, without its
+# own `done` in the phase file (board_rows_: needs · agent stopped mid-<phase>).
+# A brief kept from a launch that stopped at a dialog (folder trust; exit 3) is
+# sent now that the dialog is answered. Otherwise the agent is told to carry on
+# from where it stopped, with --note's text under it. Refused when the agent did
+# finish, or waits on a blocking question.
+nudge_agent() {
+  local t="$1" agent="$2" st="$3" extra="$4" nn branch ph fresh pend msg
+  nn="$(jq -r .nn <<<"$t")"; branch="$(jq -r .branch <<<"$t")"
+  read -r ph fresh < <(phase_state "$branch")
+  pend="$(pending_brief "$branch")"
+  if [[ -n "$pend" && "$ph" =~ ^(launching|resuming|-)$ ]]; then
+    if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then echo "DRY RUN $nn — would send $agent its brief ($pend)"; return 0; fi
+    herdr agent prompt "$agent" "$(cat "$pend")" >/dev/null || die "couldn't send $agent its brief — herdr agent prompt failed"
+    rm -f "$pend"
+    echo "BRIEFED $nn — $agent ($st) got the brief its launch couldn't send at the dialog"
+    return 0
+  fi
+  [[ "$ph" == "done" && "$fresh" == true ]] && die "ticket $nn's agent $agent finished (its phase file says done) — nothing to resume; review it"
+  jq -e 'any(.a == null and .blocks)' <<<"$(ticket_questions "$branch")" >/dev/null 2>&1 \
+    && die "ticket $nn's agent $agent waits on a question — answer it (tk.sh answer), don't resume it"
+  local where="in the middle of '$ph'"
+  [[ "$ph" =~ ^(launching|resuming|-)$ || "$ph" == "done" ]] && where="before writing your first phase"
+  msg="Message from the board: you stopped $where, without writing \`done\` to the phase file or your report. Whatever stopped you (a usage limit that has reset, an error, a turn that ended early), carry on now from the step you were on, through the rest of the brief as written. Read the worktree first (\`git status\`, \`git diff\`) and keep what is there. If you can't go on, say why in one line and write the question to the questions file."
+  [[ -z "$extra" ]] || msg+=$'\n\n'"$(cat "$extra")"
+  if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then echo "DRY RUN $nn — would tell $agent to carry on"; return 0; fi
+  herdr agent prompt "$agent" "$msg" >/dev/null || die "couldn't reach $agent — herdr agent prompt failed"
+  echo "NUDGED $nn — $agent ($st) stopped $where; told it to carry on"
+}
+
 # ---- resume: a new agent where a dead one stopped ----------------------------
 # A ticket in progress whose agent is gone (an OOM, a container restart) gets a
 # new one in the same worktree, as it stands: the uncommitted work stays, nothing
@@ -397,12 +436,12 @@ cmd_launch() {
 # removed first: a kill mid-`git add` leaves one, and every git call then fails.
 cmd_resume() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]}"; shift
-  local model="" effort="" fresh=0 helper=0 respec=0 rescope="" rebased=""
+  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>] [--note <file>]}"; shift
+  local model="" effort="" fresh=0 helper=0 respec=0 rescope="" rebased="" extra=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;; --effort) effort="$2"; shift 2 ;;
-      --rebased) rebased="$2"; shift 2 ;;
+      --rebased) rebased="$2"; shift 2 ;; --note) extra="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;; --helper) helper=1; shift ;;
       --respec) respec=1; shift ;; --rescope) rescope="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
@@ -410,7 +449,8 @@ cmd_resume() {
   done
   [[ -z "$rescope" ]] || (( respec )) || die "--rescope names the rescope a --respec resume follows"
   [[ -z "$rescope" || "$rescope" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "--rescope takes a rescope id (YYYYMMDDThhmmssZ)"
-  local t status branch wt agent states st yours
+  [[ -z "$extra" || -s "$extra" ]] || die "--note file is empty or missing: $extra"
+  local t status branch wt agent states st yours live=""
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == in-progress ]] || die "ticket $nn is $status, not in progress — nothing to resume (an open ticket launches)"
@@ -429,7 +469,16 @@ cmd_resume() {
     need herdr
     states="$(agent_states)" || die "Herdr didn't answer — can't tell whether $agent is still running; not resuming"
     st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$states")"
-    [[ -z "$st" ]] || die "ticket $nn's agent $agent is still there ($st) — nothing to resume"
+    # An agent still there but at its prompt (idle or done) that never wrote its
+    # own `done` stopped halfway (a usage limit, an error, a turn that just
+    # ended): it is told to carry on, below. Anything else is refused.
+    if [[ "$st" == idle || "$st" == "done" ]] && (( ! helper && ! respec && ! fresh )) && [[ -z "$rebased" ]]; then live="$st"
+    elif [[ -n "$st" ]]; then
+      if [[ "$st" == idle || "$st" == "done" ]]; then
+        die "ticket $nn's agent $agent is still there ($st) — --helper, --respec, --rebased and --fresh need it gone; close it in Herdr first"
+      fi
+      die "ticket $nn's agent $agent is still there ($st) — nothing to resume"
+    fi
   else
     # No agent recorded (a launch that stopped half-way): one it did start may
     # still be there under the launcher's name.
@@ -440,6 +489,10 @@ cmd_resume() {
   case "$(landed "$branch" "$(jq -r .base <<<"$t")")" in
     yes*) die "ticket $nn has landed — resolve it (tk.sh resolve $BOARD_ID $nn), don't resume it" ;;
   esac
+  if [[ -n "$live" ]]; then
+    nudge_agent "$t" "$agent" "$live" "$extra"
+    return
+  fi
 
   # A kill mid-git leaves index.lock behind; every later git call in the worktree
   # then fails. Removed only when no git process runs there and it's old.
@@ -498,6 +551,10 @@ cmd_resume() {
     else
       echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
     fi
+    if [[ -n "$extra" ]]; then
+      echo
+      cat "$extra"
+    fi
     # Answers the developer gave since the brief was sent (tk.sh answer): a
     # resumed conversation gets only this note, not the ticket file again.
     if (( ! respec )) && grep -q '^## Answers$' "$(jq -r .file <<<"$t")"; then
@@ -536,6 +593,8 @@ cmd_resume() {
     record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
       "$branch" "$(jq -r .base <<<"$t")" "$model" "$effort" "${account:-unknown}" "$wt" "$new_agent" "$skills")"
     echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))$( (( respec )) && echo " — on the new spec${rescope:+ of rescope $rescope}")"
+    rm -f "$(board_state_dir)/pending/$branch.md"
+    (( rc != 3 )) || keep_pending_brief "$branch" "$out"
   fi
   rm -f "$out" "$brief" "$note"
   return $rc
@@ -1153,13 +1212,13 @@ board_rows() {
 }
 
 board_rows_() {
-  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs fresh unpushed rows=""
+  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs fresh unpushed pend rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"; fresh=false; unpushed=""
+    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"; fresh=false; unpushed=""; pend=false
     if [[ "$status" == in-progress ]]; then
       qs="$(ticket_questions "$branch")"
       l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
@@ -1190,6 +1249,7 @@ board_rows_() {
         [[ -e "$phase_dir/$branch.started" && ! "$phase_dir/$branch.started" -nt "$phase_dir/$branch" ]] && fresh=true
       fi
       unpushed="$(unpushed_work "$branch" "$(jq -r .base <<<"$t")" "$(jq -r .worktree <<<"$t")")"
+      [[ -n "$(pending_brief "$branch")" ]] && pend=true
       if forge_ok && [[ -n "$branch" ]]; then
         # A failed lookup leaves the card where git and Herdr put it, so the
         # forge's own error goes to the view's footer instead of nowhere.
@@ -1197,8 +1257,8 @@ board_rows_() {
         jq -e 'type == "object"' <<<"${pr:-null}" >/dev/null 2>&1 || pr="null"
       fi
     fi
-    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" --argjson fresh "$fresh" --arg unpushed "$unpushed" \
-      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, phase_fresh:$fresh, unpushed:$unpushed, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" --argjson fresh "$fresh" --arg unpushed "$unpushed" --argjson pend "$pend" \
+      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, phase_fresh:$fresh, brief_pending:$pend, unpushed:$unpushed, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
              checks: ($ck | split(" ") | map(select(test("^[a-z]+=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s --argjson off "$(forge_off && echo true || echo false)" '
@@ -1237,6 +1297,13 @@ board_rows_() {
        elif $t.state == "gone" then {col: "needs", note: ("no live agent" + (if $t.unpushed != "" then " · unpushed: \($t.unpushed)" else "" end))}
        elif ($t.state == "idle" or $t.state == "done") and ($t.questions | any(.a == null and .blocks)) then
          {col: "needs", note: "asks: \($t.questions | map(select(.a == null and .blocks)) | first | .q | gsub("\\s+"; " ") | .[0:80])"}
+       # At its prompt without its own `done`: it stopped halfway (a usage limit,
+       # an error, a turn that ended early), not finished. tk.sh resume tells it to
+       # carry on, or sends the brief a launch stopped at a dialog could not.
+       elif ($t.state == "idle" or $t.state == "done") and ($t.phase != "done" or ($t.phase_fresh | not)) then
+         {col: "needs", note: (if $t.brief_pending and ($t.phase | IN("launching", "resuming", "-")) then "agent waits for its brief (dialog answered)"
+                              elif $t.phase | IN("launching", "resuming", "-", "done") then "agent stopped before its first phase"
+                              else "agent stopped mid-\($t.phase)" end)}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" + (if $t.untracked > 0 then " · \($t.untracked) untracked" else "" end)
                                                                      elif $t.pushed_partial != "" then "agent finished (pushed \($t.pushed_partial), more unpushed)"
                                                                      else "agent finished" end)}
@@ -1255,6 +1322,7 @@ board_rows_() {
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
         elif .col == "needs" and (.note | startswith("asks: ")) then "answer \(.nn) \(.questions | map(select(.a == null and .blocks)) | first | .id) <answer>"
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
+        elif .col == "needs" and (.note | test("^agent (stopped|waits for its brief)")) then "resume \(.nn) — tells it to carry on"
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
         else "" end)})'
@@ -2238,7 +2306,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   body says **Kind:** doc launches as a document (branch docs)
   status / what changed?        re-read the board, agents and git; report what moved
   resume 07                     a new agent where 07's dead one stopped (an OOM, a restart): same
-                                  worktree, nothing reset, its conversation resumed (tk.sh resume)
+                                  worktree, nothing reset, its conversation resumed (tk.sh resume);
+                                  an agent that stopped halfway at its prompt is told to carry on
   resume 07 --respec            the same after a rescope changed 07 under its PR: the agent reads the
                                   new spec, carries the branch to it, and the PR takes the commits
   rebase 07                     07 waited for other work that has now landed: its unpushed branch
