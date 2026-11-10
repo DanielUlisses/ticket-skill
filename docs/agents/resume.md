@@ -69,6 +69,24 @@ Work that is only on the box rides on a gone agent's card: `unpushed` in the exp
 ` · unpushed: …` on the note. `/sweep-tickets` never removes a worktree with uncommitted
 changes, `--force` or not, and needs `--force` for a branch that isn't merged.
 
+## A launch that stopped half-way
+
+A launch that fails after the launcher made the worktree (a Herdr call that errors, an agent
+that won't start, the box killing the launch) used to leave the ticket `open` with its branch
+made, and every relaunch then refused: "branch already exists". Now:
+
+- The launcher prints `WORKTREE_MADE=<path>` as soon as `herdr worktree create` returns.
+  When it then fails, `tk.sh launch` records the ticket `in-progress` on that branch with the
+  launch's model and effort, and **no `**Agent:**` line** (`RECORDED NN in-progress on <branch>
+  with no agent`). It still exits with the launcher's code.
+- The board rows read "in progress, no agent recorded" as `gone`: **needs you**, "no live
+  agent", next step `hub · resume`. `tk.sh resume` finishes the launch in that worktree; its
+  note tells the new agent the launch stopped before any agent started.
+- A ticket still `open` from before this, whose branch and worktree (`../<repo>--<branch>`)
+  an earlier launch left, is adopted by its next `tk.sh launch` with the same type: recorded
+  the same way, then resumed. A branch with that name anywhere else is refused, with how to
+  remove it.
+
 ## After a rebase: `tk.sh rebase` and `--rebased`
 
 A ticket at the human gate can wait for other work: tk-hub's park "when these merge" holds its

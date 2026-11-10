@@ -23,8 +23,8 @@
 
 def prstate:
   [.checks[]?.s] as $c
-  | if .isDraft then "draft"
-    elif .mergeable == "CONFLICTING" then "conflict"
+  | if .mergeable == "CONFLICTING" then "conflict"
+    elif .isDraft then "draft"
     elif .review == "CHANGES_REQUESTED" then "changes requested"
     elif ($c | any(. == "bad")) then "checks failed"
     elif ($c | any(. == "pending")) then "checks running"

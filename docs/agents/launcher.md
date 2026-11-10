@@ -82,6 +82,16 @@ reviewed, so there is no `review` tab: the reviewr plugin's auto-opened pane is 
 (`TICKET_REVIEWR_WAIT`, skipped when its config says `auto_open = false`) and closed, and
 `review` or `herdr-reviewr` in the shell pane opens it again. A resume builds the same tab.
 
+## Starting the agent
+
+`herdr agent start` on a pane just made can fail while the pane's shell is still starting.
+The launcher waits a second, then retries a failed start every
+`TICKET_AGENT_START_RETRY_EVERY_S` (1) seconds for up to `TICKET_AGENT_START_RETRY_S` (10),
+as tk-daemon does for grills; the error it finally gives says how many tries it took. An agent
+stopped at a dialog (`agent_not_ready`, exit 3) has started and is never retried. A start that
+still fails leaves the worktree, which `tk.sh launch` records for `tk.sh resume`
+([`resume.md`](resume.md), A launch that stopped half-way).
+
 ## The one place the tab sequence forks
 
 `launcher_main` builds the `agent` tab two ways, and the fork is not a preference — a pane
