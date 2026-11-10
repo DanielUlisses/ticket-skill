@@ -148,7 +148,7 @@ cmd_digest() {
     ($board | map({key: .nn, value: .status}) | from_entries) as $st |
     def dash: if . == null or . == "" then "-" else . end;
     [ $board[] | . as $t | $f[$t.nn] as $x |
-      (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
+      (($t.blockers | map(select($st[.] | IN("resolved", "dropped") | not))) + ($t.xblockers_open // [])) as $open |
       $t + {landed: $x.landed, state: $x.state, tab: $x.tab, pushed: ($x.pushed // ""), phase: ($x.phase // "-"), phase_fresh: ($x.phase_fresh // false), open_blockers: $open,
             line: ([ $t.nn, $t.status, $t.ref,
                      ($t.branch | dash),
@@ -305,7 +305,7 @@ cmd_launch() {
   fi
   open="$(jq -r --argjson b "$BOARD_JSON" --arg c "$cleared" "$xnorm"'
     [ $c | split("[ ,]+"; null)[] | select(. != "") | xnorm ] as $cl
-    | [.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn]
+    | [.blockers[] as $x | $b[] | select(.nn == $x and (.status | IN("resolved", "dropped") | not)) | .nn]
       + [ (.xblockers_open // [])[] | select((xnorm | IN($cl[])) | not) ] | join(",")' <<<"$t")"
   [[ -z "$open" ]] || die "ticket $nn is blocked by $open — not on the frontier"
   [[ -z "$cleared" ]] || echo "launching past cross-board blockers tk-hub saw resolved: ${cleared//,/, }"
@@ -1263,7 +1263,7 @@ board_rows_() {
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s --argjson off "$(forge_off && echo true || echo false)" '
     (map({key: .nn, value: .status}) | from_entries) as $st |
-    map(. as $t | (($t.blockers | map(select($st[.] != "resolved"))) + ($t.xblockers_open // [])) as $open |
+    map(. as $t | (($t.blockers | map(select($st[.] | IN("resolved", "dropped") | not))) + ($t.xblockers_open // [])) as $open |
       $t + {open_blockers: $open} +
       (if $t.status == "resolved" then {col: "done", note: ""}
        elif $t.status == "dropped" then {col: "done", note: "dropped"}
@@ -1917,7 +1917,14 @@ cmd_rescope_apply() {
           /^\*\*Status:\*\*/ { next } /^\*\*Dropped:\*\*/ { next }
           { print }
           /^# [0-9]+:/ && !done { print ""; print ENVIRON["LINE"]; print ""; print ENVIRON["DROP"]; done = 1 }' "$old" >"$tmp"
-        mv "$tmp" "$old"; echo "DROPPED $nn — $why" ;;
+        mv "$tmp" "$old"; echo "DROPPED $nn — $why"
+        # A dropped ticket leaves its batch, so the batch can still be ready (S6).
+        local was; was="$(jq -r '.tested_in // ""' <<<"$t")"
+        if [[ -n "$was" ]]; then
+          set_tested_in "$old" ""
+          [[ -f "$(batches_dir)/$was.md" ]] && set_batch_ticket "$(batches_dir)/$was.md" "$(jq -r .nn <<<"$t")" del
+          echo "UNBATCHED $nn (was $was)"
+        fi ;;
     esac
   done < <(jq -r '.changes[] | [(.op // ""), (.nn // "" | tostring), (.file // ""), ((.files // []) | join(",")), (.why // "" | gsub("[\u001f\n]"; " "))] | join("\u001f")' "$dir/plan.json")
   # shellcheck disable=SC2016  # jq's $at
@@ -1925,7 +1932,7 @@ cmd_rescope_apply() {
   load_board
   jq -r '. as $b | ($b | map(select(.status == "dropped") | .nn | tonumber)) as $d |
     $b[] | select(.status == "open") | . as $t | ($t.blockers | map(select(tonumber | IN($d[])))) as $hit |
-    select($hit | length > 0) | "WARN \($t.nn) is blocked by dropped \($hit | join(", ")) — it waits until its Blocked by line changes"' <<<"$BOARD_JSON"
+    select($hit | length > 0) | "NOTE \($t.nn) was blocked by dropped \($hit | join(", ")) — a dropped blocker counts as met (S7), so check it still makes sense on its own"' <<<"$BOARD_JSON"
   echo "APPLIED $id"
 }
 

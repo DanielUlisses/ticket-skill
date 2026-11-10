@@ -206,7 +206,7 @@ load_board() {
               xblockers: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
                            | {repo, nn, board: $board, status: ($xs[$k] // "missing")} ],
               xblockers_open: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
-                                | select($xs[$k] != "resolved")
+                                | select($xs[$k] | IN("resolved", "dropped") | not)
                                 | "\(.repo):\(.nn)" + (if $xs[$k] == "missing" then " (not found)" else "" end) ] })' <<<"$BOARD_JSON")"
 }
 
