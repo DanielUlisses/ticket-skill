@@ -27,7 +27,7 @@ ticket moves, its step changes.
 | `daniel` | `answer` | an agent's blocking question, an agent at a dialog, a landing nobody can tell, a ticket on the wrong repo's board |
 | `daniel` | `start` / `work` | an `**Owner:** me` ticket in backlog / working |
 | `none` | `blocked` | open, waiting on tickets not resolved |
-| `none` | `wait` | a draft PR, or its checks running |
+| `none` | `wait` | a draft PR (one that also conflicts is `merge`: the conflict comes first), or its checks running |
 | `none` | `done` | resolved or dropped |
 
 `since` is when the ticket last changed: the newest of its file, its phase file

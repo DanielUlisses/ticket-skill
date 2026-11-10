@@ -897,6 +897,37 @@ reset_phase() {
   log "phase file reset to '$word' (an earlier agent's phase is not this one's)"
 }
 
+# `herdr agent start` for $AGENT in $AGENT_PANE, setting START_OUT and START_RC.
+# A pane just made can refuse an agent while its shell is still starting: the
+# start is retried every TICKET_AGENT_START_RETRY_EVERY_S (1) seconds for up to
+# TICKET_AGENT_START_RETRY_S (10), as tk-daemon does for grills. A dialog
+# (agent_not_ready) is a started agent, never retried. Reads agents_arg,
+# RESUME_ARGS, RC_ARGS and DISALLOWED_TOOLS from the caller.
+start_agent_retrying() {
+  local tries=0 deadline=$(( SECONDS + ${TICKET_AGENT_START_RETRY_S:-10} ))
+  set +e
+  while :; do
+    # --agents goes before --disallowedTools: that one is variadic and would
+    # swallow anything after it.
+    START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
+      --model "$SESSION_MODEL" --effort "$SESSION_EFFORT" --permission-mode "$SESSION_PERMISSION_MODE" \
+      ${agents_arg[@]+"${agents_arg[@]}"} \
+      ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"} \
+      ${RC_ARGS[@]+"${RC_ARGS[@]}"} \
+      --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
+    START_RC=$?
+    tries=$(( tries + 1 ))
+    [[ $START_RC -eq 0 ]] && break
+    grep -q 'agent_not_ready' <<<"$START_OUT" && break
+    (( SECONDS < deadline )) || break
+    log "herdr agent start $AGENT failed (try $tries), retrying: $(tail -1 <<<"$START_OUT")"
+    sleep "${TICKET_AGENT_START_RETRY_EVERY_S:-1}"
+  done
+  set -e
+  if (( START_RC != 0 && tries > 1 )); then START_OUT+=" ($tries tries)"; fi
+  return 0
+}
+
 # ---- --resume: a new agent in the worktree a dead one left ---------------------
 # Instead of section 1-2 of launcher_main: the worktree, its branch, its account
 # link and its catalog skills are all there already, so only a workspace, its
@@ -1284,6 +1315,11 @@ SUMMARY
     create=(worktree create --cwd "$ROOT" --branch "$BRANCH" --base "$BASE_BRANCH" --path "$WT" --label "$LABEL")
     has_flag --no-focus worktree create && create+=(--no-focus)
     WT_JSON="$(herdr_json "herdr worktree create" "${create[@]}")"
+    # The worktree and its branch exist from here on, whatever fails next. tk.sh
+    # launch reads this line to record the ticket in progress even when the
+    # launch then fails, so the ticket isn't left open with a branch a relaunch
+    # refuses: tk.sh resume finishes it in this worktree instead.
+    [[ -d "$WT" ]] && echo "WORKTREE_MADE=$WT"
 
     # `--label` above labels the WORKSPACE; the tab that comes with it is labelled
     # by number ("1"), and section 2 either renames it or replaces it. All three
@@ -1396,17 +1432,7 @@ SUMMARY
     log "starting '$AGENT' ($AGENT_KIND, $COORD_MODEL, effort $COORD_EFFORT, $PERMISSION_MODE) in pane $AGENT_PANE — implementer $IMPL_MODEL, effort $IMPL_EFFORT"
   fi
   log "subagents: $SESSION_AGENTS_STATUS"
-  set +e
-  # --agents goes before --disallowedTools: that one is variadic and would
-  # swallow anything after it.
-  START_OUT="$(herdr agent start "$AGENT" --kind "$AGENT_KIND" --pane "$AGENT_PANE" -- \
-    --model "$SESSION_MODEL" --effort "$SESSION_EFFORT" --permission-mode "$SESSION_PERMISSION_MODE" \
-    ${agents_arg[@]+"${agents_arg[@]}"} \
-    ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"} \
-    ${RC_ARGS[@]+"${RC_ARGS[@]}"} \
-    --disallowedTools "${DISALLOWED_TOOLS[@]}" 2>&1)"
-  START_RC=$?
-  set -e
+  start_agent_retrying
 
   # Before the exit-3 branch as well as the happy path: an agent stopped at the
   # folder-trust dialog is a started process with an environment to read, and the

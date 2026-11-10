@@ -65,7 +65,7 @@
 #   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
-#   gates/merge: 10 conflicting (send ticket-merger; wins over failed or pending checks) | 11 checks pending | 12 another gate failed
+#   gates/merge: 10 conflicting (send ticket-merger; wins over every other failed gate) | 11 checks pending | 12 another gate failed
 #   say, answer: 20 agent at a dialog | 21 no live agent (answer: written, not sent)
 set -euo pipefail
 
@@ -112,6 +112,7 @@ cmd_digest() {
         IFS=$'\t' read -r _ st tab < <(awk -F'\t' -v a="$agent" '$1 == a' <<<"$agents") || true
         [[ -n "$st" ]] || st="gone"
         (( herdr_ok )) || st="?"
+      else st="gone"  # a launch that stopped before its agent started (board_rows_)
       fi
     fi
     facts+="$(jq -cn --arg nn "$nn" --arg l "$l" --arg s "$st" --arg tab "${tab:--}" --arg p "$pushed" '{nn:$nn, landed:$l, state:$s, tab:$tab, pushed:$p}')"$'\n'
@@ -215,6 +216,32 @@ record_run_state() {
   mv "$tmp" "$f"
 }
 
+# A launch that made the worktree and stopped before an agent started: the ticket
+# is in progress on that branch with no **Agent:** line, which the board reads as
+# gone. The settings are the launch's own; the account only when one was named
+# (else the worktree inherits, and resume checks nothing); the skills those the
+# launcher had linked into the worktree before it stopped.
+record_half_launch() {
+  local t="$1" branch="$2" wt="$3" model="$4" effort="$5" account="$6" skills
+  skills="$( { find "$wt/.claude/skills" -mindepth 1 -maxdepth 1 -type l -printf '%f\n' 2>/dev/null || true; } | sort | paste -sd, -)"
+  skills="${skills:-none}"
+  record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Skills:** %s' \
+    "$branch" "$(git -C "$wt" rev-parse HEAD 2>/dev/null || echo "?")" "$model" "$effort" "${account:-unknown}" "$wt" "$skills")"
+}
+
+# A live Herdr agent with the name the launcher gives <branch>'s agent
+# (tk-<branch>, cut to 32, or cut to 28 plus a number when taken), printed as
+# "<name> <state>": an agent a half-failed launch did start (a failed prompt, a
+# launch killed after the start) that no **Agent:** line names. Dies when Herdr
+# can't say: starting a second agent in a worktree is worse than refusing.
+launch_agent_live() {
+  local branch="$1" name states
+  name="tk-${branch}"; name="${name:0:32}"; name="${name%-}"
+  command -v herdr >/dev/null 2>&1 || return 0
+  states="$(agent_states)" || die "Herdr didn't answer — can't tell whether an agent from the launch of $branch is still running; not starting another"
+  awk -F'\t' -v n="$name" -v p="${name:0:28}-" '$1 == n || (index($1, p) == 1 && substr($1, length(p) + 1) ~ /^[0-9]+$/) { print $1, $2; exit }' <<<"$states"
+}
+
 cmd_launch() {
   board_init "${1:-}"; shift
   local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper] [--cleared <repo:NN>,…]}"; shift
@@ -288,6 +315,25 @@ cmd_launch() {
   label="$(slugify "$title" | cut -d- -f1-3 | tr '-' ' ')"; label="${label:0:20}"; label="${label% }"
   [[ -n "$label" ]] || label="ticket $nn2"
 
+  # An earlier launch of this ticket that died after making its worktree (before
+  # tk.sh recorded early, or killed with it) left the branch the launcher would
+  # refuse. That worktree is this ticket's: record it, and resume finishes the
+  # launch there. Anything else on that branch is not ours to take.
+  local wt0; wt0="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+    [[ -d "$wt0" && "$(git -C "$wt0" rev-parse --abbrev-ref HEAD 2>/dev/null)" == "$branch" ]] \
+      || die "branch '$branch' already exists, and not in the worktree a launch of ticket $nn2 leaves ($wt0) — remove it (git branch -D $branch) or launch with another --type"
+    local live; live="$(launch_agent_live "$branch")"
+    [[ -z "$live" ]] || die "an agent from an earlier launch of ticket $nn2 is still running in $wt0 ($live) — close it in Herdr first, or let it finish"
+    if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then
+      echo "DRY RUN $nn2 — would record the worktree an earlier launch left ($wt0) and resume it"; return 0
+    fi
+    record_half_launch "$t" "$branch" "$wt0" "$model" "$effort" "$account"
+    echo "RECORDED $nn2 in-progress on $branch — an earlier launch made $wt0 and stopped before its agent started; resuming it"
+    if (( helper )); then cmd_resume "$BOARD_ID" "$nn2" --helper; else cmd_resume "$BOARD_ID" "$nn2"; fi
+    return
+  fi
+
   # The brief: the ticket file as written, then the wave's research.
   local brief; brief="$(mktemp -t ticket.XXXXXX.md)"
   cat "$(jq -r .file <<<"$t")" >"$brief"
@@ -324,6 +370,16 @@ cmd_launch() {
       "$(sed -n 's/^ACCOUNT=\([^ ]*\).*/\1/p' "$out")" "$wt" "$agent" \
       "$(sed -n 's/^SKILLS=\([^ ]*\).*/\1/p' "$out" | sed 's/^$/none/')")"
     echo "RECORDED $nn2 in-progress on $branch$( ((helper)) && echo " (yours, with a helper)")"
+  else
+    # The launcher failed. Once it had made the worktree (WORKTREE_MADE=) the
+    # branch exists and a relaunch would refuse it, so the ticket is recorded in
+    # progress with no agent: the board reads that as gone (needs · no live
+    # agent, step hub · resume) and tk.sh resume finishes the launch there.
+    local made; made="$(sed -n 's/^WORKTREE_MADE=//p' "$out" | head -1)"
+    if [[ -n "$made" && -d "$made" && "$(git -C "$made" rev-parse --abbrev-ref HEAD 2>/dev/null)" == "$branch" ]]; then
+      record_half_launch "$t" "$branch" "$made" "$model" "$effort" "$account"
+      echo "RECORDED $nn2 in-progress on $branch with no agent — the launch failed after making $made; tk.sh resume $BOARD_ID $nn2 finishes it"
+    fi
   fi
   rm -f "$out" "$brief"
   return $rc
@@ -374,6 +430,11 @@ cmd_resume() {
     states="$(agent_states)" || die "Herdr didn't answer — can't tell whether $agent is still running; not resuming"
     st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$states")"
     [[ -z "$st" ]] || die "ticket $nn's agent $agent is still there ($st) — nothing to resume"
+  else
+    # No agent recorded (a launch that stopped half-way): one it did start may
+    # still be there under the launcher's name.
+    st="$(launch_agent_live "$branch")"
+    [[ -z "$st" ]] || die "ticket $nn has no agent recorded, but its launch's agent is still running ($st) — close it in Herdr first, or let it finish"
   fi
   fetch_board_refs
   case "$(landed "$branch" "$(jq -r .base <<<"$t")")" in
@@ -412,6 +473,8 @@ cmd_resume() {
       echo "This ticket's work was done and waited for other work to land first. Its branch has now been rebased onto $BASE_BRANCH at $rebased (tk.sh rebase): the commits are the same work on the new base. The session that wrote it has ended."
     elif (( respec )); then
       echo "This ticket's spec changed after its work was written${rescope:+ (rescope $rescope)}${pr_line:+, while its PR $pr_line was open}. The session that wrote it has ended; you carry the branch to the new spec. Nothing was cleaned up: the worktree is exactly as it was left."
+    elif [[ -z "$agent" ]]; then
+      echo "This ticket's launch made its worktree and stopped before its agent started (tk.sh launch recorded how far it got). You are that agent: nothing was cleaned up, the worktree is exactly as the launch left it."
     else
       echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
     fi
@@ -557,10 +620,12 @@ cmd_rebase() {
 
 # ---- gates and merge ---------------------------------------------------------------
 # Sets PR_NUMBER. Prints one GATE line per gate; returns 0 / 10 / 11 / 12.
-# A conflicting PR returns 10 even when its checks failed or are still running:
-# GitHub runs no CI on a PR that conflicts with its base, so its checks are stale
-# or missing until the merger has merged the base in. Only a ready or review
-# failure (or a forge that couldn't be asked) beats the conflict.
+# A conflicting PR returns 10 whatever else failed: GitHub runs no CI on a PR that
+# conflicts with its base, so its checks are stale or missing, and Azure DevOps
+# holds a review or a policy back on it, until the merger has merged the base in.
+# A draft, a wrong base or a missing review still print their FAIL lines and are
+# gated again once the conflict is gone. Only a PR the forge couldn't be asked
+# about (no 10 to give) returns 12 first.
 run_gates() {
   local t="$1" branch json fail=0 checks_fail=0 conflicting=0 pending=0 forge
   branch="$(jq -r .branch <<<"$t")"
@@ -591,8 +656,8 @@ run_gates() {
     APPROVED|"") echo "GATE review PASS" ;;
     *) echo "GATE review FAIL $(jq -r .review <<<"$json")"; fail=1 ;;
   esac
-  (( fail )) && return 12
   (( conflicting )) && return 10
+  (( fail )) && return 12
   (( checks_fail )) && return 12; (( pending )) && return 11; return 0
 }
 
@@ -1106,6 +1171,11 @@ board_rows_() {
           st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2}' <<<"$agents")"; st="${st:-gone}"
           tab="$(awk -F'\t' -v a="$agent" '$1 == a {print $3}' <<<"$agents")"; tab="${tab:--}"
         else st="?"; fi
+      else
+        # In progress with no agent recorded: a launch that made the worktree
+        # and failed before its agent started (record_half_launch). Nothing runs
+        # there, so it reads as a dead agent's: tk.sh resume finishes it.
+        st="gone"
       fi
       if [[ -s "$phase_dir/$branch" ]]; then
         # Line 1 "<phase> [rN]", line 2 "tests=… criteria=m/n review=…" — both written by
@@ -1146,8 +1216,8 @@ board_rows_() {
        elif $t.pr != null then
          ($t.pr | [.checks[]?.s] as $c |
           {col: "pr", note: ("#\(.number) " +
-            (if .isDraft then "draft"
-             elif .mergeable == "CONFLICTING" then "conflict"
+            (if .mergeable == "CONFLICTING" then "conflict"
+             elif .isDraft then "draft"
              elif .review == "CHANGES_REQUESTED" then "changes requested"
              elif ($c | any(. == "bad")) then "checks failed"
              elif ($c | any(. == "pending")) then "checks running"
