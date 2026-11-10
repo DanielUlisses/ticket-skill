@@ -23,6 +23,10 @@ Which Claude subscription a ticket bills to is chosen per launch (`--account`, o
 means no link is written and the worktree inherits the developer's own — today's behaviour,
 now reported and verified rather than assumed. See `docs/agents/accounts.md`.
 
+### Agent user
+
+Off by default. With the box's agent user on (devboxes' `agent_user: true` writes `agent_user` into the box policy; `TICKET_AGENT_USER` overrides, empty is off), ticket agents and helpers run as `<user>-agent` through a root-owned wrapper (`sudo -n -u <user>-agent /usr/local/libexec/tk-agent-claude`, reached by a `claude` shim on the pane's PATH): its worktree's files are group `tkwork` and writable, git metadata never; its report, phase and questions files live in `/var/lib/tk-agent/<user>/`, linked from the usual paths; its config root is its own per account; the board's scripts run git with no repo hooks, Cursor runs outside the worktree and `ticket-merger` runs checks as the agent. All of it is `lib/ticket-agent.sh`. See `docs/adr/0011-ticket-agents-as-their-own-user.md` and `docs/agents/accounts.md`, Agent user.
+
 ### Agent models
 
 Twelve roles, configured once in `config/models.env`: the **implementer**, whose model and effort vary per ticket (its `**Suggested model:**` / `**Suggested effort:**` lines, the launch question, `--effort`); and fixed ones — each ticket's **coordinator** (`opus @ low`), the **reviewer** (`opus @ medium`, `high` for a ticket nothing can test — Seams `None`, e.g. Terragrunt) — or, for a document ticket, the **doc reviewer** (`opus @ medium`) — the Haiku swarm of **testers**, **scouts**, **researchers** and **criteria checkers**, and on the board side the **board** session itself (`haiku @ low`), the **merger** (`sonnet @ medium`), the **PR creator** (`sonnet @ low`) and the **retro** (`sonnet @ medium`). Every launch redefines the `ticket-*` subagents through `claude --agents` with those values, so the `agents/*.md` frontmatter is only a fallback kept in step. See `docs/agents/models.md` for the roster and the checklist for bumping a model, and `docs/adr/0002-model-tiers-and-agent-roster.md` for why each role sits where it does.

@@ -102,6 +102,20 @@ link, so the agent gets a tab created afterwards and the stale one is closed. Bo
 take the same fork; neither needed the function split. [`accounts.md`](accounts.md) has the
 table and the reasoning.
 
+## With the agent user on
+
+`lib/ticket-agent.sh` (sourced through `ticket-git-repo.sh`, so every script has it) is the whole of
+it; with the switch off every call is a no-op. A launch then: gives the new worktree to group
+`tkwork` (`agent_prepare_worktree`: files and directories group-writable, git metadata not), skips
+`mise trust` (the wrapper trusts it in the agent's store), makes the report, phase and questions files
+in the shared state dir and names those in the brief (`agent_state_file`), adds the brief's
+own-user paragraph (`{{AGENT_USER_NOTE}}`), opens a fresh agent tab (the root pane's shell predates
+the group change, so its PATH may lack the shim) and checks the agent runs as the agent user before
+it sends the ticket. The summary gains `AGENT_USER=` and `START=`; `TICKET_DRY_RUN=1` shows both,
+with the wrapper command when the switch is on and the plain `claude` when it is off. A resume does
+the same in the existing worktree and looks for the conversation in the agent's config root. See
+ADR 0011 for the paths back to the developer this closes.
+
 ## Trusting the new worktree's mise config
 
 A ticket's worktree is a directory that has never existed before, and mise trusts by

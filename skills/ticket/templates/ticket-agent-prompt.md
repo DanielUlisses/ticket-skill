@@ -29,6 +29,8 @@ printf '%s\n%s\n' "reviewing r1" "tests=pass criteria=3/4 review=2-blocking" > {
 - One question per entry, answerable in a line. Never ask for a secret's value — ask where it lives (a vault item, a pipeline variable name).
 - Read the ticket's `## Answers` section first, if it has one: what's answered there isn't asked again.
 
+{{AGENT_USER_NOTE}}
+
 {{PROJECT_MEMORY}}
 
 {{RETRO_RESULTS}}
