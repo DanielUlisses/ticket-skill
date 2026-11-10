@@ -2365,7 +2365,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   board only (tk.sh policy-set): forge, require_human_before_pr,
                                   auto_merge, night_shift, autonomy, max_parallel, usage_gate_pct,
                                   skills (set skills ["terraform","helm"]: catalog skills linked
-                                  into each new ticket's worktree)
+                                  into each new ticket's worktree), fix_rounds (tk-hub sends
+                                  a red PR back to its agent this many times; 0 is off)
   change the plan (split, re-scope, new ticket)
                                 -> /ticket <board> ... in an Opus planning session; it appends here
 
