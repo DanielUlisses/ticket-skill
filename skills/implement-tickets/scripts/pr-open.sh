@@ -11,8 +11,9 @@
 #       stage exactly those paths, commit, push, open the PR against the base
 #   pr-open.sh push  <board> <NN> --message-file <f> --paths-file <f>
 #       the same commit and push, and no PR — for TICKET_FORGE=none, where the
-#       developer merges on the forge; asks no forge anything (message optional
-#       when the paths file is empty: the commit is already made)
+#       developer merges on the forge, and for a fix to a branch whose PR is
+#       already open (the PR gets the new commits); asks no forge anything
+#       (message optional when the paths file is empty: the commit is made)
 #   pr-open.sh check  <board> <NN> --local
 #   pr-open.sh commit <board> <NN> --message-file <f> --paths-file <f>
 #       the same guarded commit, and no push — for a repo in local mode (no remote,
@@ -36,7 +37,7 @@ source "$LIB_DIR/ticket-git-repo.sh"
 source "$SKILL_DIR/scripts/board-lib.sh"
 
 verb="${1:-}"; board="${2:-}"; nn="${3:-}"
-[[ "$verb" =~ ^(check|open|push|commit)$ && -n "$nn" ]] || { sed -n '2,22p' "$0"; exit 1; }
+[[ "$verb" =~ ^(check|open|push|commit)$ && -n "$nn" ]] || { sed -n '2,23p' "$0"; exit 1; }
 shift 3
 # Push mode: commit and push only. No PR is opened or looked up, so no forge is needed.
 # Local mode: commit only — no remote, or no forge; the branch is merged locally after.
@@ -223,7 +224,7 @@ case "$verb" in
     # The remote-tracking copy is what the board reads as "pushed"; set it even
     # where a narrow fetch refspec kept git push from doing so.
     g update-ref "refs/remotes/$REMOTE/$BRANCH" HEAD
-    echo "PUSHED $(g rev-parse --short HEAD) $BRANCH to $REMOTE — no PR; it lands when merged on the forge"
+    echo "PUSHED $(g rev-parse --short HEAD) $BRANCH to $REMOTE — no new PR; an open PR on $BRANCH gets the commits, else it lands when merged on the forge"
     echo "COMMIT $(g rev-parse --short HEAD) on $BRANCH, pushed"
     print_left ;;
 esac

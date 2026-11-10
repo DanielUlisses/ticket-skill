@@ -24,7 +24,9 @@ ticket moves, its step changes.
 | `hub` | `merge` | a PR ready to merge, with `auto_merge: true` |
 | `daniel` | `review` | human (the gate), or a PR awaiting review |
 | `daniel` | `merge` | a PR ready to merge, a PR that conflicts with the base (`merge NN` sends the merger: nothing else starts it), or a branch pushed with the forge off |
-| `daniel` | `answer` | an agent's blocking question, an agent at a dialog, a landing nobody can tell, a ticket on the wrong repo's board, a PR with changes requested or failed checks and no agent on it (`idle`, `done`, `gone`, `-`): nothing tells an agent to fix it yet |
+| `daniel` | `answer` | an agent's blocking question, an agent at a dialog, a landing nobody can tell, a ticket on the wrong repo's board, a PR with changes requested or failed checks and no agent on it (`idle`, `done`, `gone`, `-`) and nothing new on the branch: no agent is fixing it (tk-hub's fix loop, policy `fix_rounds`, sends it back when on) |
+| `daniel` | `push` | a red PR whose agent finished a fix (no live agent, `unpushed` work on the branch): **Push fix** sends it to the open PR (`tk.sh push`) |
+| `hub` | `push` | the same under `night_shift` with `require_human_before_pr: false` |
 | `daniel` | `start` / `work` | an `**Owner:** me` ticket in backlog / working |
 | `none` | `blocked` | open, waiting on tickets not resolved |
 | `none` | `wait` | a draft PR (one that also conflicts is `merge`: the conflict comes first), or its checks running |

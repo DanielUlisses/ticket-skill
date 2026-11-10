@@ -905,15 +905,17 @@ load_models_env() {
 POLICY_CHECK='
   def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
               autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object",
-              base_branch: "branch", skills: "names"};
+              base_branch: "branch", skills: "names", fix_rounds: "rounds"};
   def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
              count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object",
-             branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)"};
+             branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)",
+             rounds: "a whole number from 0 to 10"};
   def ok($t; $v):
     if   $t == "bool"     then ($v | type) == "boolean"
     elif $t == "forge"    then $v | IN("github", "azure", "none")
     elif $t == "autonomy" then $v | IN("assist", "auto")
     elif $t == "count"    then ($v | type) == "number" and $v == ($v | floor) and $v >= 1 and $v <= 1000
+    elif $t == "rounds"   then ($v | type) == "number" and $v == ($v | floor) and $v >= 0 and $v <= 10
     elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
     elif $t == "branch"   then ($v | type) == "string" and $v != ""
     elif $t == "names"    then ($v | type) == "array" and all($v[]; type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$"))
@@ -925,7 +927,7 @@ POLICY_CHECK='
 # The numeric keys as plain integers when they are whole (2.0 prints as 2).
 # shellcheck disable=SC2016  # a jq program: its $vars are jq's
 POLICY_NORM='
-  reduce ("max_parallel", "usage_gate_pct") as $k (.;
+  reduce ("max_parallel", "usage_gate_pct", "fix_rounds") as $k (.;
     if (.[$k] | type) == "number" and .[$k] == (.[$k] | floor) then .[$k] |= floor else . end)'
 
 # Sets POLICY_LAYER to the file's object ({} when absent or empty). Dies on
@@ -998,7 +1000,7 @@ policy_resolve() {
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
      autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
-     synthesis: {backends: ["agy"], timeout: 300}, skills: []} * .
+     synthesis: {backends: ["agy"], timeout: 300}, skills: [], fix_rounds: 0} * .
     | if $env != "" then .forge = $env else . end
     | if $remote == 0 then .forge = "none" else . end
     | '"$POLICY_NORM" <<<"$POLICY_LAYERS")"
