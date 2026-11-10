@@ -35,6 +35,19 @@ Each ticket of the batch carries `**Tested in:** <name>` and its report's
 (docs/agents/test-plan.md); tk-hub joins the skeleton and those into the
 batch's one plan. The board loader never reads `batches/` as tickets.
 
+## A batch across repos
+
+A plan that changes several repos is one board per repo under one name
+(docs/agents/jira-parent.md), and a batch may take tickets from any of them:
+`/ticket` writes the same batch file into each repo that has a ticket in it
+(a copy's **Tickets:** line may name every repo's tickets; another repo's is
+that repo's copy to carry), and a ticket moves with `tk.sh batch` run from its
+own repo. tk-hub joins the
+same-named batches of a board name's boards on one box into one batch with one
+test, ready once every repo's tickets have landed, and names its tickets
+`<repo> #NN`. Nothing in `tk.sh` changes: each board still exports its own
+copy.
+
 ## Moving a ticket
 
 `tk.sh batch <board> <NN> <batch|none>` writes the ticket's `**Tested in:**`
