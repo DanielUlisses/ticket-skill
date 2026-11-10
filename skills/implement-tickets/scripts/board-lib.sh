@@ -410,6 +410,36 @@ agent_states() {
   jq -r '.result.agents[]? | select(.name) | "\(.name)\t\(.agent_status // "unknown")\t\(.tab_id // "-")"' <<<"$j" 2>/dev/null
 }
 
+# "<phase> <fresh>" for a ticket's branch: the first word of its phase file's
+# line 1 (- when there is none) and true when the ticket's current agent wrote it
+# (not older than the `.started` mark the launcher leaves, reset_phase).
+phase_state() {
+  local f p="-" fresh=false
+  [[ -n "${1:-}" ]] || { echo "- false"; return; }
+  f="$(board_state_dir)/phase/$1"
+  if [[ -s "$f" ]]; then
+    p="$(head -1 "$f" | tr -cd 'a-z0-9 -' | awk '{print $1}')"; p="${p:--}"
+    [[ -e "$f.started" && ! "$f.started" -nt "$f" ]] && fresh=true
+  fi
+  echo "$p $fresh"
+}
+
+# The brief a launch rendered for an agent that stopped at a dialog before it
+# could be sent (launcher exit 3, folder trust): kept per branch until tk.sh
+# resume sends it. Empty when there is none.
+pending_brief() { local f; f="$(board_state_dir)/pending/$1.md"; [[ -n "${1:-}" && -s "$f" ]] && echo "$f"; return 0; }
+
+# Keeps the brief an exit-3 launch names ("launch.sh prompt <agent> <file>" in
+# its output, $2) for <branch> ($1).
+keep_pending_brief() {
+  local file
+  file="$(sed -n 's/^ *[^ ]*launch\.sh prompt [^ ]* \(.*\)$/\1/p' "$2" | tail -1)"
+  [[ -n "$file" && -s "$file" ]] || return 0
+  mkdir -p "$(board_state_dir)/pending"
+  cp "$file" "$(board_state_dir)/pending/$1.md"
+  echo "PENDING brief kept for $1 — once its dialog is answered, tk.sh resume sends it"
+}
+
 # The gate for anything that writes in a ticket's worktree: only when its agent
 # is idle, done or gone (or none was recorded). Fails closed — working, at a
 # dialog, a state Herdr didn't classify, or Herdr not answering all refuse.

@@ -6,7 +6,7 @@
 #   owner   agent   the ticket's agent: build, review (its own review loop), fix (a PR's
 #                   changes or failed checks)
 #           hub     tk-hub or the board session acts on its own: launch, resume (no live
-#                   agent), resolve (landed), pr (night_shift, no human gate, review passed),
+#                   agent, or one that stopped halfway at its prompt), resolve (landed), pr (night_shift, no human gate, review passed),
 #                   merge (auto_merge)
 #           daniel  the developer: review (the human gate, a PR awaiting review), merge
 #                   (a conflicting PR too: nothing sends the merger until "merge NN" does),
@@ -71,6 +71,7 @@ def next_of($pol):
       (if (.note | startswith("asks: ")) then step("daniel"; "answer"; "asks: \(ask.q | gsub("\\s+"; " ") | .[0:200])")
        elif .state == "blocked" then step("daniel"; "answer"; "agent at a dialog")
        elif .state == "gone" then step("hub"; "resume"; .note)
+       elif (.note | test("^agent (stopped|waits for its brief)")) then step("hub"; "resume"; .note)
        else step("daniel"; "answer"; .note) end)
     else step("none"; "wait"; .note) end;
 
