@@ -69,6 +69,35 @@ Work that is only on the box rides on a gone agent's card: `unpushed` in the exp
 ` · unpushed: …` on the note. `/sweep-tickets` never removes a worktree with uncommitted
 changes, `--force` or not, and needs `--force` for a branch that isn't merged.
 
+## An agent that stopped halfway
+
+An agent can stop at its prompt without dying: a usage limit, an API error, a context that
+filled up, a turn that just ended. Herdr then says `idle` or `done`, the same as for an agent
+that finished. The phase file tells them apart: a finished agent writes `done` last.
+
+- The board rows read an agent at its prompt (`idle` or `done`) whose phase is not its own
+  `done` (another phase, or a `done` older than its `.started` mark) as stopped, not finished:
+  **needs you**, "agent stopped mid-<phase>" ("agent stopped before its first phase" when it
+  never wrote one), next step `hub · resume`. Before this they went to **human review** as
+  "agent finished", and the developer reviewed half a change. A blocking question still wins:
+  "asks: …".
+- The digest says `ACTION stopped NN`.
+- `tk.sh resume` on such a ticket starts nothing: the agent is still there, so it is sent one
+  message to carry on from the step it was on (`NUDGED NN`). It is refused when the agent did
+  write its `done`, waits on a blocking question, or when `--helper`, `--respec`, `--rebased` or
+  `--fresh` asks for a new agent (close the old one in Herdr first).
+- `--note <file>` adds the file's text under the message, or under a gone agent's resume note:
+  tk-hub sends a review's requested changes this way when the agent has gone.
+
+A launch whose agent stopped at a dialog (folder trust; the launcher exits 3) never got its
+brief. `tk.sh launch` and `tk.sh resume` now keep that brief per branch (`PENDING brief kept`),
+the board shows "agent waits for its brief (dialog answered)" once the dialog is answered and
+the agent sits idle, and `tk.sh resume` sends it (`BRIEFED NN`).
+
+tk-hub reads why an agent stopped off its screen (a usage limit and its reset time, a full
+context) and waits for the reset before it resumes one on its own (ticket-board
+`docs/runs.md`).
+
 ## A launch that stopped half-way
 
 A launch that fails after the launcher made the worktree (a Herdr call that errors, an agent

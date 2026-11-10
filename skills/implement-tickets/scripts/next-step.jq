@@ -6,9 +6,11 @@
 #   owner   agent   the ticket's agent: build, review (its own review loop), fix (a PR's
 #                   changes or failed checks)
 #           hub     tk-hub or the board session acts on its own: launch, resume (no live
-#                   agent), resolve (landed), pr (night_shift, no human gate, review passed),
+#                   agent, or one that stopped halfway at its prompt), resolve (landed), pr (night_shift, no human gate, review passed),
 #                   merge (auto_merge)
-#           daniel  the developer: review (the human gate, a PR awaiting review), merge
+#           daniel  the developer: review (the human gate, a PR awaiting review), push (a
+#                   fix the agent made for a red PR waits to reach it: Push fix; the
+#                   hub's under night_shift with no human gate), merge
 #                   (a conflicting PR too: nothing sends the merger until "merge NN" does),
 #                   answer (a question, a dialog, a landing nobody can tell, a misfiled
 #                   ticket, a PR to fix with no agent on it), start / work (a ticket of
@@ -55,6 +57,11 @@ def next_of($pol):
          elif $s == "awaiting review" then step("daniel"; "review"; "PR #\(.pr.number) awaiting review")
          elif $s == "conflict" then step("daniel"; "merge"; "PR #\(.pr.number) conflicts with the base: merge \(.nn) sends the merger")
          elif ($s == "changes requested" or $s == "checks failed") and (.state | IN("idle", "done", "gone", "-"))
+              and (.unpushed // "") != ""
+           then (if $pol.night_shift == true and $pol.require_human_before_pr == false
+                 then step("hub"; "push"; "PR #\(.pr.number): a fix is ready (\(.unpushed)); night shift pushes it")
+                 else step("daniel"; "push"; "PR #\(.pr.number): a fix is ready (\(.unpushed)): Push fix") end)
+         elif ($s == "changes requested" or $s == "checks failed") and (.state | IN("idle", "done", "gone", "-"))
            then step("daniel"; "answer"; "PR #\(.pr.number): \($s), no agent is fixing it")
          elif $s == "changes requested" or $s == "checks failed" then step("agent"; "fix"; "PR #\(.pr.number): \($s)")
          else step("none"; "wait"; "PR #\(.pr.number): \($s)") end)
@@ -71,6 +78,7 @@ def next_of($pol):
       (if (.note | startswith("asks: ")) then step("daniel"; "answer"; "asks: \(ask.q | gsub("\\s+"; " ") | .[0:200])")
        elif .state == "blocked" then step("daniel"; "answer"; "agent at a dialog")
        elif .state == "gone" then step("hub"; "resume"; .note)
+       elif (.note | test("^agent (stopped|waits for its brief)")) then step("hub"; "resume"; .note)
        else step("daniel"; "answer"; .note) end)
     else step("none"; "wait"; .note) end;
 

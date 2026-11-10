@@ -410,6 +410,36 @@ agent_states() {
   jq -r '.result.agents[]? | select(.name) | "\(.name)\t\(.agent_status // "unknown")\t\(.tab_id // "-")"' <<<"$j" 2>/dev/null
 }
 
+# "<phase> <fresh>" for a ticket's branch: the first word of its phase file's
+# line 1 (- when there is none) and true when the ticket's current agent wrote it
+# (not older than the `.started` mark the launcher leaves, reset_phase).
+phase_state() {
+  local f p="-" fresh=false
+  [[ -n "${1:-}" ]] || { echo "- false"; return; }
+  f="$(board_state_dir)/phase/$1"
+  if [[ -s "$f" ]]; then
+    p="$(head -1 "$f" | tr -cd 'a-z0-9 -' | awk '{print $1}')"; p="${p:--}"
+    [[ -e "$f.started" && ! "$f.started" -nt "$f" ]] && fresh=true
+  fi
+  echo "$p $fresh"
+}
+
+# The brief a launch rendered for an agent that stopped at a dialog before it
+# could be sent (launcher exit 3, folder trust): kept per branch until tk.sh
+# resume sends it. Empty when there is none.
+pending_brief() { local f; f="$(board_state_dir)/pending/$1.md"; [[ -n "${1:-}" && -s "$f" ]] && echo "$f"; return 0; }
+
+# Keeps the brief an exit-3 launch names ("launch.sh prompt <agent> <file>" in
+# its output, $2) for <branch> ($1).
+keep_pending_brief() {
+  local file
+  file="$(sed -n 's/^ *[^ ]*launch\.sh prompt [^ ]* \(.*\)$/\1/p' "$2" | tail -1)"
+  [[ -n "$file" && -s "$file" ]] || return 0
+  mkdir -p "$(board_state_dir)/pending"
+  cp "$file" "$(board_state_dir)/pending/$1.md"
+  echo "PENDING brief kept for $1 — once its dialog is answered, tk.sh resume sends it"
+}
+
 # The gate for anything that writes in a ticket's worktree: only when its agent
 # is idle, done or gone (or none was recorded). Fails closed — working, at a
 # dialog, a state Herdr didn't classify, or Herdr not answering all refuse.
@@ -875,15 +905,17 @@ load_models_env() {
 POLICY_CHECK='
   def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
               autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object",
-              base_branch: "branch", skills: "names"};
+              base_branch: "branch", skills: "names", fix_rounds: "rounds"};
   def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
              count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object",
-             branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)"};
+             branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)",
+             rounds: "a whole number from 0 to 10"};
   def ok($t; $v):
     if   $t == "bool"     then ($v | type) == "boolean"
     elif $t == "forge"    then $v | IN("github", "azure", "none")
     elif $t == "autonomy" then $v | IN("assist", "auto")
     elif $t == "count"    then ($v | type) == "number" and $v == ($v | floor) and $v >= 1 and $v <= 1000
+    elif $t == "rounds"   then ($v | type) == "number" and $v == ($v | floor) and $v >= 0 and $v <= 10
     elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
     elif $t == "branch"   then ($v | type) == "string" and $v != ""
     elif $t == "names"    then ($v | type) == "array" and all($v[]; type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$"))
@@ -895,7 +927,7 @@ POLICY_CHECK='
 # The numeric keys as plain integers when they are whole (2.0 prints as 2).
 # shellcheck disable=SC2016  # a jq program: its $vars are jq's
 POLICY_NORM='
-  reduce ("max_parallel", "usage_gate_pct") as $k (.;
+  reduce ("max_parallel", "usage_gate_pct", "fix_rounds") as $k (.;
     if (.[$k] | type) == "number" and .[$k] == (.[$k] | floor) then .[$k] |= floor else . end)'
 
 # Sets POLICY_LAYER to the file's object ({} when absent or empty). Dies on
@@ -968,7 +1000,7 @@ policy_resolve() {
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
      autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
-     synthesis: {backends: ["agy"], timeout: 300}, skills: []} * .
+     synthesis: {backends: ["agy"], timeout: 300}, skills: [], fix_rounds: 0} * .
     | if $env != "" then .forge = $env else . end
     | if $remote == 0 then .forge = "none" else . end
     | '"$POLICY_NORM" <<<"$POLICY_LAYERS")"
