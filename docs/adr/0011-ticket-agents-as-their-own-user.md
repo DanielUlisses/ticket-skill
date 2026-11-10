@@ -42,10 +42,12 @@ whose git runs with `GIT_OPTIONAL_LOCKS=0`.
 **The developer's account, the agent's config root.** claude-acc's link still picks the account. The
 shim passes its name; the wrapper maps it to a config root in the agent's home (`~/.claude`, or
 `~/.claude-switch/accounts/<name>`), never the developer's: a config root holds settings, hooks and
-plugins the developer's own sessions load. The login inside it is the box's, which exists for its
-agents (Daniel, 2026-11-10): devboxes links its `.credentials.json` to the developer's for the same
-account, the agent may read and write that one file (a refresh rewrites it) and nothing else in his
-root. A `claude setup-token` token in the agent's home wins over it.
+plugins the developer's own sessions load. The account is the box's, which exists for its agents
+(Daniel, 2026-11-10), but not its login file: the agent signs in with a long-lived token of its own
+from `claude setup-token`, which devboxes' `devbox agent-login` saves in the agent's home, and the
+wrapper refuses to start without one. A shared `.credentials.json` was tried first and failed the
+by-hand trial: Claude Code replaces the file on a refresh and the refresh token is single use, so the
+agent's refresh signed the developer out.
 
 ## The paths back to the developer, and how each is closed
 
@@ -75,14 +77,19 @@ Four assumptions, to be tried by hand on a box before the switch goes on anywher
 1. Herdr starts `claude` through the pane's shell, so the shim on PATH is the `claude` it runs, and it
    still reports idle/working/blocked, takes `herdr agent prompt` and reads the pane for a process
    owned by another user (with `sudo` between them).
-2. The shared login holds: Claude Code rewrites `.credentials.json` in place on a refresh (through
-   the agent's link, keeping the file's ACL) rather than replacing it, from either user, and
-   neither side's refresh logs the other out.
+2. The agent signs in to the developer's account without touching his login. A shared
+   `.credentials.json` failed this (see above); a `claude setup-token` token passed it.
 3. Rootless Docker runs for the agent inside an unprivileged LXC: subordinate ids the container has
    mapped, `docker run hello-world` and a PostgreSQL container.
 4. The agent's work needs no git write: `git status` and `git diff` with `GIT_OPTIONAL_LOCKS=0`, and
    whatever the reviewer and tester subagents call; Claude's Write tool can rewrite a pre-created file
    in a directory it can't write.
+
+The by-hand trial on dev-daniel (2026-11-10, Herdr 0.9.5, Claude Code 2.1.322) passed 1, 2 and 4:
+1 once the wrapper answered a new config root's onboarding, bypass-permissions warning and folder
+trust, which Herdr's prompt otherwise waits behind; 4 with the agent's git status, diff and Write. 3
+runs `hello-world` on rootless Podman (the container's id map widened on the host); PostgreSQL is
+still being checked.
 
 ## Consequences
 

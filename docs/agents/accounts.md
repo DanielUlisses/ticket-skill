@@ -237,11 +237,11 @@ and the wrapper maps it (`agent_config_dir_for` in `lib/ticket-agent.sh` is the 
 developer's own config root is never handed to the agent: it holds settings, hooks and plugins his
 own sessions load, and an agent that could write there could plant a hook that runs as him.
 
-The login is the box's, though: the box's Claude login exists for its agents. devboxes links each
-agent config root's `.credentials.json` to the developer's for the same account, with an ACL that lets
-the agent read and write that one file (a token refresh rewrites it) and nothing else in his root. A
-`claude setup-token` token saved as `~/.config/tk-agent/oauth-token-<name>` in the agent's home wins
-over the shared file. devboxes' README has the details.
+The account is the box's, though: it exists for its agents. The agent signs in to it with a token of
+its own, from `claude setup-token`, saved by devboxes' `devbox agent-login <name>` as
+`~/.config/tk-agent/oauth-token-<name>` in the agent's home; the wrapper refuses to start without one.
+Never with the developer's `.credentials.json`: Claude Code replaces it on a refresh and the refresh
+token is single use, so sharing it signed him out (ADR 0011). devboxes' README has the details.
 
 Verification changes with it. The pane's foreground process is `sudo`, whose environment can't be
 read, and the agent's claude belongs to another user. The launcher checks instead that a process of
