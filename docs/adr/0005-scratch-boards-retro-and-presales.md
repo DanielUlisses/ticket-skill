@@ -267,7 +267,11 @@ subagent (Sonnet) billed to the subscription the tickets need. It now runs on th
 workspace-trust prompt in a fresh ticket worktree) — the check output, recent
 commit subjects, the ticket, its report, the PR template, the `pr` skill (Cursor's own install, else the
 mattpocock one) and the capped diff — and asks for one JSON object: title, commit message, body, paths,
-left-out paths. Cursor runs no command and writes no file; its answer goes to `pr-open.sh open`, so the
+left-out paths. The diff never carries a change that may hold a secret, ignored or not: a name
+`risky()` matches (the filter `pr-open.sh` refuses to commit), added lines or a new file that
+`secret_like()` flags (private keys, common token prefixes, a key-like name given a value), or an
+untracked symlink. Those reach Cursor by name only, under `WITHHELD`; both checks live in
+`board-lib.sh`. Cursor runs no command and writes no file; its answer goes to `pr-open.sh open`, so the
 commit is still exactly the named paths, on the ticket's branch, without force. The board session runs
 a script rather than dispatching an agent. `TICKET_PR_RUNNER=claude` keeps `ticket-pr-creator` (`tk.sh pr`
 exits 5 and the board dispatches it). Cursor needs `cursor-agent login` or `CURSOR_API_KEY`;
