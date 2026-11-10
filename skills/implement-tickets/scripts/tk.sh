@@ -10,11 +10,18 @@
 # refuse, and the local base is never pushed.
 #   tk.sh digest  <board> [--full]       board, agents and git in one read; prints only what changed
 #   tk.sh launch  <board> <NN> --type <feat|fix|...> --model <m> --effort <e> [--account <a>] [--research <file>]
-#                                        (a **Kind:** doc ticket launches as a document, branch type docs)
-#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]
+#                 [--cleared <repo:NN>,…]   (a **Kind:** doc ticket launches as a document, branch type docs;
+#                                        --cleared: cross-board blockers tk-hub saw resolved, launched past)
+#   tk.sh resume  <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]
 #                                        a new agent in the worktree a dead one left (OOM, restart), as it
 #                                        stands: claude --resume on its newest transcript (--fresh: the
-#                                        full brief), a note on what it finds; refused while the old agent lives
+#                                        full brief), a note on what it finds; refused while the old agent lives.
+#                                        --respec: the spec changed under its work (a rescope applied after
+#                                        its PR): the note carries the ticket as it is now, same branch and PR
+#   tk.sh rebase  <board> <NN>           a ticket that waited for other work (tk-hub's park "when these
+#                                        merge"): rebase its unpushed branch onto the base's tip, record the
+#                                        new **Base:**, ask its agent to re-run checks and report (exit 10:
+#                                        conflicts, aborted — the merge flow takes it; 13: pushed, merge instead)
 #   tk.sh gates   <board> <NN>           the five merge gates, one line each (local mode: the local gates — four,
 #                                        five with a remote: base, the local base not behind <remote>/<base>)
 #   tk.sh ready   <board>                every in-progress ticket whose PR passes all gates (local mode: the local gates)
@@ -28,6 +35,10 @@
 #   tk.sh why     <board> <NN>           every step of "has it landed?" for one ticket
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
+#   tk.sh answer  <board> <NN> <file>    answer a question the ticket's agent asked (file: JSON {id?, q?, a}):
+#                                        written under the ticket's ## Answers, then sent to a live agent
+#   tk.sh batch   <board> <NN> <batch|none>  put a ticket in a batch (its **Tested in:** line and the
+#                                        batch file's **Tickets:** line), or take it out (none)
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
 #   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
@@ -36,6 +47,7 @@
 #                                        ticket as the status board sees it (tickets = board_rows) — for tk-hub;
 #                                        merge_mode: pr | push (forge none by policy/env) | local (local mode)
 #                                        rescopes: the rescopes waiting on the developer; each ticket's transcript
+#                                        and next: its one next step {owner, step, since, reason} (next-step.jq)
 #   tk.sh validate <board> [<NN>]        the contract evidence as JSON: every ticket's Provides/Consumes and
 #                                        body head, consumes nothing here provides, providers that aren't
 #                                        blockers; with <NN>, that ticket's change (diff, EAD/TDD Contracts rows)
@@ -53,8 +65,8 @@
 #   tk.sh policy-set <board> key=value...  write the board's .scratch/<board>/policy.json (typed; key= removes)
 #
 # Exit codes: 0 ok | 1 error | 3 launched but stopped at a dialog (run the printed command)
-#   gates/merge: 10 conflicting (send ticket-merger) | 11 checks pending | 12 another gate failed
-#   say: 20 agent at a dialog | 21 no live agent
+#   gates/merge: 10 conflicting (send ticket-merger; wins over failed or pending checks) | 11 checks pending | 12 another gate failed
+#   say, answer: 20 agent at a dialog | 21 no live agent (answer: written, not sent)
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -159,7 +171,8 @@ cmd_digest() {
                    (if .state == "gone" and ($was[.nn] != .line) then "ACTION yours \(.nn) — its helper session is closed; the developer ships it (PR, push or merge) or resolves it --no-code \"<what was done>\""
                     else empty end)
                  elif .state == "blocked" then "ACTION dialog \(.nn) — agent waiting at a dialog in tab \(.tab); the developer answers it"
-                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed; tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
+                 elif .state == "gone" and .col == "human" then (if $was[.nn] != .line then "ACTION review \(.nn) — agent finished, its session closed; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))\(if .unpushed != "" then " — unpushed: \(.unpushed), keep its worktree" else "" end)" else empty end)
+                 elif .state == "gone" then "ACTION orphan \(.nn) — no live agent and not landed\(if .unpushed != "" then " (unpushed: \(.unpushed))" else "" end); tell the developer (resume \(.nn) starts a new agent in its worktree, on their word)"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line) and $off and (.pushed | test("^[0-9a-f]+(\\+[0-9]+untracked)?$"))) then "ACTION pushed \(.nn) — \(.pushed | split("+") | .[0]) is on \($remote)/\(.branch), not landed yet\(.pushed | capture("\\+(?<n>[0-9]+)untracked$").n // "" | if . != "" then " (\(.) untracked file(s) left in its worktree)" else "" end); the next digest resolves it once it is merged"
                  elif ((.state == "idle" or .state == "done") and ($was[.nn] != .line)) then "ACTION review \(.nn) — agent finished; ready for the developer (or: \(if $off then "push" elif $local then "merge" else "open PR" end))"
                  else empty end ]
@@ -204,13 +217,14 @@ record_run_state() {
 
 cmd_launch() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper]}"; shift
-  local type="" model="" effort="" account="" research="" helper=0
+  local nn="${1:?usage: tk.sh launch <board> <NN> --type <t> --model <m> --effort <e> [--account <a>] [--research <file>] [--helper] [--cleared <repo:NN>,…]}"; shift
+  local type="" model="" effort="" account="" research="" helper=0 cleared=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type) type="$2"; shift 2 ;; --model) model="$2"; shift 2 ;;
       --effort) effort="$2"; shift 2 ;; --account) account="$2"; shift 2 ;;
       --research) research="$2"; shift 2 ;; --helper) helper=1; shift ;;
+      --cleared) cleared="${cleared:+$cleared,}$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
@@ -243,8 +257,25 @@ cmd_launch() {
   fi
   local foreign; foreign="$(foreign_repo "$t")"
   [[ -z "$foreign" ]] || die "ticket $nn changes $foreign, not $REPO_NAME — its worktree, branch and PR belong there. Move its file to that repo's .scratch/$BOARD_ID/issues/ and launch it from the board there (board.sh $BOARD_ID, run in that repo)"
-  open="$(jq -r --argjson b "$BOARD_JSON" '[.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn] + (.xblockers_open // []) | join(",")' <<<"$t")"
+  # --cleared: cross-board blockers (<repo>:<NN>) tk-hub saw resolved on the
+  # client's boards it has — one on another box, or under another board name,
+  # that this box can't find or reads stale. Only the ticket's own cross-board
+  # refs can be cleared; a blocker on this board never can.
+  local xnorm='def xnorm: sub(" \\(not found\\)$"; "") | sub(":#"; ":") | capture("^(?<r>.*):0*(?<n>[0-9]+)$") | "\(.r):\(if .n == "" then "0" else .n end)";'
+  if [[ -n "$cleared" ]]; then
+    local bad
+    bad="$(jq -r --arg c "$cleared" "$xnorm"'
+      [ .xrefs[] | "\(.repo):\(.nn)" | xnorm ] as $mine
+      | [ $c | split("[ ,]+"; null)[] | select(. != "")
+          | select((test("^[A-Za-z0-9._-]+:#?[0-9]+$") | not) or ((xnorm | IN($mine[])) | not)) ] | join(", ")' <<<"$t")"
+    [[ -z "$bad" ]] || die "--cleared names what isn't one of ticket $nn's cross-board blockers: $bad"
+  fi
+  open="$(jq -r --argjson b "$BOARD_JSON" --arg c "$cleared" "$xnorm"'
+    [ $c | split("[ ,]+"; null)[] | select(. != "") | xnorm ] as $cl
+    | [.blockers[] as $x | $b[] | select(.nn == $x and .status != "resolved") | .nn]
+      + [ (.xblockers_open // [])[] | select((xnorm | IN($cl[])) | not) ] | join(",")' <<<"$t")"
   [[ -z "$open" ]] || die "ticket $nn is blocked by $open — not on the frontier"
+  [[ -z "$cleared" ]] || echo "launching past cross-board blockers tk-hub saw resolved: ${cleared//,/, }"
   # Run state is written under the `# NN: Title` heading; a file without one
   # would launch and then stay `open` on the board, and launch again.
   grep -qE '^# [0-9]+:' "$(jq -r .file <<<"$t")" || die "ticket $nn has no '# $nn: <Title>' heading — add one, then launch"
@@ -310,15 +341,19 @@ cmd_launch() {
 # removed first: a kill mid-`git add` leaves one, and every git call then fails.
 cmd_resume() {
   board_init "${1:-}"; shift
-  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper]}"; shift
-  local model="" effort="" fresh=0 helper=0
+  local nn="${1:?usage: tk.sh resume <board> <NN> [--model <m>] [--effort <e>] [--fresh] [--helper] [--respec [--rescope <id>]] [--rebased <sha>]}"; shift
+  local model="" effort="" fresh=0 helper=0 respec=0 rescope="" rebased=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;; --effort) effort="$2"; shift 2 ;;
+      --rebased) rebased="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;; --helper) helper=1; shift ;;
+      --respec) respec=1; shift ;; --rescope) rescope="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
+  [[ -z "$rescope" ]] || (( respec )) || die "--rescope names the rescope a --respec resume follows"
+  [[ -z "$rescope" || "$rescope" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "--rescope takes a rescope id (YYYYMMDDThhmmssZ)"
   local t status branch wt agent states st yours
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
   status="$(jq -r .status <<<"$t")"
@@ -366,10 +401,20 @@ cmd_resume() {
   note="$(mktemp -t ticket-resume.XXXXXX.md)"
   changes="$(git -C "$wt" status --short 2>/dev/null | head -40)"
   last="$(git -C "$wt" log -1 --format='%h %s (%cr)' 2>/dev/null)"
+  local pr_line
+  pr_line="$(jq -r 'if .pr != null then "#\(.pr.number)" else "" end' <<<"$t" 2>/dev/null || true)"
+  local pr_keep=""
+  [[ -z "$pr_line" ]] || pr_keep=": PR $pr_line stays open and takes the new commits, so don't open another"
   {
     echo "# Resuming ticket $nn"
     echo
-    echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
+    if [[ -n "$rebased" ]]; then
+      echo "This ticket's work was done and waited for other work to land first. Its branch has now been rebased onto $BASE_BRANCH at $rebased (tk.sh rebase): the commits are the same work on the new base. The session that wrote it has ended."
+    elif (( respec )); then
+      echo "This ticket's spec changed after its work was written${rescope:+ (rescope $rescope)}${pr_line:+, while its PR $pr_line was open}. The session that wrote it has ended; you carry the branch to the new spec. Nothing was cleaned up: the worktree is exactly as it was left."
+    else
+      echo "The session that was working on this ticket stopped without finishing — the box ran out of memory or restarted. Nothing was cleaned up: the worktree is exactly as it was left."
+    fi
     echo
     echo "- Worktree: $wt (branch $branch)"
     echo "- Last commit: ${last:-none}"
@@ -379,7 +424,25 @@ cmd_resume() {
     echo "${changes:-(none)}"
     echo '```'
     echo
-    echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+    if [[ -n "$rebased" ]]; then
+      rebase_ask "$rebased"
+    elif (( respec )); then
+      echo "The ticket as it reads now is below; it wins over the brief you started from wherever the two disagree. Read the worktree and the branch's commits (\`git status\`, \`git log\`, \`git diff <base>...\`), keep what still fits the new spec and change what doesn't, then run the brief's checks, review and report again as written. Stay on branch $branch$pr_keep. The developer reviews the change again; an earlier approval doesn't carry over."
+      echo
+      echo '````markdown'
+      cat "$(jq -r .file <<<"$t")"
+      echo '````'
+    else
+      echo "Before anything else, read the worktree as it stands (\`git status\`, \`git diff\`) and match it to where the work had got to. Keep every change that is there and don't redo work that is done. Then carry on from the step that was interrupted, through the rest of the brief as written. If a subagent was mid-task, start that task again — its work in progress is in the worktree, its conversation is not."
+    fi
+    # Answers the developer gave since the brief was sent (tk.sh answer): a
+    # resumed conversation gets only this note, not the ticket file again.
+    if (( ! respec )) && grep -q '^## Answers$' "$(jq -r .file <<<"$t")"; then
+      echo
+      echo "The developer has answered questions on this ticket. They win over the brief where the two disagree:"
+      echo
+      sed -n '/^## Answers$/,$p' "$(jq -r .file <<<"$t")" | tail -n +2
+    fi
   } >"$note"
   if (( ! fresh )); then
     transcript="$(ticket_transcript "$wt")"
@@ -409,16 +472,97 @@ cmd_resume() {
     skills="$(jq -r '.skills | if length == 0 then "none" else join(",") end' <<<"$t")"
     record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
       "$branch" "$(jq -r .base <<<"$t")" "$model" "$effort" "${account:-unknown}" "$wt" "$new_agent" "$skills")"
-    echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))"
+    echo "RESUMED $nn on $branch as $new_agent ($(sed -n 's/^RESUME=//p' "$out"))$( (( respec )) && echo " — on the new spec${rescope:+ of rescope $rescope}")"
   fi
   rm -f "$out" "$brief" "$note"
   return $rc
 }
 
+# ---- rebase: a ticket that waited for other work, onto the base as it is now ----
+# A ticket built ahead of other tickets it must not merge before (tk-hub parks it
+# "when these merge") comes back onto the base once they land. Only a branch
+# nothing outside the box holds is rebased — no PR, never pushed: a rebase
+# rewrites it. A pushed one (exit 13) takes the base by a merge instead
+# (merge-conflict.sh start, ticket-merger), which never force-pushes.
+# Clean: the new **Base:** is recorded and the ticket's agent is asked to run its
+# checks, review and report again (tk.sh say to a live one, tk.sh resume
+# --rebased to a gone one), which brings the card back to the human gate.
+# A conflict (exit 10): the rebase is aborted, the branch is as it was, and the
+# merge flow takes it. Refused while the agent works or at a dialog, or with
+# uncommitted changes.
+# Exit codes: 0 rebased (or already on the tip) | 1 refused/error | 10 conflicts | 13 pushed
+rebase_ask() {
+  echo "Run the brief's checks again on the rebased branch (tests, linters, the seams line's validator), fix anything the new base broke, then review and report as the brief says. Don't merge $BASE_BRANCH in or rebase again, and don't push. The developer reviews it again at the human gate: report \"rebased onto $BASE_BRANCH $1\" at the top of your hand-off."
+}
+
+cmd_rebase() {
+  board_init "${1:-}"; shift
+  local nn="${1:?usage: tk.sh rebase <board> <NN>}"
+  local t status branch wt agent onto old new short msg
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  status="$(jq -r .status <<<"$t")"
+  [[ "$status" == in-progress ]] || die "ticket $nn is $status — only a ticket in progress rebases"
+  branch="$(jq -r .branch <<<"$t")"; [[ -n "$branch" ]] || die "ticket $nn has no **Branch:** recorded"
+  wt="$(jq -r .worktree <<<"$t")"; [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  [[ -d "$wt" ]] || die "ticket $nn's worktree $wt is gone — nothing to rebase"
+  [[ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" == "$branch" ]] || die "$wt is not on $branch"
+  agent="$(jq -r .agent <<<"$t")"
+  [[ -z "$agent" ]] || need herdr
+  require_agent_quiet "$agent" "rebasing $wt"
+  [[ -z "$(git -C "$wt" status --porcelain --untracked-files=no)" ]] \
+    || die "$wt has uncommitted changes — the agent commits them (or the developer discards them) before a rebase"
+  git -C "$wt" rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 && die "a rebase is already in progress in $wt"
+  git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && die "a merge is in progress in $wt (merge-conflict.sh)"
+  fetch_board_refs
+  if jq -e '.pr != null' <<<"$t" >/dev/null 2>&1 || [[ -n "$(pushed_sha "$branch" "$(jq -r .base <<<"$t")" "$wt")" ]]; then
+    echo "PUSHED — $branch is on $REMOTE; a rebase would rewrite it: merge $BASE_BRANCH in instead (merge-conflict.sh start $BOARD_ID $nn)"
+    return 13
+  fi
+  if local_mode; then onto="refs/heads/$BASE_BRANCH"; else onto="refs/remotes/$REMOTE/$BASE_BRANCH"; fi
+  git -C "$ROOT" rev-parse -q --verify "$onto" >/dev/null || die "no $onto to rebase onto"
+  old="$(git -C "$wt" rev-parse HEAD)"; new="$(git -C "$ROOT" rev-parse "$onto")"; short="$(git -C "$ROOT" rev-parse --short "$new")"
+  if [[ "$(git -C "$wt" merge-base HEAD "$new")" == "$new" ]]; then
+    echo "UP TO DATE — $branch is already on $BASE_BRANCH $short"
+  else
+    if [[ "${TICKET_DRY_RUN:-0}" == 1 ]]; then echo "DRY RUN — would rebase $branch onto $BASE_BRANCH $short"; return 0; fi
+    if ! git -C "$wt" rebase --quiet "$new" >/dev/null 2>&1; then
+      local files; files="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | sed 's/^/  /')"
+      git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+      [[ "$(git -C "$wt" rev-parse HEAD)" == "$old" ]] || die "the rebase was aborted but HEAD moved — read 'git -C $wt status'"
+      echo "CONFLICTS rebasing $branch onto $BASE_BRANCH $short — aborted, the branch is as it was:"
+      [[ -n "$files" ]] && echo "$files"
+      echo "merge $BASE_BRANCH in through the merge flow (merge-conflict.sh start $BOARD_ID $nn, ticket-merger)"
+      return 10
+    fi
+    echo "REBASED $branch onto $BASE_BRANCH $short ($(git -C "$wt" rev-list --count "$new..HEAD") commit(s))"
+  fi
+  record_run_state "$t" "$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Agent:** %s\n**Skills:** %s' \
+    "$branch" "$new" "$(jq -r .model <<<"$t")" "$(jq -r .effort <<<"$t")" "$(jq -r '.account // "unknown" | if . == "" then "unknown" else . end' <<<"$t")" \
+    "$wt" "$agent" "$(jq -r '.skills | if length == 0 then "none" else join(",") end' <<<"$t")")"
+  echo "BASE $nn $new"
+  # The agent runs its checks on the new base and reports: back to the human gate.
+  if [[ -n "$agent" ]]; then
+    agent_of "$t"
+    if [[ "$AGENT_STATE" != gone ]]; then
+      msg="$(mktemp)"
+      { echo "Your branch $branch was rebased onto $BASE_BRANCH $short (tk.sh rebase): the other work it waited for has landed."; echo; rebase_ask "$short"; } >"$msg"
+      herdr agent prompt "$AGENT" "$(printf 'Message from the developer, via the board session:\n\n%s' "$(cat "$msg")")" >/dev/null
+      rm -f "$msg"
+      echo "SENT to $AGENT — it re-runs its checks on the new base and reports"
+      return 0
+    fi
+  fi
+  cmd_resume "$BOARD_ID" "$nn" --rebased "$short"
+}
+
 # ---- gates and merge ---------------------------------------------------------------
 # Sets PR_NUMBER. Prints one GATE line per gate; returns 0 / 10 / 11 / 12.
+# A conflicting PR returns 10 even when its checks failed or are still running:
+# GitHub runs no CI on a PR that conflicts with its base, so its checks are stale
+# or missing until the merger has merged the base in. Only a ready or review
+# failure (or a forge that couldn't be asked) beats the conflict.
 run_gates() {
-  local t="$1" branch json fail=0 conflicting=0 pending=0 forge
+  local t="$1" branch json fail=0 checks_fail=0 conflicting=0 pending=0 forge
   branch="$(jq -r .branch <<<"$t")"
   PR_NUMBER=""; forge="$(forge_name)"
   [[ -n "$branch" ]] || { echo "GATE pr FAIL ticket has no branch recorded"; return 12; }
@@ -436,17 +580,20 @@ run_gates() {
     CONFLICTING) echo "GATE mergeable FAIL conflicts with $BASE_BRANCH — send ticket-merger"; conflicting=1 ;;
     *)           echo "GATE mergeable FAIL $forge hasn't computed it yet — ask again in a minute"; fail=1 ;;
   esac
-  local checks; checks="$(jq -c .checks <<<"$json")"
+  local checks stale=""; checks="$(jq -c .checks <<<"$json")"
+  (( conflicting )) && stale=" ($forge runs no CI on a conflicting PR: the merger goes first)"
   if [[ "$(jq '[.[] | select(.s == "bad")] | length' <<<"$checks")" -gt 0 ]]; then
-    echo "GATE checks FAIL failed: $(jq -r '[.[] | select(.s == "bad") | .n] | join(", ")' <<<"$checks")"; fail=1
+    echo "GATE checks FAIL failed: $(jq -r '[.[] | select(.s == "bad") | .n] | join(", ")' <<<"$checks")$stale"; checks_fail=1
   elif [[ "$(jq '[.[] | select(.s == "pending")] | length' <<<"$checks")" -gt 0 ]]; then
-    echo "GATE checks FAIL still running: $(jq -r '[.[] | select(.s == "pending") | .n] | join(", ")' <<<"$checks")"; pending=1
+    echo "GATE checks FAIL still running: $(jq -r '[.[] | select(.s == "pending") | .n] | join(", ")' <<<"$checks")$stale"; pending=1
   else echo "GATE checks PASS ($(jq length <<<"$checks") checks)"; fi
   case "$(jq -r .review <<<"$json")" in
     APPROVED|"") echo "GATE review PASS" ;;
     *) echo "GATE review FAIL $(jq -r .review <<<"$json")"; fail=1 ;;
   esac
-  (( fail )) && return 12; (( pending )) && return 11; (( conflicting )) && return 10; return 0
+  (( fail )) && return 12
+  (( conflicting )) && return 10
+  (( checks_fail )) && return 12; (( pending )) && return 11; return 0
 }
 
 # A repo in local mode (local_mode: no remote, or no forge) has no PR to gate:
@@ -705,7 +852,7 @@ resolve_ticket() {
   elif [[ "$l" == yes:squash:* ]]; then
     sha="${l#yes:squash:}"
   else
-    sha="$(git -C "$ROOT" rev-parse --short "$branch")"
+    sha="$(landed_tip "$branch")"
   fi
   line="**Status:** resolved — merged into $BASE_BRANCH as ${sha:-?} on $(date +%F)"
   local f tmp; f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
@@ -837,6 +984,74 @@ cmd_say() {
                                   || echo "SENT to $AGENT ($AGENT_STATE)"
 }
 
+# ---- questions: what an agent asks the developer, and the answers ------------------
+# An agent that needs something only the developer has (a value, which repo, a
+# scope call) writes {{QUESTIONS_FILE}}: a JSON array of {id, q, blocks}. A
+# blocking one stops it, and the card moves to needs you ("asks: …"). tk.sh
+# answer writes the answer under the ticket's ## Answers, marks the question
+# answered there (a, at), and sends it to a live agent. docs/agents/questions.md.
+questions_file() { echo "$(board_state_dir)/questions/$1.json"; }
+
+# A ticket's questions, normalised; [] when there are none or the file doesn't parse.
+ticket_questions() {
+  local f; [[ -n "$1" ]] || { echo '[]'; return; }
+  f="$(questions_file "$1")"
+  [[ -s "$f" ]] || { echo '[]'; return; }
+  jq -c 'if type == "array" then
+           [to_entries[] | .key as $i | .value | select(type == "object" and (.q | type) == "string" and (.q | length) > 0)
+            | {id: ((.id // "q\($i + 1)") | tostring | .[0:20]), q: .q[0:2000], blocks: (.blocks == true),
+               a: (if (.a | type) == "string" then .a else null end), at: (.at // null)}]
+         else [] end' "$f" 2>/dev/null || echo '[]'
+}
+
+# Appends one answer under the ticket file's ## Answers (made on first use).
+append_answer() {
+  local file="$1" id="$2" q="$3" a="$4" at="$5"
+  grep -q '^## Answers$' "$file" || printf '\n## Answers\n\nWhat the developer answered while this ticket ran. Where an answer and the text above disagree, the answer wins.\n' >>"$file"
+  {
+    printf '\n- **%s** (%s) %s\n' "${id:-note}" "$at" "${q//$'\n'/ }"
+    printf '  Answer: %s\n' "${a//$'\n'/$'\n'  }"
+  } >>"$file"
+}
+
+cmd_answer() {
+  local usage="usage: tk.sh answer <board> <NN> <answer.json>   ({\"id\": \"q1\", \"a\": \"...\"} or {\"q\": \"...\", \"a\": \"...\"})"
+  board_init "${1:-}"; need jq
+  local nn="${2:?$usage}" file="${3:?$usage}" t id q a branch qf qs now status msg
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  jq -e 'type == "object" and (.a | type) == "string" and (.a | gsub("\\s"; "") | length) > 0' "$file" >/dev/null 2>&1 \
+    || die "the answer file must be JSON with a non-empty a: $usage"
+  id="$(jq -r '.id // "" | tostring' "$file")"; q="$(jq -r '.q // "" | tostring' "$file")"; a="$(jq -r .a "$file")"
+  branch="$(jq -r '.branch // ""' <<<"$t")"; status="$(jq -r .status <<<"$t")"
+  qs="$(ticket_questions "$branch")"
+  if [[ -n "$id" ]]; then
+    local asked; asked="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .q // empty' <<<"$qs")"
+    [[ -n "$asked" ]] || die "ticket $nn's agent asked no question $id — its questions: $(jq -r 'map(.id) | join(", ") | if . == "" then "none" else . end' <<<"$qs")"
+    q="$asked"
+  fi
+  [[ -n "$q" ]] || die "name the question: an id the agent asked, or q"
+  now="$(date -u +%Y-%m-%dT%H:%MZ)"
+  append_answer "$(jq -r .file <<<"$t")" "$id" "$q" "$a" "$now"
+  if [[ -n "$id" ]]; then
+    qf="$(questions_file "$branch")"
+    jq --arg id "$id" --arg a "$a" --arg at "$now" 'map(if (.id // "" | tostring) == $id then . + {a: $a, at: $at} else . end)' "$qf" >"$qf.tmp" && mv "$qf.tmp" "$qf"
+  fi
+  echo "WRITTEN under ticket $nn's ## Answers"
+  if [[ "$status" != in-progress || -z "$(jq -r '.agent // ""' <<<"$t")" ]]; then
+    echo "NOT SENT — ticket $nn is $status with no agent; its launch reads the answer"; return 0
+  fi
+  need herdr
+  agent_of "$t"
+  case "$AGENT_STATE" in
+    idle|done|working) ;;
+    gone) echo "NOT SENT — $AGENT isn't running; tk.sh resume $BOARD_ID $nn tells the new agent"; return 21 ;;
+    *)    echo "NOT SENT — $AGENT is '$AGENT_STATE'; a message typed at a dialog could answer it"; return 20 ;;
+  esac
+  msg="$(printf 'The developer answered%s:\n\n> %s\n\n%s\n\nIt is also in the ticket'"'"'s ## Answers. Carry on from where you stopped.' "${id:+ your question $id}" "${q//$'\n'/ }" "$a")"
+  herdr agent prompt "$AGENT" "$msg" >/dev/null
+  echo "SENT to $AGENT ($AGENT_STATE)"
+}
+
 cmd_show() {
   board_init "${1:-}"; need herdr
   local t; t="$(ticket_json "${2:?usage: tk.sh show <board> <NN> [lines]}")"
@@ -851,8 +1066,9 @@ cmd_show() {
 #   blocked       open, waiting on unresolved tickets
 #   working       its agent is scouting or implementing
 #   agent review  its agent is verifying, reviewing or fixing review findings
-#   needs you     at a dialog, no live agent, its landing can't be told, or it
-#                 belongs on another repo's board
+#   needs you     at a dialog, no live agent, stopped on a question for the
+#                 developer, its landing can't be told, or it belongs on another
+#                 repo's board
 #   human review  the agent finished; the developer reviews (or asks for a PR)
 #   pr            a PR is open — checks running/failed, conflict, changes requested, ready to merge
 #   done          resolved
@@ -872,14 +1088,15 @@ board_rows() {
 }
 
 board_rows_() {
-  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir rows=""
+  local t nn status branch agent agents herdr_ok=1 st l phase round checks tab pr pushed ppart ps untracked phase_dir qs fresh unpushed rows=""
   phase_dir="$(board_state_dir)/phase"
   agents="$(agent_states)" || herdr_ok=0
   while IFS= read -r t; do
     nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"
     branch="$(jq -r .branch <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
-    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0
+    st="-"; l="-"; phase="-"; round=""; checks=""; tab="-"; pr="null"; pushed=""; ppart=""; untracked=0; qs="[]"; fresh=false; unpushed=""
     if [[ "$status" == in-progress ]]; then
+      qs="$(ticket_questions "$branch")"
       l="$(landed "$branch" "$(jq -r .base <<<"$t")")"
       ps="$(pushed_sha "$branch" "$(jq -r .base <<<"$t")" "$(jq -r .worktree <<<"$t")")"
       if [[ "$ps" == *" more "* ]]; then ppart="${ps%% *}"; else pushed="${ps%% *}"; fi
@@ -897,7 +1114,12 @@ board_rows_() {
         [[ "$round" =~ ^r[0-9]+$ ]] || round=""
         checks="$(sed -n 2p "$phase_dir/$branch" | tr -cd 'a-z0-9=/ -')"
         phase="${phase:--}"
+        # Written by the ticket's current agent: not older than the mark the
+        # launcher leaves as it starts one (reset_phase). No mark: an agent from
+        # before it, whose `done` can't be told from an earlier agent's.
+        [[ -e "$phase_dir/$branch.started" && ! "$phase_dir/$branch.started" -nt "$phase_dir/$branch" ]] && fresh=true
       fi
+      unpushed="$(unpushed_work "$branch" "$(jq -r .base <<<"$t")" "$(jq -r .worktree <<<"$t")")"
       if forge_ok && [[ -n "$branch" ]]; then
         # A failed lookup leaves the card where git and Herdr put it, so the
         # forge's own error goes to the view's footer instead of nowhere.
@@ -905,8 +1127,8 @@ board_rows_() {
         jq -e 'type == "object"' <<<"${pr:-null}" >/dev/null 2>&1 || pr="null"
       fi
     fi
-    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" \
-      '$t + {state:$st, landed:$l, phase:$ph, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
+    rows+="$(jq -cn --argjson t "$t" --arg st "$st" --arg l "$l" --arg ph "$phase" --arg rd "$round" --arg ck "$checks" --arg tab "$tab" --argjson pr "$pr" --arg pushed "$pushed" --arg ppart "$ppart" --argjson untracked "${untracked:-0}" --argjson qs "$qs" --argjson fresh "$fresh" --arg unpushed "$unpushed" \
+      '$t + {questions:$qs, state:$st, landed:$l, phase:$ph, phase_fresh:$fresh, unpushed:$unpushed, round:$rd, tab:$tab, pr:$pr, pushed:$pushed, pushed_partial:$ppart, untracked:$untracked,
              checks: ($ck | split(" ") | map(select(test("^[a-z]+=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)}')"$'\n'
   done < <(jq -c '.[]' <<<"$BOARD_JSON")
   printf '%s' "$rows" | jq -s --argjson off "$(forge_off && echo true || echo false)" '
@@ -939,7 +1161,12 @@ board_rows_() {
           elif $t.state == "blocked" then {col: "working", note: "yours — helper at a dialog"}
           else {col: "working", note: "yours + helper"} end)
        elif $t.state == "blocked" then {col: "needs", note: "agent at a dialog"}
-       elif $t.state == "gone" then {col: "needs", note: "no live agent"}
+       elif $t.state == "gone" and $t.phase == "done" and $t.phase_fresh then
+         {col: "human", note: ("agent finished (session closed)" + (if $t.pushed != "" then ", pushed \($t.pushed)" else "" end)
+                               + (if $t.unpushed != "" then " · unpushed: \($t.unpushed)" else "" end))}
+       elif $t.state == "gone" then {col: "needs", note: ("no live agent" + (if $t.unpushed != "" then " · unpushed: \($t.unpushed)" else "" end))}
+       elif ($t.state == "idle" or $t.state == "done") and ($t.questions | any(.a == null and .blocks)) then
+         {col: "needs", note: "asks: \($t.questions | map(select(.a == null and .blocks)) | first | .q | gsub("\\s+"; " ") | .[0:80])"}
        elif ($t.state == "idle" or $t.state == "done") then {col: "human", note: (if $t.pushed != "" then "pushed \($t.pushed)" + (if $t.untracked > 0 then " · \($t.untracked) untracked" else "" end)
                                                                      elif $t.pushed_partial != "" then "agent finished (pushed \($t.pushed_partial), more unpushed)"
                                                                      else "agent finished" end)}
@@ -956,6 +1183,7 @@ board_rows_() {
         elif .col == "pr" and (.note | test("ready to merge")) then "merge \(.nn)"
         elif .col == "pr" and (.note | test("conflict")) then "merge \(.nn) — sends the merger"
         elif .col == "needs" and .state == "blocked" then (if .tab != "-" then "answer it in tab \(.tab)" else "answer its dialog" end)
+        elif .col == "needs" and (.note | startswith("asks: ")) then "answer \(.nn) \(.questions | map(select(.a == null and .blocks)) | first | .id) <answer>"
         elif .col == "needs" and .state == "gone" then "show \(.nn)"
         elif .col == "needs" and (.note | test("belongs on")) then "move it to the board of its repo"
         elif .col == "done" and (.note | test("resolve")) then "resolve \(.nn)"
@@ -997,6 +1225,144 @@ export_transcripts() {
   echo "$out"
 }
 
+# Each launched ticket's test plan: the `## Test plan` section of its saved report
+# (the ticket agent writes it after the final review), as {nn: [line]}: one line per
+# step, bullets and numbers stripped, blank lines dropped, at most 20 lines of 300
+# characters. A ticket with no report, or none with the section, is left out.
+export_test_plans() {
+  local reports nn branch f out="{}" lines
+  reports="$(board_state_dir)/reports"
+  while IFS=$'\t' read -r nn branch; do
+    f="$reports/$branch.md"
+    [[ -s "$f" ]] || continue
+    lines="$(awk '
+      /^## / { on = ($0 ~ /^## Test plan[ \t]*$/); next }
+      on && NF { sub(/^[ \t]*([-*]|[0-9]+[.)])[ \t]+/, ""); print substr($0, 1, 300) }
+    ' "$f" | head -20 | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    [[ "$lines" != "[]" ]] || continue
+    out="$(jq -c --arg n "$nn" --argjson l "$lines" '. + {($n): $l}' <<<"$out")"
+  done < <(jq -r '.[] | select(.branch != "") | "\(.nn)\t\(.branch)"' <<<"$BOARD_JSON")
+  echo "$out"
+}
+
+# When each ticket last changed, as {nn: "YYYY-MM-DDTHH:MM:SSZ"}: the newest of its
+# file, its phase file and its questions file (next.since, next-step.jq).
+export_since() {
+  local nn file branch phase_dir qdir f m newest out="{}"
+  phase_dir="$(board_state_dir)/phase"; qdir="$(board_state_dir)/questions"
+  while IFS=$'\t' read -r nn file branch; do
+    newest=0
+    for f in "$file" ${branch:+"$phase_dir/$branch" "$qdir/$branch.json"}; do
+      [[ -f "$f" ]] || continue
+      m="$(stat -c %Y "$f" 2>/dev/null)" || continue
+      (( m > newest )) && newest="$m"
+    done
+    (( newest > 0 )) || continue
+    out="$(jq -c --arg n "$nn" --arg t "$(date -u -d "@$newest" +%Y-%m-%dT%H:%M:%SZ)" '. + {($n): $t}' <<<"$out")"
+  done < <(jq -r '.[] | "\(.nn)\t\(.file)\t\(.branch // "")"' <<<"$BOARD_JSON")
+  echo "$out"
+}
+
+# The board's policy for next-step.jq (auto_merge, require_human_before_pr), {} when it
+# can't be read: in a subshell, so FORGE and TICKET_FORGE stay board_init's.
+export_policy() {
+  ( policy_resolve - 2>/dev/null && echo "$POLICY_JSON" ) || echo '{}'
+}
+
+# ---- batches: tickets proved together by one end-to-end test ----------------------
+# .scratch/<board>/batches/<name>.md, written by /ticket's planning (or tk-hub's
+# backfill agent): what the batch proves, where it is tested, its tickets (the
+# harness among them: the ticket that builds what the test needs) and the test plan
+# skeleton. A ticket's **Tested in:** line is what puts it in a batch; tk.sh batch
+# keeps the batch file's **Tickets:** line in step. See docs/agents/batches.md.
+BATCH_NAME_RE='^[a-z0-9][a-z0-9._-]{0,63}$'
+
+batches_dir() { echo "$BOARD_PATH/batches"; }
+
+# A batch file's one-line field (**Proves:**, **Env:**, **Tickets:**, **Harness:**).
+batch_field() { sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" "$1" | head -1; }
+
+# The ticket numbers a Tickets/Harness value names (`01, 02 — why`): the numbers
+# before any dash or parenthesis, two digits wide.
+batch_nns() {
+  local v="${1%%—*}"; v="${v%%(*}"
+  { grep -oE '[0-9]+' <<<"$v" || true; } | while read -r n; do printf '%02d\n' "$((10#$n))"; done | sort -u
+}
+
+# Every batch of the board as JSON: [{name, file, proves, env, tickets:[nn],
+# harness:[nn], test_plan:[line]}], tickets the union of the file's line and the
+# tickets whose **Tested in:** names it. [] when the board has none.
+batches_json() {
+  local dir f name out="[]" tickets harness plan
+  dir="$(batches_dir)"
+  for f in "$dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f" .md)"
+    [[ "$name" =~ $BATCH_NAME_RE ]] || continue
+    tickets="$( { batch_nns "$(batch_field "$f" Tickets)"; jq -r --arg b "$name" '.[] | select(.tested_in == $b) | .nn' <<<"$BOARD_JSON"; } \
+      | sort -u | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    harness="$(batch_nns "$(batch_field "$f" Harness)" | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    plan="$(awk '
+      /^## / { on = ($0 ~ /^## Test plan[ \t]*$/); next }
+      on && NF { sub(/^[ \t]*([-*]|[0-9]+[.)])[ \t]+/, ""); print substr($0, 1, 300) }
+    ' "$f" | head -30 | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    out="$(jq -c --arg name "$name" --arg file "$f" --arg proves "$(batch_field "$f" Proves)" --arg env "$(batch_field "$f" Env)" \
+      --argjson tickets "$tickets" --argjson harness "$harness" --argjson plan "$plan" \
+      '. + [{name: $name, file: $file, proves: $proves, env: $env, tickets: $tickets, harness: $harness, test_plan: $plan}]' <<<"$out")"
+  done
+  echo "$out"
+}
+
+# Writes (or with "", removes) a ticket file's **Tested in:** line: in place when it
+# has one, else just below **Blocked by:**, else below the heading.
+set_tested_in() {
+  local f="$1" batch="$2"
+  awk -v b="$batch" '
+    /^\*\*Tested in:\*\*/ { if (b != "") print "**Tested in:** " b; done = 1; skip = (b == ""); next }
+    skip && /^[ \t]*$/ { skip = 0; next }
+    { skip = 0; print }
+    !done && b != "" && /^\*\*Blocked by:\*\*/ { print ""; print "**Tested in:** " b; done = 1 }
+    END { if (!done && b != "") { print ""; print "**Tested in:** " b } }
+  ' "$f" | write_atomic "$f"
+}
+
+# Adds nn to (or removes it from) a batch file's **Tickets:** line, keeping the order.
+set_batch_ticket() {
+  local f="$1" nn="$2" op="$3" list
+  list="$( { batch_nns "$(batch_field "$f" Tickets)"; if [[ "$op" == add ]]; then echo "$nn"; fi; } \
+    | sort -u | awk -v op="$op" -v nn="$nn" '!(op == "del" && $0 == nn)' | paste -sd, - | sed 's/,/, /g')"
+  if grep -q '^\*\*Tickets:\*\*' "$f"; then
+    awk -v l="${list:-None}" '/^\*\*Tickets:\*\*/ && !d { print "**Tickets:** " l; d = 1; next } { print }' "$f" | write_atomic "$f"
+  else
+    { cat "$f"; printf '\n**Tickets:** %s\n' "${list:-None}"; } | write_atomic "$f"
+  fi
+}
+
+cmd_batch() {
+  local usage="usage: tk.sh batch <board> <NN> <batch|none>   (the batch's file is .scratch/<board>/batches/<batch>.md)"
+  (( $# == 3 )) || die "$usage"
+  board_init "$1"; need jq
+  local t nn batch="$3" old file dir known
+  t="$(ticket_json "$2")"; nn="$(jq -r .nn <<<"$t")"; file="$(jq -r .file <<<"$t")"
+  old="$(jq -r '.tested_in // ""' <<<"$t")"
+  dir="$(batches_dir)"
+  [[ "$batch" == none ]] && batch=""
+  batch="${batch,,}"
+  if [[ -n "$batch" ]]; then
+    [[ "$batch" =~ $BATCH_NAME_RE ]] || die "a batch name is lowercase letters, digits, . _ - (got '$3')"
+    if [[ ! -f "$dir/$batch.md" ]]; then
+      known="$(find "$dir" -maxdepth 1 -name '*.md' -printf '%f\n' 2>/dev/null | sed 's/\.md$//' | sort | paste -sd, - | sed 's/,/, /g')"
+      die "no batch $batch on this board — its batches: ${known:-none} (write .scratch/<board>/batches/$batch.md first: docs/agents/batches.md)"
+    fi
+  fi
+  if [[ "$old" == "$batch" ]]; then echo "UNCHANGED ticket $nn is in ${batch:-no batch}"; return 0; fi
+  set_tested_in "$file" "$batch"
+  [[ -n "$old" && -f "$dir/$old.md" ]] && set_batch_ticket "$dir/$old.md" "$nn" del
+  [[ -n "$batch" ]] && set_batch_ticket "$dir/$batch.md" "$nn" add
+  if [[ -n "$batch" ]]; then echo "BATCHED ticket $nn in $batch${old:+ (was $old)}"
+  else echo "UNBATCHED ticket $nn (was $old): it is tested alone"; fi
+}
+
 cmd_export() {
   (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
   need git; need jq
@@ -1021,8 +1387,11 @@ cmd_export() {
       board_md: null, retro_results_md: null, tickets: .}' \
     | if [[ -n "$md" ]]; then jq --rawfile v "$md" '.board_md = $v'; else cat; fi \
     | if [[ -n "$rr" ]]; then jq --rawfile v "$rr" '.retro_results_md = $v'; else cat; fi \
-    | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" \
-        '.rescopes = $rescopes | .tickets |= map(. + {transcript: ($tr[.nn] // "")})'
+    | jq --argjson rescopes "$(rescopes_json)" --argjson tr "$(export_transcripts)" --argjson tp "$(export_test_plans)" \
+        --argjson batches "$(batches_json)" \
+        '.rescopes = $rescopes | .batches = $batches | .tickets |= map(. + {transcript: ($tr[.nn] // ""), test_plan: ($tp[.nn] // [])})' \
+    | jq --argjson pol "$(export_policy)" --argjson since "$(export_since)" \
+        --argjson off "$(forge_off && echo true || echo false)" -f "$SKILL_DIR/scripts/next-step.jq"
   local rc=$?   # the pipeline's: pipefail makes a failed board_rows fail the export
   [[ -s "$errs" ]] && sort -u "$errs" >&2
   return "$rc"
@@ -1047,8 +1416,12 @@ ticket_transcript() {
   [[ -d "$HOME/.claude" ]] && roots+=("$HOME/.claude")
   for root in "$HOME"/.claude-switch/accounts/*; do [[ -d "$root" ]] && roots+=("$root"); done
   enc="${wt//[^A-Za-z0-9]/-}"
+  # `|| continue`, not `&&`: a last root without the directory would end the
+  # loop on a failed test, and pipefail would turn that into tk.sh resume
+  # exiting 1 with nothing said.
   for root in "${roots[@]}"; do
-    [[ -d "$root/projects/$enc" ]] && find "$root/projects/$enc" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n'
+    [[ -d "$root/projects/$enc" ]] || continue
+    find "$root/projects/$enc" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@\t%p\n'
   done | sort -rn | head -1 | cut -f2-
 }
 
@@ -1235,7 +1608,7 @@ cmd_rescope() {
   jq -r '.[] | "  \(.nn) \(.status)\(if .owner == "me" then " (owner me)" else "" end) — provides: \(.provides | map(.text) | join("; ") | if . == "" then "-" else . end) — consumes: \(.consumes | map(.text) | join("; ") | if . == "" then "-" else . end)"' <<<"$BOARD_JSON"
   [[ -f "$BOARD_PATH/board.md" ]] && { echo; echo "BOARD.MD $BOARD_PATH/board.md"; }
   echo
-  echo "WRITE $dir/plan.json — {\"summary\": \"<one line>\", \"changes\": [{\"op\": \"add|change|split|drop\", \"nn\": \"<NN>\", \"file\": \"<NN>-<slug>.md\" (add, change), \"files\": [...] (split), \"why\": \"<one line>\"}]}"
+  echo "WRITE $dir/plan.json — {\"summary\": \"<one line>\", \"changes\": [{\"op\": \"add|change|split|drop\", \"nn\": \"<NN>\", \"file\": \"<NN>-<slug>.md\" (add, change), \"files\": [...] (split), \"why\": \"<one line>\"}], \"findings\": [<id>, ...] (optional: the tk-hub validator findings the plan fixes)}"
   echo "WRITE $dir/issues/<NN>-<slug>.md — each added, changed or split-into ticket, whole, in the board's ticket shape"
   echo "THEN tk.sh rescope-propose $BOARD_ID $id — checks them; the developer applies it (tk-hub, or tk.sh rescope-apply $BOARD_ID $id)"
 }
@@ -1248,6 +1621,8 @@ rescope_check() {
   [[ -f "$plan" ]] || { echo "ERROR no plan.json in $dir"; return 1; }
   jq -e '(.changes | type == "array" and length > 0) and (.summary | type == "string")' "$plan" >/dev/null 2>&1 \
     || { echo "ERROR plan.json needs a summary (string) and changes (a non-empty array)"; return 1; }
+  jq -e '(.findings // []) | type == "array" and all(type == "number" and . == floor and . > 0)' "$plan" >/dev/null 2>&1 \
+    || { echo "ERROR plan.json findings, when given, is an array of finding ids (positive integers)"; errs=$((errs + 1)); }
   local seen=" " new=" "
   while IFS=$'\x1f' read -r op nn file files; do
     [[ "$nn" =~ ^0*([0-9]+)$ ]] && nn="${BASH_REMATCH[1]}"
@@ -1337,8 +1712,11 @@ rescope_json() {
       ch="$(jq -c --argjson i "$i" --argjson into "$into" '.[$i].into = $into' <<<"$ch")"
     done
   fi
-  jq -c --argjson ch "$ch" --arg summary "$( [[ -f "$plan" ]] && jq -r '.summary // ""' "$plan" 2>/dev/null)" \
-    '. + {summary: $summary, changes: $ch}' <<<"$meta"
+  # The validator findings (tk-hub ids) the planner says the plan fixes: only whole numbers.
+  local fixes="[]"
+  [[ -f "$plan" ]] && fixes="$(jq -c '[(.findings // [])[]? | select(type == "number" and . == floor and . > 0)]' "$plan" 2>/dev/null || echo '[]')"
+  jq -c --argjson ch "$ch" --argjson fixes "${fixes:-[]}" --arg summary "$( [[ -f "$plan" ]] && jq -r '.summary // ""' "$plan" 2>/dev/null)" \
+    '. + {summary: $summary, findings: $fixes, changes: $ch}' <<<"$meta"
 }
 
 # Every rescope still waiting on the developer (open or proposed), as a JSON array.
@@ -1791,6 +2169,11 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   status / what changed?        re-read the board, agents and git; report what moved
   resume 07                     a new agent where 07's dead one stopped (an OOM, a restart): same
                                   worktree, nothing reset, its conversation resumed (tk.sh resume)
+  resume 07 --respec            the same after a rescope changed 07 under its PR: the agent reads the
+                                  new spec, carries the branch to it, and the PR takes the commits
+  rebase 07                     07 waited for other work that has now landed: its unpushed branch
+                                  rebased onto the base, its agent re-runs checks and reports (tk.sh
+                                  rebase; a conflict or a pushed branch goes through the merge flow)
   open a PR for 04 / PR 04      commit the ticket's files, push, open the PR on GitHub or Azure
                                   DevOps — the Cursor CLI writes message and body (no Claude
                                   tokens, no attribution); TICKET_PR_RUNNER=claude: the Sonnet agent
@@ -1812,6 +2195,8 @@ In the board session (Haiku) — type these as plain messages; there are no slas
                                   again to land it in your local main
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
+  answer 03 q1 <answer>         answer a question 03's agent asked (card: asks: …); written
+                                  under the ticket's ## Answers, then sent to its agent
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
@@ -1873,11 +2258,19 @@ For tools (JSON on stdout, logs on stderr — tk-hub reads these)
                           branch name, not a sha; `has_remote` tells a repo with no remote from
                           one with a remote but forge none; `merge_mode: pr|push|local` is how a
                           ticket ships — a PR, a push merged on the forge by you, a local merge).
+                          Each ticket's `next` is its one next step: owner agent|hub|daniel|none,
+                          step (build, review, merge, answer, launch, resolve, blocked, ...),
+                          since (when it last changed) and reason (docs/agents/next-step.md).
                           No fetch; in-progress tickets ask the forge for PR state — TICKET_FORGE=none
                           keeps it offline
   tk.sh validate <board> [NN]   the contract evidence: Provides/Consumes per ticket, what this board
                           can't provide, providers that aren't blockers; NN adds its change (diff,
                           EAD/TDD Contracts rows). tk-hub's validator (validate-contracts) reads it
+
+Batches (tickets one end-to-end test proves; .scratch/<board>/batches/<name>.md)
+  tk.sh batch <board> 04 dev-pipeline   put 04 in a batch: its **Tested in:** line and the batch's
+                          **Tickets:** line; `none` takes it out (tested alone). tk.sh export
+                          carries the batches; tk-hub tests a batch once all its tickets landed
 
 Rescope (a planner session proposes, you apply; nothing changes before rescope-apply)
   tk.sh rescope <board> 04,05 --reason "<why>"   open one, print the planner's seed (/ticket rescope …)
@@ -1920,7 +2313,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|gates|ready|pr|push|merge|resolve|why|say|show|helpers|retro|view|boards|export|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|batch|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;

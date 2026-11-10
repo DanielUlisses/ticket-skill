@@ -17,13 +17,15 @@
 # The one output shape is BOARD_JSON: an array of tickets, ordered by number,
 #   {nn, title, ref, file, status, branch, base, model, effort, account,
 #    agent, blocked_raw, blockers:[nn], smodel, seffort, parent, kind, doc_type,
-#    owner, provides:[item], consumes:[item], dropped, skills:[name]}
+#    owner, provides:[item], consumes:[item], dropped, skills:[name], tested_in}
 # (kind and doc_type are the **Kind:** / **Doc type:** lines, lowercased; empty
 # when the ticket has none — a ticket with no Kind is `code`; owner is `me` or
 # `ai`, from **Owner:**, `ai` when there is none; provides and consumes are the
 # **Provides:** / **Consumes:** lines as contract items, see CONTRACT_KINDS;
 # dropped is the **Dropped:** line a rescope writes beside **Status:** dropped;
-# skills is the **Skills:** run-state line: the catalog skills its launch linked)
+# skills is the **Skills:** run-state line: the catalog skills its launch linked;
+# tested_in is the **Tested in:** line, the batch whose end-to-end test covers it,
+# "" when it is tested alone)
 # plus BOARD_ID (what to pass back to every script), BOARD_SLUG (a path-safe
 # name for state files) and BOARD_PATH.
 
@@ -118,11 +120,12 @@ parse_ticket_file() {
     /^\*\*Consumes:\*\*/          { consumes = val($0) }
     /^\*\*Dropped:\*\*/           { dropped = val($0) }
     /^\*\*Skills:\*\*/            { skills = val($0) }
+    /^\*\*Tested in:\*\*/         { testedin = tolower(first(val($0))) }
     /^\*\*Repo:\*\*/              { r = val($0); repo = first(r); rpath = ""; if (match(r, /\/[^ \t]*/)) rpath = substr(r, RSTART, RLENGTH) }
     END {
       if (!nn) { n = file; sub(/.*\//, "", n); if (match(n, /^[0-9]+/)) nn = substr(n, 1, RLENGTH) }
-      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
-        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped, skills
+      printf "%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n",
+        nn, title, status, branch, base, model, effort, account, agent, blocked, smodel, seffort, parent, worktree, repo, rpath, kind, doctype, owner, provides, consumes, dropped, skills, testedin
     }' "$f" \
   | jq -R --arg file "$f" --arg kinds "$CONTRACT_KINDS" "$CONTRACT_JQ"'split("\u001f") as $v | ($kinds | split(" ")) as $k | {
       nn: $v[0], title: $v[1], ref: ($file | split("/") | last), file: $file,
@@ -133,7 +136,8 @@ parse_ticket_file() {
       owner: (if $v[18] == "me" then "me" else "ai" end),
       provides: ($v[19] | contract_items($k)), consumes: ($v[20] | contract_items($k)),
       provides_raw: $v[19], consumes_raw: $v[20], dropped: $v[21],
-      skills: ($v[22] | if . == "" or . == "none" then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end) }'
+      skills: ($v[22] | if . == "" or . == "none" then [] else split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) end),
+      tested_in: (if $v[23] == "none" then "" else $v[23] end) }'
 }
 
 load_file_board() {
@@ -141,7 +145,7 @@ load_file_board() {
   # .scratch/project-memory.md is repo memory, not a board or a ticket: never load it.
   [[ "$(basename "$BOARD_PATH")" != project-memory.md ]] || die "$BOARD_PATH is project memory, not a board"
   if [[ -f "$BOARD_PATH" ]]; then files="$BOARD_PATH"
-  else files="$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope \) -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
+  else files="$(find "$BOARD_PATH" -mindepth 1 -type d \( -name retro -o -name rescope -o -name batches \) -prune -o -name '*.md' ! -name retro-results.md ! -name project-memory.md -type f -print | sort)"; fi
   [[ -n "$files" ]] || die "no ticket files under $BOARD_PATH"
   # A file with no number (no "# NN:" heading, no NN- name) is a note beside the
   # tickets — board.md and other notes — not a ticket.
@@ -158,7 +162,11 @@ load_file_board() {
 # (the path from .scratch/<board>/repos — "<name> <path>" per line, written by
 # /ticket — else a sibling directory of this repo) and listed in `xblockers_open`
 # until it is resolved there. One that can't be found counts as open: launching
-# past a blocker nobody could check is the worse mistake.
+# past a blocker nobody could check is the worse mistake. `xblockers` is the same
+# lookup structured, one {repo, nn, board, status} per ref — status the found
+# ticket's, or `missing` — for tk-hub, which resolves each ref again against the
+# client's boards it has (a board on another box, under another name) and may
+# launch past one it saw resolved with tk.sh launch --cleared.
 load_board() {
   local raw; raw="$(load_file_board)"
   BOARD_JSON="$(jq '
@@ -186,15 +194,17 @@ load_board() {
     [[ -n "$path" ]] || path="$(dirname "$ROOT")/$r"
     st="missing"
     f="$(find "$path/.scratch/$BOARD_ID/issues" -maxdepth 1 -name '*.md' 2>/dev/null \
-         | awk -F/ -v n="$n" '{ b = $NF; if (match(b, /^[0-9]+/) && substr(b, 1, RLENGTH) + 0 == n + 0) { print; exit } }')"
+         | awk -F/ -v n="$n" '{ b = $NF; if (match(b, /^[0-9]+/) && substr(b, 1, RLENGTH) + 0 == n + 0) { print; exit } }' || true)"   # no such board: find fails, pipefail would end the export
     [[ -n "$f" ]] && st="$(parse_ticket_file "$f" | jq -r .status)"
     xs="$(jq -c --arg k "$r:$n" --arg v "$st" '. + {($k): $v}' <<<"$xs")"
   done < <(jq -r '.[].xrefs[] | "\(.repo)\t\(.nn | sub("^0+"; ""))"' <<<"$BOARD_JSON" | sort -u)
   # foreign: the repo a ticket changes when that isn't this one — it can't run here.
-  BOARD_JSON="$(jq --argjson xs "$xs" --arg name "$REPO_NAME" --arg root "$ROOT" '
+  BOARD_JSON="$(jq --argjson xs "$xs" --arg name "$REPO_NAME" --arg root "$ROOT" --arg board "$BOARD_ID" '
     map(. + { foreign: (if .repo == "" then ""
                         elif .repo_path != "" then (if (.repo_path | rtrimstr("/")) != $root then "\(.repo) (\(.repo_path))" else "" end)
                         elif .repo != $name then .repo else "" end),
+              xblockers: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
+                           | {repo, nn, board: $board, status: ($xs[$k] // "missing")} ],
               xblockers_open: [ .xrefs[] | "\(.repo):\(.nn | sub("^0+"; ""))" as $k
                                 | select($xs[$k] != "resolved")
                                 | "\(.repo):\(.nn)" + (if $xs[$k] == "missing" then " (not found)" else "" end) ] })' <<<"$BOARD_JSON")"
@@ -274,6 +284,23 @@ landed() {
   echo "no"
 }
 
+# The short sha of the copy of <branch> that landed() found in the base by
+# ancestry: the local branch, else its remote-tracking copy. After a merge the
+# local branch is often deleted (gh pr merge -d, a sweep, by hand) while the
+# remote-tracking ref stays, and landed() said yes from that copy, so the
+# resolve line must read the same one. Nothing when neither is in the base.
+landed_tip() {
+  local branch="$1" t
+  [[ -n "$branch" ]] || return 0
+  for t in "refs/heads/$branch" "refs/remotes/$REMOTE/$branch"; do
+    git -C "$ROOT" show-ref --verify --quiet "$t" || continue
+    if git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_REF" 2>/dev/null \
+       || git -C "$ROOT" merge-base --is-ancestor "$t" "$BASE_BRANCH" 2>/dev/null; then
+      git -C "$ROOT" rev-parse --short "$t"; return 0
+    fi
+  done
+}
+
 # Has <branch> been pushed (tk.sh push, a PR, or by hand)? Its remote-tracking
 # copy holds commits past <base_sha> (the ticket's recorded base, else its
 # merge-base with BASE_REF). Prints that copy's short sha when everything is
@@ -300,6 +327,31 @@ pushed_sha() {
   fi
   [[ -d "$wt" ]] && untracked="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c '^??' || true)"
   echo "$sha ${untracked:-0}"
+}
+
+# What of a ticket's work is only on this box, as words ("14 uncommitted files,
+# 2 commits not pushed"), empty when nothing is: files changed or untracked in
+# its worktree and, with a remote, commits on its branch that its remote branch
+# (or, never pushed, the base) lacks; not in local mode, where nothing is
+# pushed. A card whose agent is gone carries it as a warning; /sweep-tickets
+# already refuses a dirty or unmerged worktree.
+unpushed_work() {
+  local branch="$1" base_sha="$2" wt="${3:-}" n=0 c=0 ref words=""
+  [[ -n "$branch" ]] || return 0
+  [[ -n "$wt" ]] || wt="$(dirname "$ROOT")/${REPO_NAME}--${branch}"
+  [[ -d "$wt" ]] && n="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c . || true)"
+  if (( HAS_REMOTE )) && ! local_mode && git -C "$ROOT" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then
+    ref="refs/remotes/$REMOTE/$branch"
+    if git -C "$ROOT" show-ref --verify --quiet "$ref"; then
+      c="$(git -C "$ROOT" rev-list --count "$ref..refs/heads/$branch" 2>/dev/null || echo 0)"
+    else
+      [[ -n "$base_sha" ]] || base_sha="$(git -C "$ROOT" merge-base "refs/heads/$branch" "$BASE_REF" 2>/dev/null || true)"
+      [[ -n "$base_sha" ]] && c="$(git -C "$ROOT" rev-list --count "$base_sha..refs/heads/$branch" 2>/dev/null || echo 0)"
+    fi
+  fi
+  (( ${n:-0} > 0 )) && words="$n uncommitted file$( (( n == 1 )) || echo s)"
+  (( ${c:-0} > 0 )) && words="${words:+$words, }$c commit$( (( c == 1 )) || echo s) not pushed"
+  printf '%s' "$words"
 }
 
 # One round trip for the whole board: the base and every in-progress ticket's

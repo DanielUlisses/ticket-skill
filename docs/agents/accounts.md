@@ -91,8 +91,8 @@ Hence the one structural difference between the two paths:
 |---|---|---|
 | link written | none | `<worktree>=<account>`, under `flock` |
 | the `agent` tab | the worktree's own tab, renamed | a fresh tab, created **after** the link |
-| the worktree's original tab | *is* the agent tab | closed once `review` has taken the reviewr pane out of it |
-| tabs | `agent` `review` `shell` | `agent` `review` `shell` |
+| the worktree's original tab | *is* the agent tab | closed once the reviewr pane is closed out of it |
+| layout | one `agent` tab: agent \| shell, side by side | the same |
 
 The original tab is closed rather than kept as a spare shell: its shell resolved the
 inherited account, and leaving a wrong-account shell lying about in the ticket's own

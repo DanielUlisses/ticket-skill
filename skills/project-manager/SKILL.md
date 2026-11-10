@@ -1,6 +1,6 @@
 ---
 name: project-manager
-description: Reviews one project the way a project manager would — its health, when it will be done, its risks, the decisions the developer owes, and two or three improvements (a task of the developer's, or a rescope of tickets), plus a status draft for the client or, for a personal project, a keep/pause/drop call. tk-hub runs it headless on the planner box each week (Opus) and as a short daily delta check (Haiku); run it by hand on the hub's project input.
+description: Reviews one project the way a project manager would — its health, when it will be done, its risks, the decisions the developer owes, and two or three improvements (rescopes of tickets), plus a status draft for the client or, for a personal project, a keep/pause/drop call. tk-hub runs it headless on the planner box each week (Opus) and as a short daily delta check (Haiku); run it by hand on the hub's project input.
 argument-hint: "<tk-hub's project input (kind week or day), or a file holding it>"
 ---
 
@@ -21,6 +21,8 @@ Read the input (below, or the file you were given), then answer with **one JSON 
 - `contracts[]`: open contract findings (what a ticket consumes that nothing provides, a provider that built something else).
 - `last_review`: the last weekly review (health, summary, forecast, risks, decisions), or null.
 - `previous[]`: earlier proposals and how the developer decided them (`accepted`, `dismissed`, `superseded`). **Don't propose a dismissed one again** unless something changed; then say what.
+- `batches[]`: the project's batches (tickets one end-to-end test proves together): `name`, `proves`, `tickets` and `landed` (how many have landed), `harness` (the tickets the test needs), `ready` (every ticket landed and nothing since the last run is unchanged: the hub has posted its Batch ready card), `why_not`, and `last` / `last_note` (how its last test ended: `green`, `red` with what failed, or `scheduled`).
+- `hours` (week only): the client's last seven days, `days[]` of `date` and `worked_min` (the developer's real minutes on the client), and `ceiling_h`, the most hours a day the developer gives that client (a maximum, not a target; null: none set). For a client shared by several projects the minutes are the client's, not this project's.
 - `since_review` (day only): the column moves, tasks done and tasks made since the last weekly review.
 
 ## How to judge
@@ -30,10 +32,12 @@ Read the input (below, or the file you were given), then answer with **one JSON 
 - **Risks.** Concrete and specific to this project: name the ticket or task. `high` only for what would stop the project or ship something wrong. Three is usually enough; never more than five.
 - **Decisions owed.** Questions only the developer can answer (a scope call, a client question, a choice between two designs, an access request). Each one sentence, ending in a question mark.
 - **Improvements** (week only, at most three, the most useful first):
-  - `task`: something the developer should do, with `blocks` naming the tickets it unblocks (`board_key` and `nn` from the input) and `est_min` when you can tell. Prefer the one task that unblocks the most.
+  - Never a task. tk-hub makes no tasks for the developer: his list is each ticket's next step plus what he types himself. Something he must do for a ticket is that ticket's step already (its question, its review, its merge, its deploy check); say it under decisions or risks, never as an improvement. An improvement of kind `task` is dropped.
   - `rescope`: a ticket whose plan is wrong — too big (several review rounds), built against a contract nobody provides, or no longer needed. Name `board_key`, `nn`, and `why` (what the rescope should change); the developer starts a `/ticket rescope` session from it.
-  - Never propose something already in `tasks[]`, nor a rescope already pending (`rescopes`).
+  - Never propose a rescope already pending (`rescopes`).
+  - Fewer is better, and none is a good week's answer. Never a rescope of what the plan already settled (a ticket's text or its `## Answers`, what grilling decided).
 - **Status draft** (week, client projects only): a short message the developer sends the client himself. Plain words, no ticket numbers or internal tool names: what got done this week, what is next, anything the client needs to do or decide, and the expected date when you gave one. Three to six lines.
+- **Notes** (week only, at most three, one sentence each): how the week went, in numbers the developer can't see at a glance. The hours against the ceiling (well under it for days, or over it), estimates that keep running long, and a batch worth testing now: one whose tickets are all landed, or nearly, with every error of its last red run fixed (name it). Nothing when the week was ordinary. A note is never a task.
 - **Personal projects** (week, `personal` true): make a `keep`, `pause` or `drop` call. `pause` when it competes with client work or nothing moved for two weeks; `drop` only when it has stalled for a month or its point is gone; `keep` otherwise. No status draft.
 
 ## Answer: weekly review (`kind` week)
@@ -46,12 +50,11 @@ Read the input (below, or the file you were given), then answer with **one JSON 
   "risks": [{"text": "<one sentence>", "level": "low | medium | high"}],
   "decisions": ["<a question only the developer can answer?>"],
   "improvements": [
-    {"kind": "task", "title": "<what to do, imperative>", "detail": "<optional>", "why": "<what it unblocks or saves>",
-     "est_min": 15, "blocks": [{"board_key": "<board key>", "nn": "<NN>"}]},
     {"kind": "rescope", "board_key": "<board key>", "nn": "<NN>", "title": "<short>", "why": "<what the rescope should change>"}
   ],
   "status_draft": "<the client message, or null for a personal project>",
-  "personal": {"call": "keep | pause | drop", "why": "<one sentence>"}
+  "personal": {"call": "keep | pause | drop", "why": "<one sentence>"},
+  "notes": ["<one sentence on how the week went>"]
 }
 ```
 

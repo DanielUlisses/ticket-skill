@@ -29,7 +29,7 @@ Twelve roles, configured once in `config/models.env`: the **implementer**, whose
 
 ### Planner and board sessions
 
-A feature runs in two sessions, not one. `/ticket` is the **planner** — grilling and breakdown, on the model that judgement needs — and ends by printing the command that starts the **board** session — `skills/implement-tickets/scripts/board.sh <board>`, never run inside the planning session. The board runs on Haiku (`TICKET_BOARD_*`) with a small prompt and few tools, because every check is a script (`tk.sh`: digest, launch, the five merge gates, resolve, relay). It launches waves, merges on the developer's word, sends `ticket-merger` (Sonnet — a merge commit only, after approval) on a conflict and opens PRs when asked with `tk.sh pr` — the **Cursor CLI** writes the commit message and body (the `pr` skill; no Claude tokens), `TICKET_PR_RUNNER=claude` sends `ticket-pr-creator` (Sonnet) instead — every commit and push going through a guarded script, and no commit or PR body carrying a `Co-authored-by` or other attribution (ADR 0005 §9) — merges the PR on the forge (never a local merge), opens, gates and merges PRs on GitHub (`gh`) or Azure DevOps (`az` + the `azure-devops` extension) — picked from the remote URL, `TICKET_FORGE` overrides (`none` = git log only, no forge calls, the developer merges on the forge; `tk.sh push` commits and pushes a ticket's branch through the same guarded path, without a PR), ADR 0005 §7; a remote on any other host (a bare SSH repo, Gitea, a NAS) is detected as `none` and, like no remote, puts the repo in **local mode** (`local_mode`: `tk.sh merge`/`gates`/`ready` take the local path, `pr`/`push` refuse, the base is never pushed), and `tk.sh export`'s `merge_mode` (`pr`|`push`|`local`) is the one answer tk-hub reads — relays messages, opens a live Trello-style status board in a `tickets` tab (`tk.sh view`, a script — no model), and closes the board with `ticket-retro` — mattpocock's `retro` over the tickets' reports and transcripts, proposing project-memory, environment and skill (`S` ids, for the skills catalog) changes, saved by `tk.sh retro-save`; the developer marks them by id and `tk.sh retro-apply` regenerates `.scratch/<board>/retro-results.md` (see `docs/agents/retro.md`) — before `/sweep-tickets`. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.
+A feature runs in two sessions, not one. `/ticket` is the **planner** — grilling and breakdown, on the model that judgement needs — and ends by printing the command that starts the **board** session — `skills/implement-tickets/scripts/board.sh <board>`, never run inside the planning session. The board runs on Haiku (`TICKET_BOARD_*`) with a small prompt and few tools, because every check is a script (`tk.sh`: digest, launch, the five merge gates, resolve, relay). It launches waves, merges on the developer's word, sends `ticket-merger` (Sonnet — a merge commit only, after approval) on a conflict and opens PRs when asked with `tk.sh pr` — the **Cursor CLI** writes the commit message and body (the `pr` skill; no Claude tokens), `TICKET_PR_RUNNER=claude` sends `ticket-pr-creator` (Sonnet) instead — every commit and push going through a guarded script, and no commit or PR body carrying a `Co-authored-by` or other attribution (ADR 0005 §9) — merges the PR on the forge (never a local merge), opens, gates and merges PRs on GitHub (`gh`) or Azure DevOps (`az` + the `azure-devops` extension) — picked from the remote URL, `TICKET_FORGE` overrides (`none` = git log only, no forge calls, the developer merges on the forge; `tk.sh push` commits and pushes a ticket's branch through the same guarded path, without a PR), ADR 0005 §7; a remote on any other host (a bare SSH repo, Gitea, a NAS) is detected as `none` and, like no remote, puts the repo in **local mode** (`local_mode`: `tk.sh merge`/`gates`/`ready` take the local path, `pr`/`push` refuse, the base is never pushed), and `tk.sh export`'s `merge_mode` (`pr`|`push`|`local`) is the one answer tk-hub reads — relays messages, opens a live Trello-style status board in a `tickets` tab (`tk.sh view`, a script — no model), and closes the board with `ticket-retro` — mattpocock's `retro` over the tickets' reports and transcripts, proposing project-memory, environment and skill (`S` ids, for the skills catalog) changes, saved by `tk.sh retro-save`; the developer marks them by id and `tk.sh retro-apply` regenerates `.scratch/<board>/retro-results.md` (see `docs/agents/retro.md`) — before `/sweep-tickets`. The planner's last act is writing `.scratch/<board>/.planned` (its done marker, a `/ticket rescope` too): tk-hub's daemon then closes the grilling session, frees the repo and files the board under the project holding the repo. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.
 
 ### Commands and aliases
 
@@ -55,7 +55,8 @@ lowercased and stripped before the interview. It names the board — `.scratch/<
 feature slug, and every ticket carries `**Parent:** <id>`. A second
 run on the same id appends to that board. No id, no change. A plan that changes several repos gets
 one board per repo under the same name: each ticket (`**Repo:**`) lives on the board of the repo it
-changes, cross-repo blockers read `<repo>:<NN>`, and a board refuses to launch another repo's ticket
+changes, cross-repo blockers read `<repo>:<NN>` (exported as `xblockers`; tk-hub resolves them across the client's
+boards and launches past one it saw resolved with `--cleared`), and a board refuses to launch another repo's ticket
 (ADR 0005 §8). See `docs/agents/jira-parent.md`.
 
 ### Contracts and rescope
@@ -64,7 +65,11 @@ Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;
 
 ### Resume
 
-`tk.sh resume <board> <NN>` starts a new agent where a dead one (an OOM, a restart) stopped: the same worktree as it stands, nothing reset or pulled, `claude --resume` on its newest transcript with a note on what it finds (the full brief when there is none), on the account the worktree's link already names. The launcher's `--resume` path makes only a new workspace. tk-hub calls it through the daemon's `resume_ticket`. See `docs/agents/resume.md`.
+`tk.sh resume <board> <NN>` starts a new agent where a dead one (an OOM, a restart) stopped: the same worktree as it stands, nothing reset or pulled, `claude --resume` on its newest transcript with a note on what it finds (the full brief when there is none), on the account the worktree's link already names. The launcher's `--resume` path makes only a new workspace. tk-hub calls it through the daemon's `resume_ticket`. `tk.sh rebase <board> <NN>` brings a ticket that waited for other work (tk-hub's park "when these merge") onto the base's tip: an unpushed branch only (a PR or pushed branch, exit 13, and a conflict, exit 10, go through the merge flow), the new **Base:** recorded, its agent asked to re-run checks and report (a gone one through `tk.sh resume --rebased`); tk-hub sends it as `rebase_ticket`. See `docs/agents/resume.md`.
+
+### Questions
+
+An agent that needs something only the developer has (a value, which repo, a scope call) writes it to its `{{QUESTIONS_FILE}}` (`[{id, q, blocks}]`) instead of guessing; a blocking one stops it and its card moves to **needs you** as `asks: …`. `tk.sh answer <board> <NN> <answer.json>` writes the answer under the ticket's `## Answers` (so every later launch, resume and rescope reads it), marks the question answered and sends it to a live agent; `tk.sh export` carries each ticket's `questions` for tk-hub. Never a secret's value: the agent asks where it lives. See `docs/agents/questions.md`.
 
 ### My tickets
 
@@ -72,7 +77,7 @@ A ticket with `**Owner:** me` is the developer's, and it flows through the board
 
 ### Project manager
 
-The `project-manager` skill is the brief tk-hub's weekly project review (Opus) and daily delta check (Haiku) run on the planner box: health, forecast, risks, decisions owed, up to three improvements (a task of the developer's or a rescope), a client status draft or a personal project's keep/pause/drop call. Nothing changes until the developer accepts a proposal on tk-hub's Health tab. By-hand checks stay a ticket's checklist; only a step later tickets can't run without (a token in a pipeline variable) is a *blocking check*, which tk-hub's synthesis marks and the hub turns into the developer's task blocking those tickets. See `docs/agents/project-manager.md`.
+The `project-manager` skill is the brief tk-hub's weekly project review (Opus) and daily delta check (Haiku) run on the planner box: health, forecast, risks, decisions owed, up to three improvements (rescopes; never a task), a client status draft or a personal project's keep/pause/drop call. Nothing changes until the developer accepts a proposal on tk-hub's Health tab. By-hand checks stay a ticket's checklist; only a step later tickets can't run without (a token in a pipeline variable) is a *blocking check*, which tk-hub's synthesis marks and the hub turns into the developer's task blocking those tickets. See `docs/agents/project-manager.md`.
 
 ### Board policy
 
@@ -88,6 +93,18 @@ beats it. See `docs/agents/policy.md`.
 ### Catalog skills
 
 Skills from the private `skills-catalog` repo, synced by devboxes to `/opt/skills` (off by default, never into `~/.claude/skills`), are turned on per board by the policy key `skills` (a list of names; tk-hub's project Skills tab writes it). `tk.sh launch` passes the board's list as `--skills`; the launcher links each one the catalog holds into `<worktree>/.claude/skills/` (git-excluded) and records them as the ticket's `**Skills:**` line, which `tk.sh export` carries. See `docs/agents/skills.md`.
+
+### Test plan
+
+Every coordinator report ends with a `## Test plan`: 3 to 6 steps on the deployed environment, each with the evidence that proves it; a ticket with `**Tested in:** <batch>` starts it "Tested in <batch>." and lists only what it adds to the batch's test. `tk.sh export` carries `test_plan` and `tested_in` per ticket; tk-hub verifies from the plan and raises no per-ticket Verify for a batched ticket. See `docs/agents/test-plan.md`.
+
+### Batches
+
+`/ticket` names the batches with the developer: tickets one end-to-end test proves together, a harness ticket among them, each a `.scratch/<board>/batches/<name>.md` (what it proves, env, tickets, harness, the test plan skeleton), and each of their tickets carries `**Tested in:** <name>`. `tk.sh batch <board> <NN> <batch|none>` moves a ticket; `tk.sh export` carries `batches`. See `docs/agents/batches.md`.
+
+### Next step
+
+`tk.sh export` gives every ticket a `next`: its one next step, computed from the row the status board draws (`scripts/next-step.jq`), never stored. `owner` is `agent` (build, review, fix, conflict), `hub` (launch, resume, resolve, pr under `night_shift`, merge under `auto_merge`), `daniel` (review, merge, answer, start/work for an `**Owner:** me` ticket) or `none` (blocked, wait, done); `step` is the word, `since` when the ticket last changed, `reason` one line. tk-hub's Day list is the tickets whose step is the developer's, and the hub adds what only it knows (a park, a ready batch's Test, the Deploy he ticks, a refused resolve). See `docs/agents/next-step.md`.
 
 ### OpenSpec (proposed)
 

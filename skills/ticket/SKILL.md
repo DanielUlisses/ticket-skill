@@ -36,9 +36,10 @@ If the task is empty — including a task that was only an id — ask for a desc
 
 1. Run `~/.claude/skills/implement-tickets/scripts/tk.sh rescope <board> <NN>[,<NN>...] --reason "<why>"` from the repo's main checkout. It opens the rescope and prints its seed: the id and folder (`RESCOPE <id> <dir>`), the first free ticket number, each target ticket whole, the tickets that depend on them, every ticket's Provides/Consumes, and where `board.md` is. Read `board.md` and every file the seed names.
 2. Grill the developer with `mattpocock-skills:grilling` on the change only: what the findings and the reason leave open, and what each dependent ticket needs from the new shape. Keep it short — the board is already settled everywhere else.
-3. Write the proposal into the rescope's folder, never into `issues/`: each added, changed or split-into ticket whole, as `<dir>/issues/<NN>-<slug>.md` in the ticket shape below (a changed ticket keeps its number; new ones start at the free number), and `<dir>/plan.json`: `{"summary": "<one line>", "changes": [{"op": "add|change|split|drop", "nn": "<NN>", "file": "<NN>-<slug>.md", "files": ["…"], "why": "<one line>"}]}` — `file` for add and change, `files` for split (the tickets it splits into), no file for drop. Only an open ticket splits or drops; an in-progress one can change, and its agent is told when the rescope applies. Rewire every dependent's `**Blocked by:**` and `**Consumes:**` so nothing waits on a dropped ticket.
+3. Write the proposal into the rescope's folder, never into `issues/`: each added, changed or split-into ticket whole, as `<dir>/issues/<NN>-<slug>.md` in the ticket shape below (a changed ticket keeps its number; new ones start at the free number), and `<dir>/plan.json`: `{"summary": "<one line>", "changes": [{"op": "add|change|split|drop", "nn": "<NN>", "file": "<NN>-<slug>.md", "files": ["…"], "why": "<one line>"}]}` — `file` for add and change, `files` for split (the tickets it splits into), no file for drop. When the seed or the reason names tk-hub validator findings the plan fixes (`finding #86`), list their ids as `"findings": [86, 87]` in `plan.json`, so tk-hub can mark them on the rescope; leave it out when none are named — never guess an id. Only an open ticket splits or drops; an in-progress one can change, and its agent is told when the rescope applies. Rewire every dependent's `**Blocked by:**` and `**Consumes:**` so nothing waits on a dropped ticket.
 4. Run `tk.sh rescope-propose <board> <id>`. It checks the files against the board; fix what it reports and run it again.
-5. Stop, and say: the rescope is proposed; apply it on tk-hub (the plan diff on the ticket or project), or `tk.sh rescope-apply <board> <id>` in a terminal; `tk.sh rescope-discard <board> <id>` drops it.
+5. Write `.scratch/<board>/.planned` with `Write`, holding the `RESCOPE <id>` line: the planning session's done marker (Phase 3), which lets tk-hub close this session and free the repo.
+6. Stop, and say: the rescope is proposed; apply it on tk-hub (the plan diff on the ticket or project), or `tk.sh rescope-apply <board> <id>` in a terminal; `tk.sh rescope-discard <board> <id>` drops it.
 
 See `docs/agents/contracts.md`.
 
@@ -64,6 +65,7 @@ Break the settled plan into **tracer-bullet tickets**. (This mirrors mattpocock'
 - Give each ticket a **suggested helpers** line where it would help: what the launched coordinator should fan out to its cheap subagents before and after implementation — the repo questions worth a scout each, the external API worth a researcher, checks worth splitting across testers (`scouts: callers of PaymentService, how retries are done elsewhere · research: Stripe webhook signature, API 2025-09 · tests: split by package`). Leave it out when the ticket is small enough that the coordinator's own judgement covers it.
 - Check the project for a test suite first — a configured runner with tests already running under it. Without one, or where the ticket's dependencies are side-effectful enough that a test would only exercise stubs, the seams line reads `None` plus the command that exercises the real thing, which is what the coordinator then runs. Infrastructure that only runs live (Terraform, Terragrunt, Helm) is `None` too — `None — offline checks only (terragrunt hclfmt, validate); verified by the developer's plan` — never a command that touches a real environment. A `None` there also raises that ticket's review to `TICKET_REVIEW_EFFORT_UNTESTED` (`high`), and the reviewer returns the plan it expects.
 - **One ticket per document.** A document too large for one context window splits by section — each part its own ticket, each blocked by the one before, all writing the same output file — never in parallel, since they share a file. Only the **last** part carries the validator in its seams line; earlier parts read e.g. `None — partial document (sections X–Y); validated by NN`. Each part's outline names the sections it owns and notes that the earlier sections already exist in the file.
+- Group the tickets into **batches**: the tickets one end-to-end test on the deployed environment proves together, so the developer deploys and tests once for several tickets instead of once each. Name each batch (`dev-pipeline`, lowercase), say in one sentence what it proves and where it is tested, and give it a **harness** — the ticket that builds what the test needs (a pipeline, seed data, a script) — adding that ticket when the plan has none. Sketch the batch's test plan: 2 to 6 steps, each with the evidence that proves it. A ticket whose proof stands alone (a doc ticket, an `**Owner:** me` ticket, a one-off fix) is in no batch. Ask the developer to confirm the batches with the breakdown.
 - Number tickets `01`, `02`, … in dependency order (blockers first) — or, appending to an existing Jira board (*Naming the board*, below), from the number after its highest.
 
 Present the breakdown as a numbered list — title, repo (when the plan spans more than one), blocked by, seams, what it delivers — and ask the developer whether the granularity feels right, the blocking edges and the seams are correct, and anything should merge or split. Iterate until they approve it.
@@ -82,6 +84,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 **Repo:** <the repo root's directory name> — <its absolute path>
 
 **Blocked by:** <blockers, or "None (can start immediately)">
+
+**Tested in:** <batch — this line only for a ticket in a batch>
 
 **Owner:** me — <this line only for work the developer does by hand: an account, a token in a repo variable, a call>
 
@@ -118,6 +122,8 @@ Once approved, write the tickets as files under `.scratch/<board>/issues/` at th
 `**Kind:**` is written only on a ticket whose deliverable is a document — a scope, a proposal, an estimate, a design document — and reads `doc`; no line means `code`, and any other word is refused at launch with the known kinds named. A doc ticket launches with `/ticket`'s unattended doc brief on a `docs` branch: nobody is interviewed, so the ticket carries a `## Outline` section (audience, sections and what each says, in/out of scope, assumptions, estimate method, sources, output path) above its criteria — written from the Phase 1 grilling of the document's content — that outline is the plan, and whatever it leaves open the document marks as an assumption. No outline line may start with a bold `**Label:**` — the board reads such lines from anywhere in the body, so `**Effort:** 40 person-days` would be taken as the ticket's effort and `**Status:** Draft` as its status; write them as `- Effort: …` bullets. Its **Seams under test** line is `None` plus the validator to run (`None — verify with check_ead.py <file>`); its review stays at `TICKET_DOC_REVIEW_*`. `**Doc type:**` picks the guidance: `ead` and `tdd` send the drafter to the installed skill of that name and its `check_<type>.py`, `other` (or no line) is the generic brief.
 
 `**Provides:**` and `**Consumes:**` are the ticket's **contract**, written on every ticket: what it makes that another ticket (or the developer) uses, and what it needs that it does not make. Each item is `<kind> <name>`, items separated by `;`, the kind one of `endpoint function method class type schema table column migration env config file cli rpc event message page component metric resource output variable secret deliverable`, the name in backticks — a name another ticket can repeat word for word, because the validator matches a consume to a provide by kind and name. A consume ends in where it comes from: `(from 02)` for a ticket on this board, `(<repo>:03)` for one on another repo's board, `(existing)` for what is already on the base. A ticket with nothing on one side writes `None`. Every consume needs a provider — a planned ticket, or `(existing)` — and the ticket that provides it is one of its blockers, directly or through another; check that before presenting the breakdown. tk-hub's validator (`validate-contracts`) reads these lines when tickets are planned, when each one merges and when an agent reports something missing, so a ticket that builds the wrong thing is caught before the one that needs it starts (`docs/agents/contracts.md`).
+
+`**Tested in:**` names the batch whose end-to-end test proves the ticket (the planning step above); the ticket's agent then writes only what it adds to that test, and tk-hub raises no Verify of its own for it. No line means the ticket is tested alone. Moving a ticket later is `tk.sh batch <board> <NN> <batch|none>`, never a hand edit, so the batch file stays in step.
 
 `**Owner:** me` marks a ticket the developer does themselves — create a token and put it in a pipeline variable, register an app, ask a client, or a change they want to make by hand. No agent launches it on its own: it moves through the board's columns like any ticket, and once its blockers are resolved the developer starts it with a helper session (`tk.sh launch … --helper`, ADR 0009) or does it by hand; `tk.sh resolve <board> <NN> --no-code "<what was done>"` closes one with nothing to commit, and a change ships as any ticket's. Only work later tickets can't run without earns a ticket; by-hand checks ("try it", "run that") stay criteria. No line means an agent runs it.
 
@@ -171,6 +177,27 @@ ls <root>/.scratch/<board>/issues/ 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)-.*\.
 
 Empty output — or no Jira id, which skips the check — means a fresh board, numbered from `01`. Never rewrite or renumber a ticket file that is already there — appending adds ticket files, and updates `board.md` (below).
 
+#### Then write the batches
+
+For each batch, write `.scratch/<board>/batches/<name>.md` beside `issues/` — in the repo of its tickets; a batch spanning repos is written to each repo's board with the same content:
+
+```markdown
+# Batch: <name>
+
+**Proves:** <what working end to end this batch shows, one sentence>
+
+**Env:** <where the developer tests it: dev, a cluster, local>
+
+**Tickets:** <NN, NN, NN — every ticket of it, the harness included>
+
+**Harness:** <NN — what it builds for the test, or "None">
+
+## Test plan
+- <step> → <the evidence that proves it>
+```
+
+No line of a batch file may start with `# <digits>:`. Appending to a board, add new tickets to an existing batch's `**Tickets:**` line or write a new batch file; never remove a batch file a run has tested.
+
 #### Then write `board.md`
 
 Beside `issues/`, write `.scratch/<board>/board.md`: the "why are we doing this and what's left" note a developer returning after a break reads first. It is a note, never a ticket — the board loader skips any file with no `# NN:` heading and no leading-digit name, and takes any line starting `# <digits>:` for a ticket heading, even inside a code block, so **no line in `board.md` may start with `# <digits>:`**. Terse, from the grilling, nothing invented:
@@ -208,14 +235,18 @@ Print, with the board's name — the Jira id or the feature slug, i.e. the folde
 
 ```
 Board <board> is ready: <NN> tickets, frontier <the tickets with no blockers>.
-In a new Herdr tab at <root>:
+tk-hub picks it up from here: launch, review and merge its tickets on the hub.
+To run it from this box instead, in a new Herdr tab at <root>:
 
   ~/.claude/skills/implement-tickets/scripts/board.sh <board>
 
-It asks which tickets to start and how to run them, then stays on to merge on your word,
-relay messages to ticket agents, and launch what each merge unblocks. The board's goal, done-when
-and settled decisions are in .scratch/<board>/board.md. Come back to a planning
-session — `/ticket <jira-id> …` appends to this board — when the plan itself needs to change.
+The board's goal, done-when and settled decisions are in .scratch/<board>/board.md.
+Come back to a planning session — `/ticket <jira-id> …` appends to this board — when
+the plan itself needs to change.
 ```
+
+Never start `board.sh` yourself, and don't suggest it as the next step: tk-hub runs boards now, and a board session exists only when the developer opens one by hand.
+
+Last, with `Write`, write `.scratch/<board>/.planned` in this repo — one board per repo, so on a plan spanning repos only this repo's board — holding the `Board <board> is ready: …` line. It is the planning session's done marker: when tk-hub started this session, its daemon sees the file, closes the session a little later (the transcript stays readable on the hub), frees the repo for the next grilling and files the board under the hub project that holds the repo. Write it again on every run that appends to the board; it is never a ticket (no `# NN:` heading).
 
 Then stop. See `docs/adr/0003-planner-and-board-sessions.md` and `docs/adr/0004-haiku-board-session.md`.
