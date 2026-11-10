@@ -88,3 +88,7 @@ beats it. See `docs/agents/policy.md`.
 ### Catalog skills
 
 Skills from the private `skills-catalog` repo, synced by devboxes to `/opt/skills` (off by default, never into `~/.claude/skills`), are turned on per board by the policy key `skills` (a list of names; tk-hub's project Skills tab writes it). `tk.sh launch` passes the board's list as `--skills`; the launcher links each one the catalog holds into `<worktree>/.claude/skills/` (git-excluded) and records them as the ticket's `**Skills:**` line, which `tk.sh export` carries. See `docs/agents/skills.md`.
+
+### OpenSpec (proposed)
+
+Not built. For a repo that does spec-driven development with OpenSpec, the plan is a third ticket kind, `**Kind:** spec`, turned on by the repo policy key `spec: openspec`: `/ticket` writes one OpenSpec change per ticket, the board builds it with our usual brief (tasks ticked, one criteria checker per scenario), a `spec` gate runs `openspec validate --strict`, and the ticket's branch archives the change before the PR. tk-hub needs no change. See `docs/adr/0010-openspec-spec-tickets.md`, which ends with the build order.
