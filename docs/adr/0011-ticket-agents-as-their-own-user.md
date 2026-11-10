@@ -42,7 +42,10 @@ whose git runs with `GIT_OPTIONAL_LOCKS=0`.
 **The developer's account, the agent's config root.** claude-acc's link still picks the account. The
 shim passes its name; the wrapper maps it to a config root in the agent's home (`~/.claude`, or
 `~/.claude-switch/accounts/<name>`), never the developer's: a config root holds settings, hooks and
-plugins the developer's own sessions load. Each is signed in once as the agent.
+plugins the developer's own sessions load. The login inside it is the box's, which exists for its
+agents (Daniel, 2026-11-10): devboxes links its `.credentials.json` to the developer's for the same
+account, the agent may read and write that one file (a refresh rewrites it) and nothing else in his
+root. A `claude setup-token` token in the agent's home wins over it.
 
 ## The paths back to the developer, and how each is closed
 
@@ -72,8 +75,9 @@ Four assumptions, to be tried by hand on a box before the switch goes on anywher
 1. Herdr starts `claude` through the pane's shell, so the shim on PATH is the `claude` it runs, and it
    still reports idle/working/blocked, takes `herdr agent prompt` and reads the pane for a process
    owned by another user (with `sudo` between them).
-2. The agent's own login per account holds (a `claude login` as the agent, or a `claude setup-token`
-   token), and Claude Code's OAuth refresh works in a config root only the agent writes.
+2. The shared login holds: Claude Code rewrites `.credentials.json` in place on a refresh (through
+   the agent's link, keeping the file's ACL) rather than replacing it, from either user, and
+   neither side's refresh logs the other out.
 3. Rootless Docker runs for the agent inside an unprivileged LXC: subordinate ids the container has
    mapped, `docker run hello-world` and a PostgreSQL container.
 4. The agent's work needs no git write: `git status` and `git diff` with `GIT_OPTIONAL_LOCKS=0`, and
