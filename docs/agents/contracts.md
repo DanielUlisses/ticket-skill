@@ -45,7 +45,7 @@ A rescope is a plan diff a planner session proposes and the developer applies. N
 - `change NN file`: an open or in-progress ticket's new body. Its run-state lines (`Status Branch Base Model Effort Account Agent Worktree`) are kept; an in-progress ticket's agent is told (`TOLD`/`NOT TOLD` line).
 - `add file`: a new ticket, its number from its heading, not on the board yet.
 - `split NN files`: an open ticket into new ones; the old one is dropped with "split into …".
-- `drop NN`: an open ticket gets `**Status:** dropped — rescope <id> on <date>` and `**Dropped:** <date> — <why> (rescope <id>)`. It shows in **done** (`dropped`) and is never launched; a dropped blocker still blocks, and `rescope-apply` warns about any open ticket left blocked by one.
+- `drop NN`: an open ticket gets `**Status:** dropped — rescope <id> on <date>` and `**Dropped:** <date> — <why> (rescope <id>)`. It shows in **done** (`dropped`) and is never launched. A dropped blocker counts as met, like a resolved one (the digest's frontier, the board rows, `tk.sh launch`), and `rescope-apply` prints a `NOTE` for each open ticket it was blocking so the plan can be checked. A dropped ticket in a batch leaves it (`**Tested in:**` removed, the batch's `**Tickets:**` line updated, `UNBATCHED`), so the batch can still be ready.
 
 `rescope-apply` checks the plan again against the board as it is then, and applies nothing when it no longer fits. `tk.sh export` lists the rescopes still `open` or `proposed` under `rescopes[]`, each with `findings` and its plan diff (`changes[]`: `op nn title why diff into`, a change's `diff` the unified diff of the ticket file, an add's the new file). Rescope folders are skipped when tickets are loaded.
 
