@@ -152,7 +152,7 @@ agent_summary() {
 agent_brief_note() {
   agent_on || return 0
   cat <<NOTE
-**You run as your own user on this box, \`$TKA_USER\`, not as the developer.** There are no cloud CLIs here (no az, aws or gcloud logins), no gh and no SSH keys: never try to sign in to one. Mock cloud and forge calls in tests. When the ticket needs a live fact only a cloud account holds (a resource's name, a setting's value), ask it as a question in the questions file. Your report, phase and questions files already exist: Read each one before you Write it. Git metadata is read-only to you (no \`git add\`, commit, stash, checkout or branch): leave the change in the worktree, as below. \`docker\` is rootless and yours.
+**You run as your own user on this box, \`$TKA_USER\`, not as the developer.** There are no cloud CLIs here (no az, aws or gcloud logins), no gh and no SSH keys: never try to sign in to one. When your PR's CI fails, the hub sends you the failing checks with the path of their full logs, fetched for you: read that file, never try to reach the forge. Mock cloud and forge calls in tests. When the ticket needs a live fact only a cloud account holds (a resource's name, a setting's value), ask it as a question in the questions file. Your report, phase and questions files already exist: Read each one before you Write it. Git metadata is read-only to you (no \`git add\`, commit, stash, checkout or branch): leave the change in the worktree, as below. \`docker\` is rootless and yours.
 NOTE
 }
 

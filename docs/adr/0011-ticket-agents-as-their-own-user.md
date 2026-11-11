@@ -101,3 +101,7 @@ still being checked.
 - An agent loses `az` until per-project read-only MCPs exist; a box whose agents need it stays off.
 - The agent's Claude has no user-level skills or plugins of the developer's: its subagents come
   through `--agents` (on by default), catalog skills through the worktree.
+- The agent can't read the forge, so CI comes to it (2026-11-10): tk-hub's fix loop is on by default
+  (`fix_rounds: 1`). The daemon, as the developer, fetches the failed runs' whole logs into the
+  worktree's git-excluded `.tk-ci/pr-<n>.log` and sends the agent the path. Red again after that fix
+  is the developer's. One path for CI, not a token for the agent as well.
