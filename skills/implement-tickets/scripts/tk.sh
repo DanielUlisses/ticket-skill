@@ -42,6 +42,8 @@
 #                                        written under the ticket's ## Answers, then sent to a live agent
 #   tk.sh batch   <board> <NN> <batch|none>  put a ticket in a batch (its **Tested in:** line and the
 #                                        batch file's **Tickets:** line), or take it out (none)
+#   tk.sh deployed <board> <NN> ok|red|clear [note]  record a landed ticket's deploy on the board:
+#                                        its **Deployed:** line (red needs the note: what failed); clear removes it
 #   tk.sh view    <board> [--watch [secs]]  the status board for the developer — no model involved;
 #                                        --watch is full-screen: q quits, r refreshes (TICKET_VIEW_THEME)
 #   tk.sh boards                         every board under the main checkout's .scratch/, as one JSON array
@@ -1502,6 +1504,42 @@ cmd_batch() {
   else echo "UNBATCHED ticket $nn (was $old): it is tested alone"; fi
 }
 
+# Writes (or with "", removes) a ticket file's **Deployed:** line: in place when
+# it has one, else just below **Status:**, else at the end of the header.
+set_deployed() {
+  local f="$1" line="$2"
+  awk -v l="$line" '
+    /^\*\*Deployed:\*\*/ { if (l != "") print "**Deployed:** " l; done = 1; next }
+    { print }
+    !done && l != "" && /^\*\*Status:\*\*/ { print "**Deployed:** " l; done = 1 }
+    END { if (!done && l != "") { print ""; print "**Deployed:** " l } }
+  ' "$f" | write_atomic "$f"
+}
+
+# What a deploy of a landed ticket proved, kept on the board so it outlives the
+# hub's own record (a fresh start, a board split): ok, or red with what failed.
+cmd_deployed() {
+  local usage="usage: tk.sh deployed <board> <NN> ok|red|clear [note]   (red needs a note: what failed)"
+  (( $# >= 3 )) || die "$usage"
+  board_init "$1"; need jq
+  local t nn file status result="${3,,}" note="${*:4}" line
+  t="$(ticket_json "$2")"; nn="$(jq -r .nn <<<"$t")"; file="$(jq -r .file <<<"$t")"
+  status="$(jq -r .status <<<"$t")"
+  note="$(tr '\n\r' '  ' <<<"$note" | sed 's/^ *//; s/ *$//')"
+  case "$result" in
+    ok) line="ok $(date -u +%Y-%m-%dT%H:%M:%SZ)${note:+: $note}" ;;
+    red) [[ -n "$note" ]] || die "a red deploy needs a note: what failed ($usage)"
+         line="red $(date -u +%Y-%m-%dT%H:%M:%SZ): $note" ;;
+    clear) line="" ;;
+    *) die "$usage" ;;
+  esac
+  [[ "$status" == open || "$status" == dropped ]] && [[ -n "$line" ]] \
+    && die "ticket $nn is $status: only work that landed is deployed"
+  set_deployed "$file" "$line"
+  if [[ -z "$line" ]]; then echo "CLEARED ticket $nn has no deploy result"
+  else echo "DEPLOYED ticket $nn $line"; fi
+}
+
 cmd_export() {
   (( $# == 1 )) && [[ -n "$1" ]] || die "usage: tk.sh export <board>   (a slug or boards[].path from tk.sh boards)"
   need git; need jq
@@ -2424,6 +2462,10 @@ Batches (tickets one end-to-end test proves; .scratch/<board>/batches/<name>.md)
                           **Tickets:** line; `none` takes it out (tested alone). tk.sh export
                           carries the batches; tk-hub tests a batch once all its tickets landed
 
+Deploy (what a landed ticket's deploy proved, on the board; tk-hub's Deploy card sends it)
+  tk.sh deployed <board> 04 ok                 its **Deployed:** line; tk.sh export carries `deployed`
+  tk.sh deployed <board> 04 red "<what failed>"  red needs the note; `clear` removes the line
+
 Rescope (a planner session proposes, you apply; nothing changes before rescope-apply)
   tk.sh rescope <board> 04,05 --reason "<why>"   open one, print the planner's seed (/ticket rescope …)
   tk.sh rescope-propose <board> <id>             the planner's last step: check plan.json and its files
@@ -2465,7 +2507,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|batch|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|batch|deployed|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;
