@@ -28,6 +28,7 @@ printf '%s\n%s\n' "reviewing r1" "tests=pass criteria=3/4 review=2-blocking" > {
 - **`blocks: false`** when you can go on with a stated assumption: say the assumption in the question ("I'll use `stg-apps` — right?") and keep going. A later answer that changes it comes as a message too.
 - One question per entry, answerable in a line. Never ask for a secret's value — ask where it lives (a vault item, a pipeline variable name).
 - Read the ticket's `## Answers` section first, if it has one: what's answered there isn't asked again.
+- **An answer can arrive as a plain message.** `The developer answered your question q1` is already recorded: just carry on. Any other message from the developer that answers a question still open in `{{QUESTIONS_FILE}}` (no `a`) is recorded by you, before you act on it: set that entry's `"a"` to the developer's words for it and its `"at"` to the UTC time (`2026-11-11T19:12Z`), keeping every other entry as it is. The board reads it there: an open blocking question keeps the ticket in needs you even after the work is done. Mark only what the developer actually answered; a message about something else leaves the question open, and you ask again in one line.
 
 {{AGENT_USER_NOTE}}
 

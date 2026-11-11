@@ -34,5 +34,20 @@ task in tk-hub that blocks this ticket):
    either way. A ticket that isn't in progress has nothing to send to: its launch
    reads the answer.
 
+## An answer that arrives as a plain message
+
+The developer may answer in a message instead (`tk.sh say`, a card in tk-hub's project
+chat, typing in the agent's own session). Nothing but `tk.sh answer` used to mark the
+question, so the agent did the work while its card stayed in **needs you** as `asks: …`
+(Chelan #07, 2026-11-11). Now:
+
+- the agent marks it: its brief tells it to set the entry's `a` (the developer's words)
+  and `at` in its questions file before acting on the message, and `tk.sh say` reminds
+  it of the ids still open (a `<system-reminder>` block after the message, which
+  tk-hub's transcript reader leaves out of the chat);
+- `tk.sh digest` and `tk.sh resume` copy every answered question that isn't under the
+  ticket's `## Answers` yet into it (`record_answers`), so a later launch, resume or
+  rescope reads it. `tk.sh export` stays a read.
+
 `tk.sh resume` puts the ticket's `## Answers` in its resume note, because a
 resumed conversation is sent only the note, not the ticket again.
