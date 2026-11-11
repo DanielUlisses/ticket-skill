@@ -73,7 +73,7 @@ Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;
 
 ### Questions
 
-An agent that needs something only the developer has (a value, which repo, a scope call) writes it to its `{{QUESTIONS_FILE}}` (`[{id, q, blocks}]`) instead of guessing; a blocking one stops it and its card moves to **needs you** as `asks: …`. `tk.sh answer <board> <NN> <answer.json>` writes the answer under the ticket's `## Answers` (so every later launch, resume and rescope reads it), marks the question answered and sends it to a live agent; `tk.sh export` carries each ticket's `questions` for tk-hub. Never a secret's value: the agent asks where it lives. See `docs/agents/questions.md`.
+An agent that needs something only the developer has (a value, which repo, a scope call) writes it to its `{{QUESTIONS_FILE}}` (`[{id, q, blocks}]`) instead of guessing; a blocking one stops it and its card moves to **needs you** as `asks: …`. `tk.sh answer <board> <NN> <answer.json>` writes the answer under the ticket's `## Answers` (so every later launch, resume and rescope reads it), marks the question answered and sends it to a live agent; an answer that reaches the agent as a plain message instead (`tk.sh say`, a card, its own session) is marked by the agent in that file, and `tk.sh digest` / `resume` copy it under `## Answers`; `tk.sh export` carries each ticket's `questions` for tk-hub. Never a secret's value: the agent asks where it lives. See `docs/agents/questions.md`.
 
 ### My tickets
 

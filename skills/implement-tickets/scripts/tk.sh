@@ -105,6 +105,7 @@ cmd_digest() {
     branch="$(jq -r .branch <<<"$t")"; base="$(jq -r .base <<<"$t")"; agent="$(jq -r .agent <<<"$t")"
     l="-"; st="-"; tab="-"; pushed=""; ph="-"; phf=false
     if [[ "$status" == in-progress ]]; then
+      record_answers "$t"
       read -r ph phf < <(phase_state "$branch")
       l="$(landed "$branch" "$base")"
       ps="$(pushed_sha "$branch" "$base" "$(jq -r .worktree <<<"$t")")"
@@ -456,6 +457,7 @@ cmd_resume() {
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
   status="$(jq -r .status <<<"$t")"
   [[ "$status" == in-progress ]] || die "ticket $nn is $status, not in progress — nothing to resume (an open ticket launches)"
+  record_answers "$t"   # the resume note below reads ## Answers
   yours=0; [[ "$(jq -r '.owner // "ai"' <<<"$t")" == me ]] && yours=1
   if (( yours && ! helper )); then
     die "ticket $nn is the developer's (**Owner:** me) — its helper session restarts only on their word: tk.sh resume $BOARD_ID $nn --helper"
@@ -1105,7 +1107,14 @@ cmd_say() {
     gone) echo "NOT SENT — $AGENT isn't running"; return 21 ;;
     *)    echo "NOT SENT — $AGENT is '$AGENT_STATE'; a message typed at a dialog could answer it"; return 20 ;;
   esac
-  herdr agent prompt "$AGENT" "$(printf 'Message from the developer, via the board session:\n\n%s' "$(cat "$file")")" >/dev/null
+  # A message can carry the answer to a question the agent still has open: the
+  # agent marks it, or the card stays in needs you after the work is done.
+  # In a system-reminder block: tk-hub's transcript reader drops those, so the
+  # chat shows the developer's message alone.
+  local open_q note=""
+  open_q="$(ticket_questions "$(jq -r '.branch // ""' <<<"$t")" | jq -r 'map(select(.a == null) | .id) | join(", ")')"
+  [[ -z "$open_q" ]] || note="$(printf '\n\n<system-reminder>Your open question%s: %s. If this message answers one, set its "a" to the developer'"'"'s words and its "at" to the UTC time in your questions file, then carry on. Leave the others as they are.</system-reminder>' "$([[ "$open_q" == *,* ]] && echo s)" "$open_q")"
+  herdr agent prompt "$AGENT" "$(printf 'Message from the developer, via the board session:\n\n%s%s' "$(cat "$file")" "$note")" >/dev/null
   [[ "$AGENT_STATE" == working ]] && echo "SENT to $AGENT — it's working; Claude Code queues the message until its current step ends" \
                                   || echo "SENT to $AGENT ($AGENT_STATE)"
 }
@@ -1138,6 +1147,26 @@ append_answer() {
     printf '\n- **%s** (%s) %s\n' "${id:-note}" "$at" "${q//$'\n'/ }"
     printf '  Answer: %s\n' "${a//$'\n'/$'\n'  }"
   } >>"$file"
+}
+
+# An answer that reached the agent as a plain message (tk.sh say, a card, the
+# developer typing in its session) is marked by the agent in its questions file
+# (a, at), which takes the card out of needs you. It isn't in the ticket file
+# yet, where a later launch, resume or rescope reads answers: copy each one
+# there once. Called where the board already writes state (digest, resume).
+record_answers() {
+  local t="$1" branch file qs id q a at
+  branch="$(jq -r '.branch // ""' <<<"$t")"; file="$(jq -r '.file // ""' <<<"$t")"
+  [[ -n "$branch" && -w "$file" ]] || return 0
+  qs="$(ticket_questions "$branch")"
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    q="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .q' <<<"$qs")"; q="${q//$'\n'/ }"
+    grep -F -- "- **$id** (" "$file" 2>/dev/null | grep -qF -- "${q:0:80}" && continue
+    a="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .a' <<<"$qs")"
+    at="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .at // "" | tostring' <<<"$qs")"
+    append_answer "$file" "$id" "$q" "$a" "${at:-$(date -u +%Y-%m-%dT%H:%MZ)}"
+  done < <(jq -r '.[] | select(.a != null and (.a | gsub("\\s"; "") | length) > 0) | .id' <<<"$qs")
 }
 
 cmd_answer() {
