@@ -85,5 +85,6 @@ hub and `tkc` start the same session from the same script. The hub names a proje
 
 ## Not yet
 
-The hub chat on the same session, the hub starting one on an event, and the automatic
-recycle are later phases of the hub's coordinator plan.
+The hub starting one on an event and the automatic recycle are later phases of the
+hub's coordinator plan. The hub already shows the session on the project's page and
+types the developer's replies into it.
