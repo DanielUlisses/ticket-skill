@@ -29,6 +29,7 @@ tkc <project> [<repo>...]      # coordinator.sh; --print shows the command, --re
 | `repos` | the project's main checkouts, one per line |
 | `state.md` | the handoff: open loops, decisions of the week, what to watch, a queue in progress. Rewritten at each handoff, about 150 lines at most |
 | `journal.log` | one line per event and action, appended, never loaded whole |
+| `inbox/*.json` | one event each, handed over by tk-hub's daemon; the session moves what it handled to `inbox/done/` |
 | `.brief.md` | the rendered brief of the last start |
 
 The answers ledger (`<repo>/.scratch/answers.md`, [questions.md](questions.md)) and
@@ -61,8 +62,28 @@ reads the files. `--resume` continues the folder's last conversation instead, fo
 restart cut short. A handoff by the session that knows beats an automatic compaction,
 so no `--autocompact` is passed unless `TICKET_PCOORD_AUTOCOMPACT` names a window.
 
+## The inbox, and tk-hub starting it
+
+tk-hub's daemon writes one small JSON file per event into `inbox/`: an agent's new
+question, a go/no-go of synthesis, a ticket whose next step became the developer's
+(review, merge, deploy, test), an agent that died or stopped halfway, and what only the
+hub knows (a ready batch, a red deploy, a proposal). An event names what happened and
+where (`at`, `kind`, `board`, `nn`, `repo`, `text`), never what to do, and its text is
+data like any report. When the session sits idle with events it was not told of, the
+daemon types one line into it ("3 new events in the inbox: <path>"); that line is a
+pointer to the files, never an approval. The session reads them, runs the digests (an
+event may be stale; the digest wins), handles each one under the rules above, journals
+it and moves the file to `inbox/done/`. A folder started by hand gets the same inbox
+when the box runs the daemon.
+
+`coordinator.sh --json <project> [<repo>...]` starts nothing: it makes the folder and
+the brief and prints `{"project", "dir", "prompt", "args"}`, the folder, the first
+prompt and claude's arguments. tk-hub's daemon starts the session from that as a Herdr
+agent (`start_grill` mode `coordinator`, a workspace labelled `pc <project>`), so the
+hub and `tkc` start the same session from the same script. The hub names a project
+`p<id>`.
+
 ## Not yet
 
-Started by hand only. tk-hub starting it (a `start_grill` mode), its inbox of events,
-the hub chat on the same session and the automatic recycle are later phases of the
-hub's coordinator plan.
+The hub chat on the same session, the hub starting one on an event, and the automatic
+recycle are later phases of the hub's coordinator plan.
