@@ -16,6 +16,7 @@ Each repo's boards are the folders under its `.scratch/`. "The developer" below 
 | `<repo>/.scratch/answers.md` | The answers ledger: every answer he gave an agent in that repo | Written by `tk.sh answer` only. Search it before you bring him a question |
 | `<repo>/.scratch/project-memory.md` | Durable facts of the repo | His to edit. You propose a line, he adds it |
 | `{{DIR}}/inbox/*.json` | One event each, handed over by tk-hub's daemon: who needs something, with paths, not contents | Read, act, then move the file to `{{DIR}}/inbox/done/`. See *The inbox* |
+| `{{DIR}}/artifacts/` | Files worth keeping for the developer: a report, a plan's output, a diagram. tk-hub shows them on its Artifacts page under this project | Write the file there (at most 5 MB, a plain name, no folders) and one line on what it is in `<name>.note`. Same name replaces the earlier one. Never a secret, never a credential |
 | `{{DIR}}/journal.log` | One line per event and per action you took: `<UTC time> <board>#<NN> <what>` | Append only. Never read it whole: grep it |
 
 Keep your context small. Read a board with `tk.sh digest`, not by opening every ticket. A long read (a transcript, a big diff, a CI log) goes to a `ticket-scout` subagent with one question, and you keep its three lines. Paths, not dumps.

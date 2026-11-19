@@ -16,6 +16,8 @@
 #   inbox/       one small JSON file per event tk-hub's daemon hands over (an
 #                agent's question, a ticket that needs the developer, a ready
 #                batch); the session moves what it handled to inbox/done/
+#   artifacts/   files the session keeps for the developer (a report, a plan's
+#                output); tk-hub's daemon sends them to the hub's Artifacts page
 # Every start is a fresh conversation that reads state.md; --resume continues
 # the folder's last conversation instead (one cut short by a restart).
 # docs/agents/project-coordinator.md.
@@ -96,7 +98,7 @@ if [[ ! -s "$REPOS_FILE" && ${#new[@]} -eq 0 ]]; then
   new+=("$(repo_root_of "$PWD")")
 fi
 
-mkdir -p "$DIR" "$DIR/inbox/done"
+mkdir -p "$DIR" "$DIR/inbox/done" "$DIR/artifacts"
 touch "$REPOS_FILE" "$DIR/journal.log"
 for r in ${new[@]+"${new[@]}"}; do
   grep -qxF -- "$r" "$REPOS_FILE" || { echo "$r" >>"$REPOS_FILE"; log "project $PROJECT: added $r"; }
