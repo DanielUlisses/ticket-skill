@@ -39,7 +39,10 @@
 #   tk.sh say     <board> <NN> <file>    relay a message to the ticket's agent, verbatim
 #   tk.sh show    <board> <NN> [lines]   the agent's recent output (on request only)
 #   tk.sh answer  <board> <NN> <file>    answer a question the ticket's agent asked (file: JSON {id?, q?, a}):
-#                                        written under the ticket's ## Answers, then sent to a live agent
+#                                        written under the ticket's ## Answers and in the repo's answers
+#                                        ledger (.scratch/answers.md; "scope": "project" in the file marks
+#                                        one that holds for every ticket), then sent to a live agent
+#   tk.sh answers <board> [NN|--all]     the answers ledger: what a ticket of the board is told, or every entry
 #   tk.sh batch   <board> <NN> <batch|none>  put a ticket in a batch (its **Tested in:** line and the
 #                                        batch file's **Tickets:** line), or take it out (none)
 #   tk.sh deployed <board> <NN> ok|red|clear [note]  record a landed ticket's deploy on the board:
@@ -366,7 +369,7 @@ cmd_launch() {
   (( helper )) && args+=(--helper)
   args+=(${doc_args[@]+"${doc_args[@]}"} --effort "$effort" --skills "$skills" "$label" "$branch" "$brief" "$model")
   out="$(mktemp)"
-  set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
+  set +e; TICKET_ANSWERS_FOR="$BOARD_ID#$nn2" "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
   cat "$out"
   if [[ $rc -eq 0 && "${TICKET_DRY_RUN:-0}" == 1 ]]; then
     echo "DRY RUN $nn2 — nothing launched, nothing recorded"
@@ -567,6 +570,12 @@ cmd_resume() {
       echo
       sed -n '/^## Answers$/,$p' "$(jq -r .file <<<"$t")" | tail -n +2
     fi
+    # What other tickets were told (the answers ledger): a resumed conversation
+    # never saw the brief's copy grow.
+    if (( ! respec )) && [[ -n "$(answers_ledger_entries "$BOARD_ID" "$nn")" ]]; then
+      echo
+      answers_ledger_block "$BOARD_ID" "$nn"
+    fi
   } >"$note"
   if (( ! fresh )); then
     transcript="$(ticket_transcript "$wt")"
@@ -586,7 +595,7 @@ cmd_resume() {
   [[ -n "$account" && "$account" != unknown ]] && args+=(--expect-account "$account")
   args+=(--resume --resume-note "$note" --session "$session" ${doc_args[@]+"${doc_args[@]}"} --effort "$effort" --skills "" "$label" "$branch" "$brief" "$model")
   out="$(mktemp)"
-  set +e; "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
+  set +e; TICKET_ANSWERS_FOR="$BOARD_ID#$nn" "$LAUNCHER" "${args[@]}" >"$out" 2>&1; rc=$?; set -e
   cat "$out"
   if [[ $rc -eq 0 && "${TICKET_DRY_RUN:-0}" == 1 ]]; then
     echo "DRY RUN $nn — nothing resumed, nothing recorded"
@@ -1165,14 +1174,16 @@ record_answers() {
     grep -F -- "- **$id** (" "$file" 2>/dev/null | grep -qF -- "${q:0:80}" && continue
     a="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .a' <<<"$qs")"
     at="$(jq -r --arg id "$id" 'map(select(.id == $id)) | first | .at // "" | tostring' <<<"$qs")"
-    append_answer "$file" "$id" "$q" "$a" "${at:-$(date -u +%Y-%m-%dT%H:%MZ)}"
+    at="${at:-$(date -u +%Y-%m-%dT%H:%MZ)}"
+    append_answer "$file" "$id" "$q" "$a" "$at"
+    answers_ledger_append "$BOARD_ID" "$(jq -r .nn <<<"$t")" "$id" "$q" "$a" "$at" ticket
   done < <(jq -r '.[] | select(.a != null and (.a | gsub("\\s"; "") | length) > 0) | .id' <<<"$qs")
 }
 
 cmd_answer() {
-  local usage="usage: tk.sh answer <board> <NN> <answer.json>   ({\"id\": \"q1\", \"a\": \"...\"} or {\"q\": \"...\", \"a\": \"...\"})"
+  local usage="usage: tk.sh answer <board> <NN> <answer.json>   ({\"id\": \"q1\", \"a\": \"...\"} or {\"q\": \"...\", \"a\": \"...\"}; \"scope\": \"project\" when it holds for every ticket of the repo)"
   board_init "${1:-}"; need jq
-  local nn="${2:?$usage}" file="${3:?$usage}" t id q a branch qf qs now status msg
+  local nn="${2:?$usage}" file="${3:?$usage}" t id q a branch qf qs now status msg scope
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
   jq -e 'type == "object" and (.a | type) == "string" and (.a | gsub("\\s"; "") | length) > 0' "$file" >/dev/null 2>&1 \
     || die "the answer file must be JSON with a non-empty a: $usage"
@@ -1187,12 +1198,14 @@ cmd_answer() {
   [[ -n "$q" ]] || die "name the question: an id the agent asked, or q"
   now="$(date -u +%Y-%m-%dT%H:%MZ)"
   append_answer "$(jq -r .file <<<"$t")" "$id" "$q" "$a" "$now"
+  scope="$(jq -r 'if .scope == "project" then "project" else "ticket" end' "$file")"
+  answers_ledger_append "$BOARD_ID" "$nn" "$id" "$q" "$a" "$now" "$scope"
   if [[ -n "$id" ]]; then
     qf="$(questions_file "$branch")"
     jq --arg id "$id" --arg a "$a" --arg at "$now" 'map(if (.id // "" | tostring) == $id then . + {a: $a, at: $at} else . end)' "$qf" >"$qf.tmp" \
       && cat "$qf.tmp" >"$qf" && rm -f "$qf.tmp"   # in place: with the agent user on, $qf is a link to the shared file
   fi
-  echo "WRITTEN under ticket $nn's ## Answers"
+  echo "WRITTEN under ticket $nn's ## Answers and in the answers ledger ($scope)"
   if [[ "$status" != in-progress || -z "$(jq -r '.agent // ""' <<<"$t")" ]]; then
     echo "NOT SENT — ticket $nn is $status with no agent; its launch reads the answer"; return 0
   fi
@@ -1206,6 +1219,17 @@ cmd_answer() {
   msg="$(printf 'The developer answered%s:\n\n> %s\n\n%s\n\nIt is also in the ticket'"'"'s ## Answers. Carry on from where you stopped.' "${id:+ your question $id}" "${q//$'\n'/ }" "$a")"
   herdr agent prompt "$AGENT" "$msg" >/dev/null
   echo "SENT to $AGENT ($AGENT_STATE)"
+}
+
+# The answers ledger (lib/ticket-git-repo.sh): what a ticket of this board would
+# be told, or with --all every entry of the repo.
+cmd_answers() {
+  board_init "${1:-}" allow-empty
+  local entries
+  if [[ "${2:-}" == --all ]]; then entries="$(answers_ledger_entries "$BOARD_ID" "" all)"
+  else entries="$(answers_ledger_entries "$BOARD_ID" "${2:-}")"; fi
+  echo "LEDGER $(answers_ledger_file)"
+  if [[ -n "$entries" ]]; then printf '%s\n' "$entries"; else echo "(no entries)"; fi
 }
 
 cmd_show() {
@@ -2413,7 +2437,9 @@ In the board session (Haiku) — type these as plain messages; there are no slas
   merge everything ready        list what passes every gate, ask once, merge in order
   tell 03 <message>             relay your words to ticket 03's agent, verbatim
   answer 03 q1 <answer>         answer a question 03's agent asked (card: asks: …); written
-                                  under the ticket's ## Answers, then sent to its agent
+                                  under the ticket's ## Answers and in the repo's answers ledger
+                                  (.scratch/answers.md, which every later brief reads), then
+                                  sent to its agent
   ask 03 <question>             the same, as a question
   show 03                       summarise what ticket 03's agent is doing
   resolve 02                    mark a ticket resolved (only if it really landed)
@@ -2456,6 +2482,10 @@ In a shell (aliases: ~/.claude/skills/ticket-aliases.sh, sourced from ~/.bashrc)
   tkuse <board>      set this shell's board (TK_BOARD); tkuse alone shows it
   tkb  [board]       start the board session (opens the tickets tab)
   tkbp [board]       print the board session's claude command, start nothing
+  tkc <project> [repo...]
+                     start the project coordinator session for a project (its folder:
+                     ~/work/.coordinators/<project>); name the repos once. Type `handoff`
+                     in it before closing; --resume continues its last conversation
   tkv  [board] [s]   status board, full-screen, refresh every s seconds (default 30)
   tkvv [board]       status board, printed once
   tkd  [board]       digest: board, agents, git in one read
@@ -2536,7 +2566,7 @@ HELP
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|show|helpers|retro|view|boards|export|batch|deployed|help) "cmd_$verb" "$@" ;;
+  digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|answers|show|helpers|retro|view|boards|export|batch|deployed|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;
   validate) cmd_validate "$@" ;;
   rescope) cmd_rescope "$@" ;;

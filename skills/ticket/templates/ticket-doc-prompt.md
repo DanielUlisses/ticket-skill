@@ -26,6 +26,8 @@ printf '%s\n%s\n' "reviewing r1" "tests=pass criteria=3/4 review=2-blocking" > {
 
 {{PROJECT_MEMORY}}
 
+{{ANSWERS_LEDGER}}
+
 {{RETRO_RESULTS}}
 
 ## Ticket

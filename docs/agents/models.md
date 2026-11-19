@@ -2,7 +2,7 @@
 
 ## Roles and defaults
 
-Twelve roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
+Thirteen roles. One varies per ticket; the rest are fixed per machine. The *why* behind each
 placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 
 | Role | Agent | Default | Varies per ticket? |
@@ -10,6 +10,7 @@ placement is [ADR 0002](../adr/0002-model-tiers-and-agent-roster.md).
 | Implementation | `ticket-implementer` | `opus` @ `medium` | **yes** — the ticket's `**Suggested model:**`/`**Suggested effort:**`, the launch question, the 4th positional and `--effort` |
 | Coordination | the session each launched ticket runs | `opus` @ `low` | no — `TICKET_COORD_MODEL` / `TICKET_COORD_EFFORT` |
 | Board | the board session (`board.sh`) | `haiku` @ `low` | no — `TICKET_BOARD_*` |
+| Project coordination | the project coordinator session (`coordinator.sh`, `tkc <project>`), one per project; see [project-coordinator.md](project-coordinator.md) | `sonnet` @ `medium` | no — `TICKET_PCOORD_*` |
 | Merge conflicts | `ticket-merger`, dispatched by the board | `sonnet` @ `medium` | no — `TICKET_MERGE_*` |
 | Retro | `ticket-retro`, dispatched by the board when it closes | `sonnet` @ `medium` | no — `TICKET_RETRO_*` |
 | Opening PRs | the **Cursor CLI** (`tk.sh pr` → `pr-cursor.sh`, and `tk.sh push` → `pr-cursor.sh --push`, no PR), no Claude model; `ticket-pr-creator` only with `TICKET_PR_RUNNER=claude`, and never for `push` | Cursor's default (`TICKET_PR_CURSOR_MODEL`); the agent `sonnet` @ `low` | no — `TICKET_PR_*` |

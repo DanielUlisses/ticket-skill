@@ -46,6 +46,8 @@
 #   TICKET_MODELS_CONF     (default: <skills-dir>/ticket-models.env) — override the config file path
 #   TICKET_LIB_DIR         — the directory holding the shared ticket-*.sh libraries (default: <skills-dir>)
 #   TICKET_MEMORY_FILE     (default: .scratch/project-memory.md, relative to the main repo root) — per-repo project memory folded into the prompt; absent means the launch is unchanged
+#   TICKET_ANSWERS_FILE    (default: .scratch/answers.md, relative to the main repo root) — the repo's answers ledger (tk.sh answer); the entries that bear on the ticket are folded into the prompt, at most TICKET_ANSWERS_MAX_BYTES (4096) of them
+#   TICKET_ANSWERS_FOR     (<board>#<NN>) — whose brief this is, for picking those entries; tk.sh sets it. Unset: read from the ticket file's path
 #   TICKET_REVIEWR_WAIT    (default: 5) — seconds to wait for the reviewr plugin's auto-opened pane, to close it (the workspace is agent | shell; 0 skips the wait)
 #   TICKET_ACCOUNT         — the claude-acc account this ticket runs on; --account beats it. Unset means inherit whatever the worktree's parent directory is linked to, which writes no link at all. See docs/agents/accounts.md
 #   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
