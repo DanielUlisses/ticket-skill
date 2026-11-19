@@ -30,6 +30,7 @@ tkc <project> [<repo>...]      # coordinator.sh; --print shows the command, --re
 | `state.md` | the handoff: open loops, decisions of the week, what to watch, a queue in progress. Rewritten at each handoff, about 150 lines at most |
 | `journal.log` | one line per event and action, appended, never loaded whole |
 | `inbox/*.json` | one event each, handed over by tk-hub's daemon; the session moves what it handled to `inbox/done/` |
+| `artifacts/` | files the session keeps for the developer (a report, a plan's output), one line on each in `<name>.note`; tk-hub's daemon sends them to the hub's Artifacts page |
 | `.brief.md` | the rendered brief of the last start |
 
 The answers ledger (`<repo>/.scratch/answers.md`, [questions.md](questions.md)) and
