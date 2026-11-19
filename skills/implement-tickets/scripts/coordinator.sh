@@ -13,17 +13,23 @@
 #   repos        the project's main checkouts, one absolute path per line
 #   state.md     the handoff the session rewrites (typing `handoff` in it)
 #   journal.log  one line per event and action, appended
+#   inbox/       one small JSON file per event tk-hub's daemon hands over (an
+#                agent's question, a ticket that needs the developer, a ready
+#                batch); the session moves what it handled to inbox/done/
 # Every start is a fresh conversation that reads state.md; --resume continues
 # the folder's last conversation instead (one cut short by a restart).
 # docs/agents/project-coordinator.md.
 #
-# Usage: coordinator.sh [--print] [--resume] <project> [<repo>...]
+# Usage: coordinator.sh [--print|--json] [--resume] <project> [<repo>...]
 #   <project>  a name for the folder: lowercase letters, digits, . _ -
 #   <repo>     a repo to add to the project: a path, or a name under
 #              $TICKET_WORK_DIR (default ~/work). Kept in the repos file, so
 #              later starts need none. First start with none: the repo this
 #              shell is in.
 #   --print    print the claude command instead of running it
+#   --json     the same for a program (tk-hub's daemon, which starts the session
+#              as a Herdr agent): {"project","dir","prompt","args"}, args being
+#              claude's arguments after the first prompt. Starts nothing
 #   --resume   continue the last conversation of the folder (claude --continue)
 #
 # Optional variables:
@@ -49,11 +55,11 @@ done
 load_ticket_models
 require_valid_effort
 
-usage="usage: coordinator.sh [--print] [--resume] <project> [<repo>...]"
-print=0; resume=0
+usage="usage: coordinator.sh [--print|--json] [--resume] <project> [<repo>...]"
+print=0; resume=0; as_json=0
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
-    --print) print=1 ;; --resume) resume=1 ;;
+    --print) print=1 ;; --resume) resume=1 ;; --json) as_json=1; print=1 ;;
     *) die "unknown option $1 — $usage" ;;
   esac
   shift
@@ -64,6 +70,7 @@ PROJECT="${1:-}"; [[ -n "$PROJECT" ]] || die "$usage"; shift
 SCRIPTS="$SKILL_DIR/scripts"
 LAUNCHER_PATH="$(dirname "$SKILL_DIR")/ticket/scripts/launch.sh"
 need git
+(( ! as_json )) || need jq
 (( print )) || command -v claude >/dev/null || die "claude not found in PATH"
 
 HOME_DIR="${TICKET_PCOORD_HOME:-$HOME/work/.coordinators}"
@@ -89,7 +96,7 @@ if [[ ! -s "$REPOS_FILE" && ${#new[@]} -eq 0 ]]; then
   new+=("$(repo_root_of "$PWD")")
 fi
 
-mkdir -p "$DIR"
+mkdir -p "$DIR" "$DIR/inbox/done"
 touch "$REPOS_FILE" "$DIR/journal.log"
 for r in ${new[@]+"${new[@]}"}; do
   grep -qxF -- "$r" "$REPOS_FILE" || { echo "$r" >>"$REPOS_FILE"; log "project $PROJECT: added $r"; }
@@ -151,6 +158,10 @@ for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
 
 log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS"
+if (( as_json )); then
+  jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" '{project: $project, dir: $dir, prompt: $prompt, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
+  exit 0
+fi
 if (( print )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
 cd "$DIR"
 exec "${cmd[@]}"
