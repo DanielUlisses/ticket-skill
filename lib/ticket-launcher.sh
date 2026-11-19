@@ -387,6 +387,33 @@ $memory"
   fi
 }
 
+# ---- the answers ledger ---------------------------------------------------------
+# Sets ANSWERS_BLOCK (what {{ANSWERS_LEDGER}} becomes) and ANSWERS_STATUS (the
+# summary's ANSWERS_LEDGER= line) from the repo's .scratch/answers.md
+# (answers_ledger_block, lib/ticket-git-repo.sh). The board and the ticket's
+# number come from TICKET_ANSWERS_FOR (<board>#<NN>, set by tk.sh launch and
+# resume, which pass a copy of the ticket), else from the ticket file's path,
+# .scratch/<board>/<NN>-<slug>.md; a file anywhere else gets the project-scope
+# entries only. No ledger, or no entry
+# that bears on the ticket, renders nothing.
+resolve_answers_ledger() {
+  local dir board nn base
+  dir="$(cd "$(dirname "$TICKET_FILE")" 2>/dev/null && pwd)" || dir=""
+  board="${dir#"$ROOT"/.scratch/}"; [[ "$board" != "$dir" ]] || board=""
+  base="$(basename "$TICKET_FILE")"; nn="${base%%-*}"; [[ "$nn" =~ ^[0-9]+$ ]] || nn=""
+  # tk.sh hands the launcher a copy of the ticket (the brief), so it names both.
+  if [[ "${TICKET_ANSWERS_FOR:-}" == *"#"* ]]; then
+    board="${TICKET_ANSWERS_FOR%#*}"; nn="${TICKET_ANSWERS_FOR##*#}"
+  fi
+  ANSWERS_BLOCK="$(answers_ledger_block "$board" "$nn")"
+  if [[ -n "$ANSWERS_BLOCK" ]]; then
+    ANSWERS_STATUS="$(grep -c '^- \*\*' <<<"$ANSWERS_BLOCK") entries ($(answers_ledger_file | sed "s|^$ROOT/||"))"
+    log "answers ledger: $ANSWERS_STATUS"
+  else
+    ANSWERS_STATUS="none"
+  fi
+}
+
 # ---- approved retro lessons (pointers) ---------------------------------------
 # Sets RETRO_BLOCK (what {{RETRO_RESULTS}} becomes) and RETRO_STATUS (the
 # summary's RETRO_RESULTS= line). One pointer line per
@@ -709,7 +736,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD BOARD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
+  for role in COORD BOARD PCOORD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
     var="${role}_EFFORT"
     effort_valid "${!var}" \
       || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
@@ -765,6 +792,7 @@ load_ticket_models() {
   REVIEW_EFFORT="${TICKET_REVIEW_EFFORT:-medium}"
   REVIEW_EFFORT_UNTESTED="${TICKET_REVIEW_EFFORT_UNTESTED:-high}"
   BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
+  PCOORD_MODEL="${TICKET_PCOORD_MODEL:-sonnet}";   PCOORD_EFFORT="${TICKET_PCOORD_EFFORT:-medium}"
   MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
   RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
   PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
@@ -827,6 +855,7 @@ print_launch_defaults() {
   echo "COORDINATOR=$COORD_MODEL @ $COORD_EFFORT (from config — the launched session; the answer above goes to its implementer)"
   # What board.sh starts the board session on.
   echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
+  echo "PROJECT_COORDINATOR=$PCOORD_MODEL @ $PCOORD_EFFORT (from config — the project coordinator session coordinator.sh starts)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
@@ -1229,6 +1258,7 @@ launcher_main() {
 
   resolve_remote_control
   resolve_project_memory
+  resolve_answers_ledger
   resolve_retro_results
   resolve_doc_guidance
   resolve_catalog_skills
@@ -1296,6 +1326,9 @@ launcher_main() {
   fill_prose '{{DOC_GUIDANCE}}' "$DOC_GUIDANCE_BLOCK"
   fill_prose '{{TICKET}}' "$ticket"
   fill_prose '{{PROJECT_MEMORY}}' "$MEMORY_BLOCK"
+  # Last of all, like the memory: developer-written prose, below the ticket's own
+  # placeholder in fill order so nothing in it is taken for one.
+  fill_prose '{{ANSWERS_LEDGER}}' "$ANSWERS_BLOCK"
   printf '%s\n' "$tpl" > "$PROMPT_FILE"
   # A resume sends the note on top of the brief; resume_session (after the
   # account is known) cuts it to the note alone when the conversation resumes.
@@ -1348,6 +1381,7 @@ ACCOUNT=${ACCOUNT_NAME:-?} (${ACCOUNT_ORIGIN:-?}, ${ACCOUNT_CONFIG_DIR:-~/.claud
 AGENT_USER=$(agent_summary)
 START=$( agent_on && echo "herdr agent start … -- <args> → claude shim → sudo -n -u $TKA_USER $TKA_WRAPPER --account ${ACCOUNT_NAME:-default} --cwd $WT -- <args>" || echo "herdr agent start … -- <args> → claude as $(id -un)" )
 PROJECT_MEMORY=$MEMORY_STATUS
+ANSWERS_LEDGER=$ANSWERS_STATUS
 RETRO_RESULTS=$RETRO_STATUS
 REPORT_FILE=${REPORT_FILE:-?}
 PROMPT_FILE=$PROMPT_FILE

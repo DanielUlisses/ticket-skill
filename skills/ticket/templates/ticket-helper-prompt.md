@@ -26,6 +26,8 @@ Write `helping` now, before your first message.
 
 {{PROJECT_MEMORY}}
 
+{{ANSWERS_LEDGER}}
+
 {{RETRO_RESULTS}}
 
 {{DOC_GUIDANCE}}

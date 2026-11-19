@@ -51,3 +51,33 @@ question, so the agent did the work while its card stayed in **needs you** as `a
 
 `tk.sh resume` puts the ticket's `## Answers` in its resume note, because a
 resumed conversation is sent only the note, not the ticket again.
+
+## The ledger
+
+An answer under one ticket's `## Answers` is read by that ticket only, so the next
+ticket's agent asked the same thing again. Every answer is therefore also appended to
+the repo's **answers ledger**, `.scratch/answers.md` in the main checkout (beside project
+memory: gitignored, never committed), by `tk.sh answer` and by `record_answers`:
+
+```
+- **itm-7010#03 q1** (2026-11-18T14:02Z, project) Which subscription is dev?
+  Answer: sub-dev-01
+```
+
+- **Scope.** `"scope": "project"` in the answer file marks an answer that holds for
+  every ticket of the repo (a subscription id, where a secret lives). Anything else is
+  `ticket`. An answer copied from a plain message is `ticket`.
+- **Briefs carry it.** Every launch folds the entries that bear on the ticket into its
+  brief as `## Answers already given` (the `{{ANSWERS_LEDGER}}` placeholder, after
+  project memory): every project-scope entry, and the ticket-scope ones of its own
+  board, newest first, at most `TICKET_ANSWERS_MAX_BYTES` (4096). Its own entries are
+  left out: they are in its `## Answers`. `tk.sh resume` adds the same block to its
+  note. The launch summary says `ANSWERS_LEDGER=<n> entries (…)` or `none`.
+- **Reading it.** `tk.sh answers <board> [NN]` prints what a ticket of the board is
+  told; `--all` prints every entry of the repo.
+- **Fixing it.** The file is the developer's: edit or delete an entry by hand. The same
+  question of the same ticket is written once. `TICKET_ANSWERS_FILE` names another file.
+
+No ledger, or no entry that bears on a ticket, changes nothing in its brief. tk-hub
+matches exact repeats on its side and answers them with the earlier words; a near
+repeat is the [project coordinator](project-coordinator.md)'s call.

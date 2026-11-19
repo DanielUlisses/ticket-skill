@@ -20,6 +20,9 @@ tkuse()  { if [ -n "${1:-}" ]; then export TK_BOARD="$1"; fi; echo "board: ${TK_
 
 # Start the Haiku board session (and its tickets tab): tkb [board]
 tkb()    { "$TK_SCRIPTS/board.sh" "${1:-${TK_BOARD:-}}"; }
+# Start a project's coordinator session, here: tkc <project> [repo...]
+# (--resume continues its last conversation, --print shows the command)
+tkc()    { "$TK_SCRIPTS/coordinator.sh" "$@"; }
 # Print the board session's claude command without starting it: tkbp [board]
 tkbp()   { "$TK_SCRIPTS/board.sh" --print "${1:-${TK_BOARD:-}}"; }
 # The status board, full-screen and refreshing (q quits, r refreshes): tkv [board] [secs]

@@ -95,3 +95,80 @@ run_git_net() {
 # script that resolves a repo can tell whether tickets run as their own user.
 # shellcheck source=lib/ticket-agent.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ticket-agent.sh"
+
+# ---- the answers ledger ---------------------------------------------------------
+# One file per repo, .scratch/answers.md in the MAIN checkout (beside project
+# memory: gitignored, never committed, out of /sweep-tickets' reach): every answer
+# the developer gave on any board of the repo, appended by `tk.sh answer` (and by
+# record_answers, for one that arrived as a plain message). The launcher folds
+# the entries that bear on a ticket into its brief, and `tk.sh resume` into its
+# note, so a second agent doesn't ask what a first one was told.
+# docs/agents/questions.md, The ledger.
+#
+# An entry is two lines, the format append_answer writes under ## Answers with
+# the ticket and the scope added:
+#   - **<board>#<NN> <id>** (<at>, <scope>) <question on one line>
+#     Answer: <answer; later lines indented two spaces>
+# scope is `project` (holds for every ticket of the repo) or `ticket`.
+answers_ledger_file() {
+  local f="${TICKET_ANSWERS_FILE:-.scratch/answers.md}"
+  [[ "$f" == /* ]] || f="$ROOT/$f"
+  echo "$f"
+}
+
+# answers_ledger_append <board> <nn> <id> <question> <answer> <at> [<scope>]
+# Best effort: an unwritable ledger never fails the answer itself. The same
+# question of the same ticket is written once.
+answers_ledger_append() {
+  local board="$1" nn="$2" id="${3:-note}" q="${4//$'\n'/ }" a="$5" at="$6" scope="${7:-ticket}" f
+  [[ "$scope" == project ]] || scope=ticket
+  f="$(answers_ledger_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  if [[ ! -s "$f" ]]; then
+    printf '# Answers ledger\n\nEvery answer the developer gave to an agent'"'"'s question in this repo, oldest first. Written by `tk.sh answer`; read by every ticket launch and resume. Edit by hand to fix or drop an entry.\n' >"$f" 2>/dev/null || return 0
+  fi
+  grep -F -- "- **$board#$nn $id** (" "$f" 2>/dev/null | grep -qF -- "${q:0:80}" && return 0
+  {
+    printf '\n- **%s#%s %s** (%s, %s) %s\n' "$board" "$nn" "$id" "$at" "$scope" "$q"
+    printf '  Answer: %s\n' "${a//$'\n'/$'\n'  }"
+  } >>"$f" 2>/dev/null || true
+}
+
+# answers_ledger_entries <board> <nn> [all]
+# The entries a ticket should know, newest first, cut at TICKET_ANSWERS_MAX_BYTES
+# (default 4096): every project-scope entry, and its own board's ticket-scope
+# ones. Its own ticket's entries are left out (they are under its ## Answers).
+# `all` as the third argument prints the whole ledger's entries instead, uncut.
+answers_ledger_entries() {
+  local board="$1" nn="$2" all="${3:-}" f
+  f="$(answers_ledger_file)"
+  [[ -r "$f" ]] || return 0
+  awk -v board="$board" -v nn="$nn" -v all="$all" -v max="${TICKET_ANSWERS_MAX_BYTES:-4096}" '
+    /^- \*\*/ { n++; head[n] = $0; body[n] = $0; next }
+    n && /^  / { body[n] = body[n] "\n" $0; next }
+    n && /^[[:space:]]*$/ { next }
+    END {
+      for (i = n; i >= 1; i--) {
+        h = head[i]
+        own = (index(h, "- **" board "#" nn " ") == 1)
+        same = (index(h, "- **" board "#") == 1)
+        proj = (h ~ /^- \*\*[^*]*\*\* \([^)]*, project\)/)
+        if (all == "all") keep = 1; else keep = (!own && (proj || same))
+        if (!keep) continue
+        size += length(body[i]) + 1
+        if (all != "all" && size > max && shown) { cut = 1; break }
+        print body[i]; shown++
+      }
+      if (cut) print "(older entries left out: the whole ledger is the file itself)"
+    }' "$f"
+}
+
+# What the prompt's {{ANSWERS_LEDGER}} becomes, and what a resume note carries:
+# empty when no entry bears on the ticket.
+answers_ledger_block() {
+  local entries f
+  entries="$(answers_ledger_entries "$1" "$2")"
+  [[ -n "$entries" ]] || return 0
+  f="$(answers_ledger_file)"
+  printf '## Answers already given\n\nWhat the developer answered to other agents in this repo, newest first, from `%s` in the main checkout. Before you ask a question, look here and in that file: one that is answered is not asked again. Use an answer that fits your ticket and say in your report that you did; where one plainly does not fit, ask, and say why the earlier answer does not apply.\n\n%s\n' "${f#"$ROOT"/}" "$entries"
+}

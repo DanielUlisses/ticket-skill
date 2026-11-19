@@ -29,7 +29,7 @@ Off by default. With the box's agent user on (devboxes' `agent_user: true` write
 
 ### Agent models
 
-Twelve roles, configured once in `config/models.env`: the **implementer**, whose model and effort vary per ticket (its `**Suggested model:**` / `**Suggested effort:**` lines, the launch question, `--effort`); and fixed ones — each ticket's **coordinator** (`opus @ low`), the **reviewer** (`opus @ medium`, `high` for a ticket nothing can test — Seams `None`, e.g. Terragrunt) — or, for a document ticket, the **doc reviewer** (`opus @ medium`) — the Haiku swarm of **testers**, **scouts**, **researchers** and **criteria checkers**, and on the board side the **board** session itself (`haiku @ low`), the **merger** (`sonnet @ medium`), the **PR creator** (`sonnet @ low`) and the **retro** (`sonnet @ medium`). Every launch redefines the `ticket-*` subagents through `claude --agents` with those values, so the `agents/*.md` frontmatter is only a fallback kept in step. See `docs/agents/models.md` for the roster and the checklist for bumping a model, and `docs/adr/0002-model-tiers-and-agent-roster.md` for why each role sits where it does.
+Thirteen roles, configured once in `config/models.env`: the **implementer**, whose model and effort vary per ticket (its `**Suggested model:**` / `**Suggested effort:**` lines, the launch question, `--effort`); and fixed ones — each ticket's **coordinator** (`opus @ low`), the **reviewer** (`opus @ medium`, `high` for a ticket nothing can test — Seams `None`, e.g. Terragrunt) — or, for a document ticket, the **doc reviewer** (`opus @ medium`) — the Haiku swarm of **testers**, **scouts**, **researchers** and **criteria checkers**, and on the board side the **board** session itself (`haiku @ low`), the **project coordinator** session (`sonnet @ medium`, `tkc <project>`; not the per-ticket coordinator), the **merger** (`sonnet @ medium`), the **PR creator** (`sonnet @ low`) and the **retro** (`sonnet @ medium`). Every launch redefines the `ticket-*` subagents through `claude --agents` with those values, so the `agents/*.md` frontmatter is only a fallback kept in step. See `docs/agents/models.md` for the roster and the checklist for bumping a model, and `docs/adr/0002-model-tiers-and-agent-roster.md` for why each role sits where it does.
 
 ### Planner and board sessions
 
@@ -37,7 +37,7 @@ A feature runs in two sessions, not one. `/ticket` is the **planner** — grilli
 
 ### Commands and aliases
 
-`tk.sh help` is the one command reference — what to type in the board session (`help` there prints it verbatim), the status board's keys, and the shell aliases. `install.sh` installs the aliases as `~/.claude/skills/ticket-aliases.sh` (`tkb` start a board, `tkv` watch it, `tkd` digest, `tkr` ready, `tkg` gates, `tks` show, `tkp` open a PR, `tkpu` push without one, `tkuse` set the shell's board, `tkhelp`) and adds one guarded line to `~/.bashrc` to load them — `TICKET_NO_BASHRC=1` skips that, `TICKET_BASHRC` names another rc file.
+`tk.sh help` is the one command reference — what to type in the board session (`help` there prints it verbatim), the status board's keys, and the shell aliases. `install.sh` installs the aliases as `~/.claude/skills/ticket-aliases.sh` (`tkb` start a board, `tkv` watch it, `tkd` digest, `tkr` ready, `tkg` gates, `tks` show, `tkp` open a PR, `tkpu` push without one, `tkc` start a project coordinator, `tkuse` set the shell's board, `tkhelp`) and adds one guarded line to `~/.bashrc` to load them — `TICKET_NO_BASHRC=1` skips that, `TICKET_BASHRC` names another rc file.
 
 ### Document tickets
 
@@ -74,6 +74,14 @@ Tickets carry `**Provides:**` / `**Consumes:**` lines (`<kind> <name>` items, `;
 ### Questions
 
 An agent that needs something only the developer has (a value, which repo, a scope call) writes it to its `{{QUESTIONS_FILE}}` (`[{id, q, blocks}]`) instead of guessing; a blocking one stops it and its card moves to **needs you** as `asks: …`. `tk.sh answer <board> <NN> <answer.json>` writes the answer under the ticket's `## Answers` (so every later launch, resume and rescope reads it), marks the question answered and sends it to a live agent; an answer that reaches the agent as a plain message instead (`tk.sh say`, a card, its own session) is marked by the agent in that file, and `tk.sh digest` / `resume` copy it under `## Answers`; `tk.sh export` carries each ticket's `questions` for tk-hub. Never a secret's value: the agent asks where it lives. See `docs/agents/questions.md`.
+
+### Answers ledger
+
+Every answer (`tk.sh answer`, or one `record_answers` copies from a plain message) is also appended to the repo's `.scratch/answers.md` (gitignored, main checkout), with its ticket and a scope: `"scope": "project"` in the answer file for one that holds for every ticket, else `ticket`. Every launch folds the project-scope entries and its own board's into the brief (`{{ANSWERS_LEDGER}}`, at most `TICKET_ANSWERS_MAX_BYTES`), `tk.sh resume` into its note, and `tk.sh answers <board> [NN|--all]` prints them. The helpers are in `lib/ticket-git-repo.sh`. See `docs/agents/questions.md`, The ledger.
+
+### Project coordinator
+
+`tkc <project> [repo...]` (`skills/implement-tickets/scripts/coordinator.sh`) starts one Claude Code session per project in `~/work/.coordinators/<project>/`, the project's main checkouts added with `--add-dir`, on `TICKET_PCOORD_*`, with `templates/project-coordinator-prompt.md` as its brief. It answers an agent's question when it can cite the source (the ledger, project memory, the spec), brings new ones to the developer, holds go/no-go, scope and secrets for him, launches and resumes inside the policy, writes and rescopes tickets, and merges (a queue too, conflicts through `ticket-merger`) only on his word, script first and gates kept. The session is disposable: `handoff` rewrites `state.md`, the next start reads it (`--resume` continues a conversation cut short). Not the per-ticket coordinator. See `docs/agents/project-coordinator.md`.
 
 ### My tickets
 
