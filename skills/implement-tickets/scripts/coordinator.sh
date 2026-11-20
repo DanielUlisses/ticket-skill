@@ -15,7 +15,10 @@
 #   journal.log  one line per event and action, appended
 #   inbox/       one small JSON file per event tk-hub's daemon hands over (an
 #                agent's question, a ticket that needs the developer, a ready
-#                batch); the session moves what it handled to inbox/done/
+#                batch); the session moves what it handled to inbox/done/. It
+#                hears of them through coordinator-inbox.sh: a watcher it runs in
+#                the background, and a hook on each of the developer's messages
+#                (.settings.json here), so nothing is typed into its terminal
 #   artifacts/   files the session keeps for the developer (a report, a plan's
 #                output); tk-hub's daemon sends them to the hub's Artifacts page
 # Every start is a fresh conversation that reads state.md; --resume continues
@@ -72,7 +75,7 @@ PROJECT="${1:-}"; [[ -n "$PROJECT" ]] || die "$usage"; shift
 SCRIPTS="$SKILL_DIR/scripts"
 LAUNCHER_PATH="$(dirname "$SKILL_DIR")/ticket/scripts/launch.sh"
 need git
-(( ! as_json )) || need jq
+need jq
 (( print )) || command -v claude >/dev/null || die "claude not found in PATH"
 
 HOME_DIR="${TICKET_PCOORD_HOME:-$HOME/work/.coordinators}"
@@ -141,23 +144,30 @@ tpl="${tpl//'{{PROJECT}}'/"$PROJECT"}"
 tpl="${tpl//'{{DIR}}'/"$DIR"}"
 tpl="${tpl//'{{TK}}'/"$SCRIPTS/tk.sh"}"
 tpl="${tpl//'{{MERGER}}'/"$SCRIPTS/merge-conflict.sh"}"
+tpl="${tpl//'{{INBOX}}'/"$SCRIPTS/coordinator-inbox.sh"}"
 fill_prose '{{REPOS}}' "${repo_lines%$'\n'}"
 printf '%s\n' "$tpl" >"$PROMPT"
+
+# Each message the developer sends carries the inbox events still untold.
+SETTINGS="$DIR/.settings.json"
+jq -n --arg cmd "$(printf '%q hook %q' "$SCRIPTS/coordinator-inbox.sh" "$DIR")" \
+  '{hooks: {UserPromptSubmit: [{hooks: [{type: "command", command: $cmd, timeout: 10}]}]}}' >"$SETTINGS"
 
 build_session_agents ticket-merger ticket-pr-creator ticket-scout ticket-researcher
 
 first="Start as the project coordinator of ${PROJECT}: follow 'Every start' in your instructions."
-(( resume )) && first="You were restarted. Read state.md and journal.log's last lines, run the digests again, and carry on: tell me only what changed."
+(( resume )) && first="You were restarted. Read state.md and journal.log's last lines, run the digests again, start the inbox watcher again, and carry on: tell me only what changed."
 cmd=(claude "$first"
      --model "$PCOORD_MODEL" --effort "$PCOORD_EFFORT"
      --strict-mcp-config
+     --settings "$SETTINGS"
      --append-system-prompt-file "$PROMPT")
 (( resume )) && cmd+=(--continue)
 [[ -n "${TICKET_PCOORD_AUTOCOMPACT:-}" ]] && cmd+=(--autocompact "$TICKET_PCOORD_AUTOCOMPACT")
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # Its own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)")
 
 log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS"
 if (( as_json )); then
