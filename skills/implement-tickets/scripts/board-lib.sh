@@ -885,6 +885,16 @@ strip_attribution() {
     | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}'
 }
 
+# ---- internal ticket numbers -------------------------------------------------------
+# A board's ticket numbers are ours: the commit message, PR title and PR body reach
+# the client, who knows the Jira id and the PRs and commits, never "ticket 05".
+# Prints each line of <file> that names one — ticket 05, tickets 04 and 05,
+# ticket #5, Ticket-05 — and nothing for a clean file. A Jira key (ITM-7012) is
+# not a match, nor a number of four digits or more.
+internal_ticket_refs() {
+  grep -iE '(^|[^[:alnum:]_])tickets?[[:space:]]*[-#:]?[[:space:]]*(no\.?[[:space:]]*)?[0-9]{1,3}([^[:alnum:]]|$)' "$1" || true
+}
+
 # The installed ticket-models.env (or the repo's config/models.env when run from
 # a checkout); every value in it defers to the environment.
 load_models_env() {

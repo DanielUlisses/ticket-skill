@@ -20,8 +20,12 @@ without force.
      the skill's content into the template's headings. Neither: summary, how it was verified,
      merge risk. Take the verification from the ticket's `REPORT` — the checks it ran and what they
      printed — and never claim a check that isn't in it.
-   - Name the `PARENT` Jira id where `check` printed one, and the ticket number. The board
-     resolves the ticket itself on merge, so nothing in the body needs to close anything.
+   - Name the `PARENT` Jira id where `check` printed one. The board resolves the ticket itself on
+     merge, so nothing in the body needs to close anything.
+   - **No internal ticket numbers.** The client reads the title, body and commit message, and has
+     never seen this board's numbers: never write "ticket 05", "tickets 04 and 05", "(from 04)".
+     The ticket and its report use them; where one points at earlier work, name that work's PR
+     number, merge commit or Jira id as they give it, or say in plain words what it did.
    - `FORGE` says where the PR opens — GitHub or Azure DevOps; `pr-open.sh` does either. On Azure
      DevOps the description is plain Markdown capped at 4000 characters: keep the body under it
      (anything longer is cut with a note), and don't use GitHub-only syntax such as `Closes #N`.
@@ -34,7 +38,8 @@ without force.
 5. Write the message, the body and the paths to files under `/tmp`, then
    `pr-open.sh open <board> <NN> --title "<title>" --message-file <f> --body-file <f> --paths-file <f>`.
    Give that Bash call a 300000 ms timeout: it pushes and calls the forge, each limited to 90 s.
-   It prints `STEP` lines as it goes. If it stops on a push or forge error — a timeout means a
+   If it refuses because a text names an internal ticket number, nothing was committed: rewrite
+   the lines it quotes and run `open` again. It prints `STEP` lines as it goes. If it stops on a push or forge error — a timeout means a
    sign-in it can't ask for — **stop and return that error as printed**; don't retry. The commit
    stands; once the developer has signed in, the retry is `open` with an empty `--paths-file`.
 

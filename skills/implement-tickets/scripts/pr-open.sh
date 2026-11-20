@@ -142,6 +142,14 @@ commit_and_push() {
   esac
 }
 
+# What lands names the Jira id and upstream PRs or commits, never the board's own
+# ticket numbers (internal_ticket_refs, board-lib.sh): the client reads it.
+refuse_ticket_refs() {
+  local refs; refs="$(internal_ticket_refs "$2")"
+  [[ -z "$refs" ]] || die "the $1 names an internal ticket number — the client reads it, so name the Jira id (PARENT) and the PR or merge commit of earlier work instead, then run this again. Nothing was committed. It says:
+$(sed 's/^/  /' <<<"$refs")"
+}
+
 print_left() { [[ -z "$LEFT" ]] || { echo "LEFT UNCOMMITTED (not named):"; sed 's/^/  /' <<<"$LEFT"; }; }
 
 case "$verb" in
@@ -190,6 +198,9 @@ case "$verb" in
     strip_attribution "$msg" >"$clean/msg"; strip_attribution "$body" >"$clean/body"
     msg="$clean/msg"; body="$clean/body"
     [[ -s "$msg" && -s "$body" ]] || die "the commit message or PR body is empty once attribution lines are removed"
+    printf '%s\n' "$title" >"$clean/title"
+    refuse_ticket_refs "PR title" "$clean/title"; refuse_ticket_refs "commit message" "$msg"
+    refuse_ticket_refs "PR body" "$body"
     preflight
     commit_and_push "$msg" "$paths" "ask for the PR again — run open with an empty --paths-file, since the commit is already made"
     echo "STEP pushed — opening the PR on $(forge_name)" >&2
@@ -213,6 +224,7 @@ case "$verb" in
       # grep selects nothing from a message that is all attribution; the check below says so.
       strip_attribution "$msg" >"$clean/msg" || true
       [[ -s "$clean/msg" ]] || die "the commit message is empty once attribution lines are removed"
+      refuse_ticket_refs "commit message" "$clean/msg"
     fi
     preflight
     if (( LOCAL )); then

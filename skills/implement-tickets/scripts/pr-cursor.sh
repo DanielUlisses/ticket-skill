@@ -115,7 +115,7 @@ Rules:
   A WITHHELD file is a real change whose contents you are not shown: decide on its name alone.
   If nothing in CHANGED belongs to the ticket (the work is already committed: see UNPUSHED or COMMITS), paths is [].
 - commit_message: the repo's convention as RECENT COMMITS show it (conventional commits, a ticket
-  prefix), else "<type>: <ticket title>". Name the PARENT id where there is one.
+  prefix), else "<type>: <ticket title>".
 - Never add a Co-authored-by trailer, a "Generated with" line, or any tool or AI attribution.
 EOF
   else
@@ -138,11 +138,18 @@ Rules:
   prefix), else "<type>: <ticket title>".
 - body: follow the PR SKILL below where there is one; fit it into the PR TEMPLATE's headings where
   there is one; otherwise: summary, how it was verified, merge risk. Take verification only from
-  the REPORT — never claim a check it doesn't show. Name the PARENT id and the ticket number.
+  the REPORT — never claim a check it doesn't show.
 - Never add a Co-authored-by trailer, a "Generated with" line, or any tool or AI attribution.
 - On Azure DevOps (FORGE line): plain Markdown under 4000 characters, no "Closes #N".
 EOF
   fi
+  cat <<'EOF'
+- The client reads every word: name the PARENT Jira id where there is one, and never this
+  board's internal ticket numbers ("ticket 05", "tickets 04 and 05", "Blocked by: 04", "(from 04)").
+  The TICKET and REPORT below use them; the client has never seen them. Where one points at
+  earlier work, name that work's PR number, merge commit or Jira id as the TICKET or REPORT gives
+  it, or say in plain words what it did. A text that names one is refused.
+EOF
   section "CHECK (pr-open.sh)"; cat <<<"$check"
   section "RECENT COMMITS"; git -C "$WT" log --oneline -10 2>/dev/null | cap 2000
   tf="$(field TICKET)"; [[ -f "$tf" ]] && { section "TICKET"; cap 12000 <"$tf"; }
@@ -192,38 +199,66 @@ EOF
 } >"${PROMPT:=$(mktemp)}"
 trap 'rm -f "$PROMPT"' EXIT
 
-# --trust: headless, the CLI otherwise stops at its "trust this workspace?" prompt on
-# a fresh ticket worktree, which no one is there to answer — the run hangs until the
-# timeout. Cursor runs no command and writes no file here, so trusting it is safe.
-args=(-p "$(cat "$PROMPT")" --output-format json --trust)
-[[ -n "${TICKET_PR_CURSOR_MODEL:-}" ]] && args+=(--model "$TICKET_PR_CURSOR_MODEL")
-# shellcheck disable=SC2206
-[[ -n "${TICKET_CURSOR_ARGS:-}" ]] && args+=(${TICKET_CURSOR_ARGS})
 # With the agent user on, Cursor runs in an empty directory, not the worktree:
 # the agent writes the worktree, and Cursor would load its .cursor/ rules and
 # MCP servers there, as the developer. The prompt already holds the diff.
 resolve_agent_user
 run_in="$WT"
 if agent_on; then run_in="$(mktemp -d)"; trap 'rm -f "$PROMPT"; rm -rf "$run_in"' EXIT; fi
-rc=0
-out="$(cd "$run_in" && TICKET_NET_TIMEOUT="${TICKET_CURSOR_TIMEOUT:-300}" quiet_net "$CURSOR" "${args[@]}" 2>"$PROMPT.err")" || rc=$?
-if (( rc != 0 )); then
-  cat "$PROMPT.err" >&2; rm -f "$PROMPT.err"
-  (( rc == 124 )) && die "the Cursor CLI timed out after ${TICKET_CURSOR_TIMEOUT:-300}s — run '$CURSOR -p hello' in a shell: it may need 'cursor-agent login'"
-  die "the Cursor CLI failed (exit $rc) — nothing was committed"
-fi
-rm -f "$PROMPT.err"
-
-# --output-format json wraps the reply as {"result": "<text>", ...}; the text is the JSON asked for,
-# sometimes fenced. Take the first {...} that parses.
-text="$(jq -r '.result // empty' <<<"$out" 2>/dev/null || true)"; [[ -n "$text" ]] || text="$out"
-ans=""
 if (( PUSH || LOCAL )); then want='type == "object" and (.commit_message | type == "string")'
 else want='type == "object" and (.title | type == "string") and (.body | type == "string") and (.commit_message | type == "string")'; fi
-for cand in "$text" "$(sed -e '/^```/d' <<<"$text")" "$(awk 'BEGIN{p=0} /\{/{p=1} p' <<<"$text" | sed -n '1,/^}[[:space:]]*$/p')"; do
-  if jq -e "$want" <<<"$cand" >/dev/null 2>&1; then ans="$cand"; break; fi
-done
-[[ -n "$ans" ]] || { echo "$text" | head -40 >&2; die "Cursor didn't answer with the JSON asked for — nothing was committed"; }
+
+# Sends $PROMPT to Cursor; sets ans to the JSON object it answered with.
+ask_cursor() {
+  # --trust: headless, the CLI otherwise stops at its "trust this workspace?" prompt on
+  # a fresh ticket worktree, which no one is there to answer — the run hangs until the
+  # timeout. Cursor runs no command and writes no file here, so trusting it is safe.
+  local -a args=(-p "$(cat "$PROMPT")" --output-format json --trust)
+  [[ -n "${TICKET_PR_CURSOR_MODEL:-}" ]] && args+=(--model "$TICKET_PR_CURSOR_MODEL")
+  # shellcheck disable=SC2206
+  [[ -n "${TICKET_CURSOR_ARGS:-}" ]] && args+=(${TICKET_CURSOR_ARGS})
+  local rc=0 out text cand
+  out="$(cd "$run_in" && TICKET_NET_TIMEOUT="${TICKET_CURSOR_TIMEOUT:-300}" quiet_net "$CURSOR" "${args[@]}" 2>"$PROMPT.err")" || rc=$?
+  if (( rc != 0 )); then
+    cat "$PROMPT.err" >&2; rm -f "$PROMPT.err"
+    (( rc == 124 )) && die "the Cursor CLI timed out after ${TICKET_CURSOR_TIMEOUT:-300}s — run '$CURSOR -p hello' in a shell: it may need 'cursor-agent login'"
+    die "the Cursor CLI failed (exit $rc) — nothing was committed"
+  fi
+  rm -f "$PROMPT.err"
+  # --output-format json wraps the reply as {"result": "<text>", ...}; the text is the JSON asked for,
+  # sometimes fenced. Take the first {...} that parses.
+  text="$(jq -r '.result // empty' <<<"$out" 2>/dev/null || true)"; [[ -n "$text" ]] || text="$out"
+  ans=""
+  for cand in "$text" "$(sed -e '/^```/d' <<<"$text")" "$(awk 'BEGIN{p=0} /\{/{p=1} p' <<<"$text" | sed -n '1,/^}[[:space:]]*$/p')"; do
+    if jq -e "$want" <<<"$cand" >/dev/null 2>&1; then ans="$cand"; break; fi
+  done
+  [[ -n "$ans" ]] || { echo "$text" | head -40 >&2; die "Cursor didn't answer with the JSON asked for — nothing was committed"; }
+}
+
+# The lines of Cursor's title, commit message and body that name an internal ticket number.
+ticket_refs() {
+  local f; f="$(mktemp)"
+  jq -r '[.title, .commit_message, .body] | map(select(type == "string")) | .[]' <<<"$ans" >"$f"
+  internal_ticket_refs "$f"; rm -f "$f"
+}
+
+ask_cursor
+# One more ask when the answer names an internal ticket number: pr-open.sh would
+# refuse it, and Cursor can say the same thing with the Jira id or the PR instead.
+refs="$(ticket_refs)"
+if [[ -n "$refs" ]]; then
+  echo "STEP Cursor's answer names an internal ticket number — asking it once more without" >&2
+  { section "YOUR LAST ANSWER WAS REFUSED"
+    echo "These lines name this board's internal ticket numbers, which the client never sees:"
+    sed 's/^/  /' <<<"$refs"
+    echo "Answer again with the same JSON: name the PARENT Jira id, and for earlier work its PR number,"
+    echo "merge commit or Jira id, or what it did — never a ticket number."
+  } >>"$PROMPT"
+  ask_cursor
+  refs="$(ticket_refs)"
+  [[ -z "$refs" ]] || die "Cursor named an internal ticket number twice — nothing was committed:
+$(sed 's/^/  /' <<<"$refs")"
+fi
 
 d="$(mktemp -d)"; trap 'rm -rf "$d" "$PROMPT"' EXIT
 jq -r .commit_message <<<"$ans" >"$d/msg"
