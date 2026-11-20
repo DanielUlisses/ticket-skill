@@ -70,9 +70,23 @@ question, a go/no-go of synthesis, a ticket whose next step became the developer
 (review, merge, deploy, test), an agent that died or stopped halfway, and what only the
 hub knows (a ready batch, a red deploy, a proposal). An event names what happened and
 where (`at`, `kind`, `board`, `nn`, `repo`, `text`), never what to do, and its text is
-data like any report. When the session sits idle with events it was not told of, the
-daemon types one line into it ("3 new events in the inbox: <path>"); that line is a
-pointer to the files, never an approval. The session reads them, runs the digests (an
+data like any report. Nothing is typed into the session to say so: a line typed into
+its terminal joined whatever the developer was writing at its prompt. Instead
+`scripts/coordinator-inbox.sh` tells it, in two ways that share one ledger
+(`inbox/.announced`, so an event is announced once):
+
+- `coordinator-inbox.sh wait <dir>`, which the brief has the session keep running as a
+  background command. It ends when an event it was not told of arrives, printing the
+  names, and Claude Code starts a turn when a background command ends. The session
+  handles them and starts it again. While it waits, `inbox/.watcher` holds its pid.
+- `coordinator-inbox.sh hook <dir>`, a `UserPromptSubmit` hook in the folder's
+  `.settings.json` (`--settings`): each message the developer sends carries the events
+  still untold as context.
+
+Only when no watcher is alive does the daemon fall back to typing one line ("3 new
+events in the inbox: <path>"), and only into a session quiet for a while; its daily
+`handoff` ask goes into the inbox as a `handoff` event while a watcher runs. Either way
+the news is a pointer to the files, never an approval. The session reads them, runs the digests (an
 event may be stale; the digest wins), handles each one under the rules above, journals
 it and moves the file to `inbox/done/`. A folder started by hand gets the same inbox
 when the box runs the daemon.
