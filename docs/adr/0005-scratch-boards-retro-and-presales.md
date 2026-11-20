@@ -302,6 +302,14 @@ trailer, no "Generated with" line, no session link. `pr-open.sh` strips them fro
 Cursor's answer or the Claude agent's, so no agent's habit can slip one through; the merger's commit
 uses git's own merge message.
 
+Nor does any of it name the board's **internal ticket numbers**. The client reads the commit message,
+the PR title and the body; "ticket 05" or "(ticket 04, PR 6177)" means nothing to them — the Jira id
+(`PARENT`) and the PRs and commits of earlier work do. Both prompts say so, and `internal_ticket_refs`
+(`board-lib.sh`: "ticket 05", "tickets 04 and 05", "ticket #5", "Ticket-05"; never a Jira key or a
+number of four digits or more) is the guard: `pr-cursor.sh` asks Cursor once more with the lines it
+found, and `pr-open.sh` refuses `open`, `push` and `commit` while the title, message or body names
+one, before anything is staged — so the Claude agent's text is held to it too.
+
 Where the repo has a remote, `tk.sh merge` merges the **PR on the forge** — what the merge button
 does — and the local base is untouched until the developer pulls. The merger's conflict resolution
 merges the base *into the ticket's branch* and pushes that branch; the PR is still merged by
