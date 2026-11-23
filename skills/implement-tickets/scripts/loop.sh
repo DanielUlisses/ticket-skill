@@ -129,6 +129,29 @@ need_runner() { command -v "$RUNNER" >/dev/null 2>&1 || die "the box runner '$RU
 
 # ---- state, from facts ------------------------------------------------------------
 
+# A landed ticket's one stored fact: **Status:** resolved, as tk.sh resolve
+# writes it. Other boards read it (a cross-repo blocker <repo>:<NN>), and only
+# the file can tell them. Written once; true when it wrote the line.
+record_landed() {
+  local t="$1" l="$2" f sha="" line tmp
+  f="$(jq -r .file <<<"$t")"
+  [[ -w "$f" ]] || return 1
+  grep -qE '^\*\*Status:\*\*[[:space:]]*resolved' "$f" && return 1
+  case "$l" in
+    yes:squash:*) sha="${l#yes:squash:}" ;;
+    yes:pr#*) sha="$(forge_merge_commit "${l#yes:pr#}" 2>/dev/null || true)"; [[ -n "$sha" ]] || sha="PR #${l#yes:pr#}" ;;
+    *) sha="$(landed_tip "$(ticket_branch "$t")" 2>/dev/null || true)" ;;
+  esac
+  line="**Status:** resolved — merged into $BASE_BRANCH as ${sha:-?} on $(date +%F)"
+  tmp="$(mktemp)"
+  if grep -q '^\*\*Status:\*\*' "$f"; then
+    awk -v line="$line" '/^\*\*Status:\*\*/ { print line; next } /^\*\*Agent:\*\*/ { next } { print }' "$f" >"$tmp"
+  else
+    awk -v line="$line" '{ print } /^# [0-9]+:/ && !done { print ""; print line; done = 1 }' "$f" >"$tmp"
+  fi
+  cat "$tmp" >"$f"; rm -f "$tmp"
+}
+
 # Does a session that finished its turn still have background subagents? Either
 # fact is enough: Claude Code's footer naming running agents ("↓ to manage"),
 # or a subagent transcript under the session's folder written in the last
@@ -203,7 +226,18 @@ derive() {
   elif [[ "$status" == resolved ]]; then state="done"; why="the ticket says resolved"
   else
     if [[ "$has_branch" == true ]]; then landed_ans="$(landed "$branch" "$(jq -r '.base // ""' <<<"$t")")"; fi
-    if [[ "$landed_ans" == yes* ]]; then state="done"; why="landed (${landed_ans#yes:})"
+    # The runner asks the forge too (status --pr): a PR it saw merged is landed,
+    # whatever git or our own forge call could see from here.
+    if [[ "$landed_ans" != yes* && "$has_branch" == true ]] && command -v "$RUNNER" >/dev/null 2>&1; then
+      local rpr; rpr="$("$RUNNER" status "$sess" --pr 2>/dev/null | jq -c --arg n "$sess" '(.sessions // []) | map(select(.name == $n)) | first | .pr // empty' 2>/dev/null || true)"
+      if [[ -n "$rpr" && "$(jq -r '.state // ""' <<<"$rpr" 2>/dev/null)" == merged ]]; then landed_ans="yes:pr#$(jq -r .number <<<"$rpr")"; fi
+    fi
+    if [[ "$landed_ans" == yes* ]]; then
+      state="done"; why="landed (${landed_ans#yes:})"
+      record_landed "$t" "$landed_ans" && why+="; **Status:** resolved written"
+      if [[ "$alive" == true && "$turn" == assistant_done ]] && ! subagents_running "$rs" "$sess"; then
+        "$RUNNER" stop "$sess" >/dev/null 2>&1 && why+="; its finished session stopped"
+      fi
     elif [[ "$owner" == me ]]; then state=yours; why="**Owner:** me — loop.sh done when he says it is"
     elif [[ -n "$open_blockers" ]]; then state=blocked; why="blocked by $open_blockers"
     elif [[ -n "$elsewhere" ]]; then state=elsewhere; why="$elsewhere"
