@@ -16,7 +16,10 @@
 # and two files the ticket's session writes: its report and its questions.
 #
 # Usage (<board> as tk.sh takes it: a Jira id or slug under .scratch/):
-#   loop.sh adopt   <board>                 mark the board as a short-loop board
+#   loop.sh adopt   <board> [--force]       mark the board as a short-loop board; refused while an old-loop
+#                                           agent (Herdr) still runs one of its tickets
+#   loop.sh take    <board> <NN> [--note f] a ticket the old loop left in its worktree (its agent gone): a
+#                                           new session there, as it stands
 #   loop.sh status  <board> [NN] [--json]   every ticket's state, derived; `next` lists the startable ones
 #   loop.sh start   <board> <NN> [--type feat|fix|...] [--model m] [--effort e] [--note f]
 #                                           worktree + branch from the base, the thread brief, a runner
@@ -231,6 +234,13 @@ derive() {
       elsewhere="the old loop has a worktree for it: $d — finish it there, or remove that worktree to bring it here"; break
     done
   fi
+  # Adopted in place (~/work), the old loop's worktree is this loop's own path,
+  # so neither check above fires: while the old loop's Herdr agent for this
+  # ticket still exists, starting here would put a second agent in its worktree.
+  local oagent; oagent="$(old_agent_live "$t")"
+  if [[ -z "$elsewhere" && "$alive" != true && -n "$oagent" ]]; then
+    elsewhere="the old loop's agent $oagent still runs in Herdr — let it finish, or close it and run loop.sh take $BOARD_ID $nn"
+  fi
   open_blockers="$(jq -r --argjson fin "$DONE" '[.blockers[] | select(IN($fin[]) | not)] + (.xblockers_open // []) | join(",")' <<<"$t")"
 
   if [[ "$status" == dropped ]]; then state=dropped; why="the ticket says dropped"
@@ -296,6 +306,42 @@ derive() {
 # Sets STATES: every ticket derived, in number order. A ticket is derived after
 # the ones it can be blocked by, which on a board are lower numbers; a blocker
 # with a higher number is found done in a second pass.
+# The name of the old loop's Herdr agent for ticket <t> (its **Agent:** line)
+# when Herdr still lists it, else nothing. OLD_AGENTS: agent_states, once per
+# derive_all; outside it, Herdr is asked now. No Herdr, no old agent.
+old_agent_live() {
+  local agent st list="${OLD_AGENTS-}"
+  agent="$(jq -r '.agent // ""' <<<"$1")"
+  [[ -n "$agent" && "$(jq -r .status <<<"$1")" == in-progress ]] || return 0
+  if [[ -z "${OLD_AGENTS+x}" ]]; then
+    command -v herdr >/dev/null 2>&1 || return 0
+    list="$(agent_states 2>/dev/null || true)"
+  fi
+  st="$(awk -F'\t' -v a="$agent" '$1 == a {print $2; exit}' <<<"$list")"
+  [[ -z "$st" ]] || echo "$agent"
+}
+
+# The run-state lines of a ticket this loop starts, as tk.sh's record_run_state
+# writes them, so the old loop can pick it up if the box goes back (tk.sh resume
+# needs **Status:** in-progress and **Branch:**). No **Agent:** line: no Herdr
+# agent runs it, which tk.sh resume reads as gone. Account and Skills stay as
+# the ticket had them.
+record_start() {
+  local t="$1" branch="$2" wt="$3" base="$4" model="$5" effort="$6" f tmp block
+  f="$(jq -r .file <<<"$t")"; tmp="$(mktemp)"
+  block="$(printf '**Status:** in-progress\n**Branch:** %s\n**Base:** %s\n**Model:** %s\n**Effort:** %s\n**Account:** %s\n**Worktree:** %s\n**Skills:** %s' \
+    "$branch" "$base" "$model" "$effort" "$(jq -r '.account // "" | if . == "" then "unknown" else . end' <<<"$t")" "$wt" \
+    "$(jq -r '.skills // [] | if type == "array" then (if length == 0 then "none" else join(",") end) elif . == "" then "none" else . end' <<<"$t")")"
+  awk -v block="$block" '
+    /^\*\*(Status|Branch|Base|Model|Effort|Account|Worktree|Agent|Skills):\*\*/ && !body { next }
+    /^\*\*What to build:\*\*/ || /^## / { body = 1 }
+    !body && /^[[:space:]]*$/ && blank { next }
+    { blank = /^[[:space:]]*$/; print }
+    /^# [0-9]+:/ && !done { print ""; print block; blank = 0; done = 1 }
+    END { exit !done }' "$f" >"$tmp" || { rm -f "$tmp"; die "couldn't record run state in $f — no '# NN:' heading"; }
+  mv "$tmp" "$f"
+}
+
 derive_all() {
   local pass t row rows done_now
   fetch_board_refs >&2
@@ -306,6 +352,10 @@ derive_all() {
       RUNNER_ALL='{"sessions": []}'; RUNNER_FAILED=1
     fi
   fi
+  # The old loop's agents, asked of Herdr once per pass: a ticket whose
+  # **Agent:** is still one of them is the old loop's until it ends.
+  OLD_AGENTS=""
+  command -v herdr >/dev/null 2>&1 && OLD_AGENTS="$(agent_states 2>/dev/null || true)"
   DONE='[]'
   for pass in 1 2; do
     rows=""
@@ -332,10 +382,66 @@ state_of() { jq -c --arg n "$1" 'map(select((.nn | tonumber) == ($n | tonumber))
 # ---- verbs --------------------------------------------------------------------------
 
 cmd_adopt() {
-  board_init "${1:?usage: loop.sh adopt <board>}"
+  local usage="usage: loop.sh adopt <board> [--force]"
+  board_init "${1:?$usage}"
+  local force=0 t nn agent live=() held=()
+  [[ "${2:-}" == --force ]] && force=1
   if is_short_board; then echo "ALREADY $BOARD_ID is a short-loop board"; return 0; fi
+  # Once marked, tk.sh refuses this board (pr, merge, resolve, say, answer…), so
+  # an old-loop agent still running here would be stranded, and this loop would
+  # read its worktree as its own: adopt only when the old loop's agents are gone.
+  if command -v herdr >/dev/null 2>&1; then
+    OLD_AGENTS="$(agent_states)" || die "Herdr didn't answer — can't tell whether the old loop still runs tickets of $BOARD_ID; not adopting"
+  else
+    OLD_AGENTS=""
+  fi
+  while IFS= read -r t; do
+    nn="$(jq -r .nn <<<"$t")"
+    agent="$(old_agent_live "$t")"
+    if [[ -n "$agent" ]]; then live+=("$nn ($agent)")
+    elif [[ "$(jq -r .status <<<"$t")" == in-progress && -n "$(jq -r '.agent // ""' <<<"$t")" ]]; then held+=("$nn")
+    fi
+  done < <(jq -c '.[]' <<<"$BOARD_JSON")
+  if (( ${#live[@]} )) && (( ! force )); then
+    printf 'NOT ADOPTED %s — the old loop still runs: %s\n' "$BOARD_ID" "${live[*]}"
+    echo "Let each finish (its PR open, or resolved), or close its Herdr agent; then adopt again. --force adopts anyway: those agents can no longer open a PR or merge through tk.sh."
+    return 1
+  fi
   printf '%s\n' "$LOOP_MARK" >"$BOARD_PATH/loop"
   echo "ADOPTED $BOARD_ID — tk.sh's acting verbs now refuse it; loop.sh runs it"
+  local n
+  for n in ${held[@]+"${held[@]}"}; do
+    echo "TAKE $n — started by the old loop, its agent gone: loop.sh take $BOARD_ID $n"
+  done
+}
+
+# A ticket the old loop started whose Herdr agent is gone (closed by the
+# developer, or ended): a new session in its worktree as it stands, told what
+# the old one left. The old conversation is not resumed: its brief names the
+# old loop's files and gates, and with the agent user on its transcript lives
+# under another user. Nothing is moved: in place, the old worktree is this
+# loop's own path; one elsewhere stays `elsewhere`.
+cmd_take() {
+  local usage="usage: loop.sh take <board> <NN> [--note f]"
+  local board="${1:?$usage}" nn="${2:?$usage}" note=""; shift 2
+  [[ "${1:-}" == --note ]] && note="${2:?$usage}"
+  loop_init "$board"; need_runner
+  local t agent s state branch tmp
+  t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"
+  [[ "$(jq -r .status <<<"$t")" == in-progress ]] || die "ticket $nn is $(jq -r .status <<<"$t"), not in progress — loop.sh start starts an open one"
+  agent="$(old_agent_live "$t")"
+  [[ -z "$agent" ]] || die "the old loop's agent $agent still runs ticket $nn in Herdr — let it finish, or close it first"
+  derive_all
+  s="$(state_of "$nn")"; state="$(jq -r .state <<<"$s")"
+  [[ "$state" == stopped ]] || die "ticket $nn is $state ($(jq -r .why <<<"$s")) — take is for one the old loop left in its worktree (stopped)"
+  branch="$(jq -r '.branch // ""' <<<"$t")"
+  tmp="$(mktemp)"
+  {
+    echo "The old ticket loop (board session, tk.sh, Herdr) started this ticket${branch:+ on $branch} and was stopped mid-work; this loop takes it over. Its phase, report and coordinator files under the old loop's state are not yours: write only to the report and questions files your instructions name."
+    [[ -n "$note" && -s "$note" ]] && { echo; cat "$note"; }
+  } >"$tmp"
+  "$0" start "$BOARD_ID" "$nn" --note "$tmp"
+  rm -f "$tmp"
 }
 
 cmd_status() {
@@ -511,6 +617,7 @@ cmd_start() {
   fi
   [[ -n "$note" && -s "$note" ]] && first+=$'\n\n'"$(cat "$note")"
   start_session "$sess" "$wt" "$brief" "$first" "$model" "$effort"
+  record_start "$t" "$branch" "$wt" "$base_commit" "$model" "$effort"
   echo "STARTED $nn as $sess on $branch ($wt) — implementer $model @ $effort, reviewer $REVIEW_MODEL"
   echo "REPORT $dir/report.md"
 }
@@ -887,6 +994,6 @@ cmd_watch() {
 
 verb="${1:-}"; shift || true
 case "$verb" in
-  adopt|status|start|resume|say|log|report|answer|pr|merge|done|watch) "cmd_$verb" "$@" ;;
-  *) sed -n '2,52p' "$0"; exit 1 ;;
+  adopt|status|start|take|resume|say|log|report|answer|pr|merge|done|watch) "cmd_$verb" "$@" ;;
+  *) sed -n '2,56p' "$0"; exit 1 ;;
 esac

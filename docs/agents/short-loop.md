@@ -16,6 +16,21 @@ next start carries the short-loop section and may run `loop.sh` without a prompt
 the board back to the old loop; nothing else changes. With tk-hub driving the board, turn its
 `night_shift` off, or the hub keeps trying launches the board refuses.
 
+`adopt` refuses while a ticket's `**Agent:**` is still a Herdr agent (`herdr agent list`): once marked,
+tk.sh would refuse that agent's PR and merge, and in place (`~/work`) its worktree is this loop's own
+path, so the ticket would read `stopped` and a start would put a second agent in it. Let it finish or close
+it, then adopt; `--force` adopts anyway. After `adopt`, and in `status`, a ticket whose old agent still
+runs reads `elsewhere`.
+
+`loop.sh take <board> <NN>` takes over a ticket the old loop left mid-work once its agent is gone: a start
+in its worktree as it stands (the `stopped` path), told that the old loop's phase and report files aren't
+its own. The old conversation is not resumed: its brief names the old loop's files and gates, and with the
+agent user on its transcript is another user's. A ticket in review needs nothing: the loop reads its PR.
+
+`loop.sh start` writes the ticket's run-state lines as `tk.sh` does (`**Status:** in-progress`,
+`**Branch:**`, `**Worktree:**`, …, no `**Agent:**`), so if the board goes back to the old loop,
+`tk.sh resume` reads the ticket as in progress with its agent gone and picks it up.
+
 For the pilot, the board runs in a separate clone with only its files copied in, so an old-loop agent
 can't share a worktree with a new one (`loop.sh` ignores a copied `**Worktree:**` line and works beside
 its own checkout, `../<repo>--<branch>`).

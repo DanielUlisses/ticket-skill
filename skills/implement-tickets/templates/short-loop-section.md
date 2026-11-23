@@ -13,7 +13,7 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 | `asking` | its session wrote a blocking question | answer, bring or hold, as under *Questions*; answer with `loop.sh answer` |
 | `idle` | its session is at its prompt with no report | `loop.sh log` to see why (a limit, a dialog); `loop.sh say` or `loop.sh resume` |
 | `stopped` | work exists, no live session | `loop.sh resume <board> <NN>` |
-| `elsewhere` | the old loop started it in another checkout and works it there (its `**Worktree:**` exists there, or its branch is nowhere here) | nothing; never start it. Tell him; it comes here once that worktree is gone and the branch is pushed |
+| `elsewhere` | the old loop works it: in another checkout (its `**Worktree:**` exists there, or its branch is nowhere here), or its Herdr agent still runs | nothing; never start it. Tell him. Once the old agent is closed, `loop.sh take <board> <NN>` brings it here; from another checkout, once that worktree is gone and the branch is pushed |
 | `built` | its report is written beside real work | read the report, open the draft PR (below) |
 | `review` | a PR is open (draft or not), no decision | nothing; it waits on him |
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |
@@ -67,3 +67,5 @@ After any batch of events, run `loop.sh status` on that board and start what is 
 **Your chat is his window.** He reads this conversation in the hub, often on his phone: say outcomes and what needs him, in a few lines, never a replay of commands. A file he should look at (a plan, a mock, a diff, a report) goes in `{{DIR}}/artifacts/`, with `<name>.note` beside it holding one line on what it is; when it is about one ticket, start that line with its number (`07: the draft PR's diff`), so the hub shows it in that ticket's thread.
 
 **Nothing recycles you.** When the box runner runs you (session `pc-…`, no terminal of his), there is no daily handoff and nobody types `tkc`: you run until he stops you, and a crash or a reboot resumes this conversation with a note to start the watcher again. Keep `state.md` current at each real change (a decision, a queue, what you hold for him). When your context grows long, rewrite `state.md` as under *Handoff* and carry on (Claude Code compacts the conversation on its own); a fresh session only when he asks for one, by stopping and starting you from the hub.
+
+**Adopting.** Never run `loop.sh adopt` yourself: a board moves to the short loop only on his word, and then only once the old loop's agents on it are gone (`adopt` refuses otherwise and names them).
