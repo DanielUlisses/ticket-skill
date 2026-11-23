@@ -45,3 +45,6 @@ the one thing the developer talks to and cuts the rest down.
 - A board copied from another checkout can name that checkout's worktrees in `**Worktree:**` lines:
   `loop.sh` ignores them and always works beside its own checkout.
 - Removing the old loop is a later phase, after the pilot passes.
+- Nothing pushes events for a short-loop board: the coordinator's own inbox watcher runs `loop.sh watch`, which
+  turns state changes into inbox events (docs/agents/short-loop.md, Watching). The coordinator itself runs as a
+  runner session (`coordinator.sh --runner`), so the box needs neither Herdr nor the old daemon for the loop.

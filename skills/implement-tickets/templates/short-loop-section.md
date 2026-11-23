@@ -1,6 +1,6 @@
 ## Short-loop boards: {{SHORT_BOARDS}}
 
-These boards run on the short loop. On them, everything above about `tk.sh` launch, resume, say, answer, pr, push, merge, gates, the merge queue and `ticket-merger` does not apply: `tk.sh` refuses those verbs there. Your tool for them is `{{LOOP}}`, run from the repo it is about (`cd <repo> && loop.sh …`). `tk.sh digest` still reads them, but `loop.sh status` is the truth.
+These boards run on the short loop. On them, everything above about `tk.sh` launch, resume, say, answer, pr, push, merge, gates, the merge queue and `ticket-merger` does not apply: `tk.sh` refuses those verbs there. Your tool for them is `{{LOOP}}`, always as `{{LOOP}} -C <repo> <verb> …` with the repo's main checkout (that one shape runs without a prompt; a `cd <repo> && …` does not). `tk.sh digest` still reads them, but `loop.sh status` is the truth.
 
 There is no board session, no phase file and no stored state. `loop.sh status <board>` derives each ticket's state every time from facts: the ticket file (resolved, dropped, `**Owner:** me`, `Blocked by`), git (branch, worktree, landed), the forge (the PR and its review) and the box runner (is the session alive, is it working).
 
@@ -19,6 +19,8 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |
 | `approved` | he approved the PR | tell him; merge only on his word |
 | `done` / `dropped` | landed, or the ticket says so | nothing |
+
+Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part out.
 
 | Command | Does |
 |---|---|
@@ -42,3 +44,23 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 4. Tell him the link in one line. The PR waits for his review: an approval on the forge, or his word here.
 
 **Merging.** Only when he says so in this chat. `loop.sh merge` refuses without a forge approval; when he opened the PR himself the forge can't take his approval, and then his words here are the approval: pass them with `--his-word`. A refusal (red checks, a conflict, changes requested) goes to him as printed, with what you would do about it.
+
+**Watching.** Nobody else watches these boards for you: while your inbox watcher waits, it runs `loop.sh watch` on each of them every two minutes, and a ticket that moved becomes an event in your inbox like any other (`board`, `nn`, `repo`, `state`, `from`, `text`, `pr`):
+
+| Event | Means | You |
+|---|---|---|
+| `start` | a blocker landed (or a new ticket appeared) and it is `ready` | start it if fewer than `max_parallel` are `working` |
+| `built` | its report is written beside real work | as under *The draft PR is yours* |
+| `question` | its session wrote a blocking question | as under *Questions*; answer with `loop.sh answer` |
+| `idle` | at its prompt with no report, two checks in a row | `loop.sh log`; then `say` or `resume` |
+| `resume` | its session is gone, two checks in a row | `loop.sh resume` it, and tell him only if it dies again |
+| `changes` | he requested changes on the PR | relay them to its session |
+| `fixed` | a new report while its PR is open (a fix round finished) | read it; `loop.sh pr` pushes the fix |
+| `approved` | he approved the PR | tell him; merge only on his word |
+| `landed` | merged, or resolved | nothing; a slot is free |
+
+After any batch of events, run `loop.sh status` on that board and start what is `ready` within `max_parallel`: a freed slot sends no event of its own. On *Every start*, run `loop.sh status` on each short-loop board in place of the digest.
+
+**Your chat is his window.** He reads this conversation in the hub, often on his phone: say outcomes and what needs him, in a few lines, never a replay of commands. A file he should look at (a plan, a mock, a diff, a report) goes in `{{DIR}}/artifacts/`, with `<name>.note` beside it holding one line on what it is; when it is about one ticket, start that line with its number (`07: the draft PR's diff`), so the hub shows it in that ticket's thread.
+
+**Nothing recycles you.** When the box runner runs you (session `pc-…`, no terminal of his), there is no daily handoff and nobody types `tkc`: you run until he stops you, and a crash or a reboot resumes this conversation with a note to start the watcher again. Keep `state.md` current at each real change (a decision, a queue, what you hold for him). When your context grows long, rewrite `state.md` as under *Handoff* and carry on (Claude Code compacts the conversation on its own); a fresh session only when he asks for one, by stopping and starting you from the hub.

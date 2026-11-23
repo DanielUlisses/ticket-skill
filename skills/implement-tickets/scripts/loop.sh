@@ -36,6 +36,11 @@
 #                                           the forge can't record his approval), checks not red, not
 #                                           conflicting; a draft is marked ready, then the forge merges it
 #   loop.sh done    <board> <NN> "<what was done>"   an **Owner:** me ticket (a gate) he says is done
+#   loop.sh watch   <board> --inbox <dir>   for the coordinator's inbox watcher: one event file per ticket
+#                                           that moved (start, built, question, idle, resume, changes, fixed,
+#                                           approved, landed); exit 3 when a lookup failed (nothing recorded)
+#
+# Any verb takes `-C <repo>` first (loop.sh -C <repo> status …): run as if from that checkout.
 #
 # Environment:
 #   TICKET_RUNNER       the box runner (default devbox-run)
@@ -118,10 +123,14 @@ session_name() {
 }
 
 # The runner's status object for one session, or {} when it has none (or no runner).
+# Inside derive_all, one `devbox-run status` call answers every ticket (RUNNER_ALL);
+# RUNNER_FAILED says that call failed, so a watcher can tell "no session" from "no answer".
+RUNNER_ALL=""; RUNNER_FAILED=0
 runner_status() {
   command -v "$RUNNER" >/dev/null 2>&1 || { echo '{}'; return 0; }
   local out
-  out="$("$RUNNER" status "$1" 2>/dev/null)" || { echo '{}'; return 0; }
+  if [[ -n "$RUNNER_ALL" ]]; then out="$RUNNER_ALL"
+  else out="$("$RUNNER" status "$1" 2>/dev/null)" || { echo '{}'; return 0; }; fi
   jq -c --arg n "$1" '(.sessions // []) | map(select(.name == $n)) | first // {}' <<<"$out" 2>/dev/null || echo '{}'
 }
 
@@ -249,6 +258,12 @@ derive_all() {
   local pass t row rows done_now
   fetch_board_refs >&2
   forge_cache_begin
+  RUNNER_ALL=""; RUNNER_FAILED=0
+  if command -v "$RUNNER" >/dev/null 2>&1; then
+    if ! RUNNER_ALL="$("$RUNNER" status 2>/dev/null)" || ! jq -e '.sessions | type == "array"' <<<"$RUNNER_ALL" >/dev/null 2>&1; then
+      RUNNER_ALL='{"sessions": []}'; RUNNER_FAILED=1
+    fi
+  fi
   DONE='[]'
   for pass in 1 2; do
     rows=""
@@ -263,7 +278,11 @@ derive_all() {
     jq -e 'any(.[]; .nn as $n | .blockers | any(tonumber > ($n | tonumber)))' <<<"$BOARD_JSON" >/dev/null || break
     [[ "$pass" == 1 ]] && DONE="$done_now"
   done
+  # A forge listing that failed reads as "no PR" everywhere: say so for watch.
+  FORGE_FAILED=0
+  compgen -G "$FORGE_CACHE/*.err" >/dev/null && FORGE_FAILED=1
   forge_cache_end
+  RUNNER_ALL=""
 }
 
 state_of() { jq -c --arg n "$1" 'map(select((.nn | tonumber) == ($n | tonumber))) | first // empty' <<<"$STATES"; }
@@ -645,8 +664,95 @@ cmd_done() {
   echo "RESOLVED $(jq -r .nn <<<"$t") — $what"
 }
 
+# -C <repo>: run as if from that checkout, so one allowed command shape
+# (`loop.sh -C <repo> …`) serves every repo of a project.
+if [[ "${1:-}" == -C ]]; then
+  cd "${2:?usage: loop.sh -C <repo> <verb> ...}" || die "no such checkout: $2"; shift 2
+fi
+# ---- watch: news for the project coordinator ----------------------------------------
+
+# loop.sh watch <board> --inbox <dir>: derive every ticket, compare with what the
+# last pass saw, and drop one JSON event per change the coordinator acts on into
+# <dir>/inbox/ (coordinator-inbox.sh announces them). seen.json is a notification
+# cursor, not ticket state: delete it and the next pass only records again.
+#
+# A pass whose runner or forge lookup failed records nothing and sends nothing,
+# since a failed lookup reads as "no session" or "no PR". idle and stopped must
+# hold for two passes in a row before they are news (a subagent's quiet spell, a
+# reboot the boot unit is already resuming). The first pass on a board records only.
+cmd_watch() {
+  local usage="usage: loop.sh watch <board> --inbox <dir>"
+  local board="${1:?$usage}" inbox=""; shift
+  [[ "${1:-}" == --inbox ]] && inbox="${2:?$usage}"
+  [[ -n "$inbox" && -d "$inbox" ]] || die "$usage (an existing inbox directory)"
+  loop_init "$board"
+  local sd; sd="$(board_state_dir)/loop/$BOARD_SLUG"; mkdir -p "$sd"
+  exec 9>"$sd/watch.lock"
+  flock -n 9 || { echo "BUSY another watch of $BOARD_ID is running"; return 0; }
+  derive_all 2>/dev/null
+  if (( RUNNER_FAILED || FORGE_FAILED )); then
+    echo "SKIPPED $BOARD_ID — the $( (( RUNNER_FAILED )) && echo runner || echo forge ) lookup failed; nothing recorded"
+    return 3
+  fi
+  local seen='null'
+  [[ -s "$sd/seen.json" ]] && seen="$(jq -c . "$sd/seen.json" 2>/dev/null || echo null)"
+  local now; now="$(jq -c '[.[] | {nn, state, why, title, report, reported, questions, open_questions, pr: (.pr.url // null)}]' <<<"$STATES")"
+  # Each report's mtime: a new report under an open PR is a fix round finished.
+  local rows="" row rf mt
+  while IFS= read -r row; do
+    rf="$(jq -r .report <<<"$row")"; mt=0
+    [[ "$(jq -r .reported <<<"$row")" == true && -f "$rf" ]] && mt="$(stat -c %Y "$rf" 2>/dev/null || echo 0)"
+    rows+="$(jq -c --argjson mt "$mt" '. + {report_at: $mt}' <<<"$row")"$'\n'
+  done < <(jq -c '.[]' <<<"$now")
+  now="$(jq -s . <<<"$rows")"
+  local out
+  out="$(jq -n --argjson seen "$seen" --argjson now "$now" --arg board "$BOARD_ID" --arg repo "$REPO_NAME" '
+    def confirm: IN("idle", "stopped");
+    def kind($from; $to):
+      if $to == "ready" and ($from == "blocked" or $from == null) then "start"
+      elif $to == "built" then "built"
+      elif $to == "idle" then "idle"
+      elif $to == "stopped" and ($from | IN("working", "idle", "asking", "built")) then "resume"
+      elif $to == "changes" then "changes"
+      elif $to == "approved" then "approved"
+      elif $to == "done" and $from != "dropped" and $from != null then "landed"
+      else null end;
+    ($seen == null) as $first
+    | reduce $now[] as $t ({seen: {}, events: []};
+        ($seen.tickets[$t.nn] // null) as $old
+        | ($old.state // null) as $from
+        # idle/stopped: news only on the second pass in a row.
+        | (($t.state | confirm) and $t.state != $from and ($old.pending // null) != $t.state) as $hold
+        | .seen[$t.nn] = (if $hold then ($old // {}) + {pending: $t.state}
+                          else {state: $t.state, report_at: $t.report_at, open_questions: $t.open_questions, pending: null} end)
+        | if $first or $hold then . else
+            (if $t.state != $from then kind($from; $t.state) else null end) as $k
+            | ([if $k then {kind: $k, text: $t.why} else empty end]
+               + [if $old != null and $t.open_questions > ($old.open_questions // 0)
+                  then {kind: "question", text: "\($t.open_questions) blocking question(s) in \($t.questions)"} else empty end]
+               + [if ($t.state | IN("changes", "review", "built")) and $t.state == $from
+                     and ($old.report_at // 0) > 0 and $t.report_at > $old.report_at
+                  then {kind: (if $t.state == "built" then "built" else "fixed" end),
+                        text: "a new report: \($t.report)\(if $t.state == "built" then "" else " — read it; loop.sh pr pushes the fix to the open PR" end)"}
+                  else empty end]) as $evs
+            | .events += [$evs[] | . + {board: $board, repo: $repo, nn: $t.nn, title: $t.title, state: $t.state, from: $from, pr: $t.pr}]
+          end)
+    | {seen: {tickets: .seen}, events: .events}')" || die "watch: could not compare states"
+  local at n=0 ev f
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  while IFS= read -r ev; do
+    [[ -n "$ev" ]] || continue
+    f="$inbox/$(date -u +%Y%m%dT%H%M%S)-${BOARD_SLUG}-$(jq -r .nn <<<"$ev")-$(jq -r .kind <<<"$ev").json"
+    jq --arg at "$at" '{at: $at} + .' <<<"$ev" >"$f.tmp" && mv "$f.tmp" "$f"
+    n=$((n + 1))
+  done < <(jq -c '.events[]' <<<"$out")
+  jq '.seen' <<<"$out" >"$sd/seen.json.tmp" && mv "$sd/seen.json.tmp" "$sd/seen.json"
+  if [[ "$seen" == null ]]; then echo "RECORDED $BOARD_ID — first pass, $(jq length <<<"$now") ticket(s), no events"
+  else echo "WATCHED $BOARD_ID — $n event(s)"; fi
+}
+
 verb="${1:-}"; shift || true
 case "$verb" in
-  adopt|status|start|resume|say|log|report|answer|pr|merge|done) "cmd_$verb" "$@" ;;
-  *) sed -n '2,46p' "$0"; exit 1 ;;
+  adopt|status|start|resume|say|log|report|answer|pr|merge|done|watch) "cmd_$verb" "$@" ;;
+  *) sed -n '2,52p' "$0"; exit 1 ;;
 esac
