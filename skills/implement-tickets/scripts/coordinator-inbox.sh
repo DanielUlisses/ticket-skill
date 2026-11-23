@@ -19,6 +19,12 @@
 #
 # What was announced is kept in <dir>/inbox/.announced (one name per line), so
 # an event is announced once, by whichever comes first.
+#
+# Short-loop boards (loop.sh adopt) have no daemon writing their events: while it
+# waits, the watcher runs `loop.sh watch` on each of them every
+# TICKET_PCOORD_LOOP_POLL_S seconds (default 120), which writes an event into the
+# inbox for each ticket that moved (built, a question, a dead session, a PR
+# approved or sent back, landed, unblocked). docs/agents/short-loop.md, Watching.
 # docs/agents/project-coordinator.md, The inbox.
 set -euo pipefail
 
@@ -31,6 +37,38 @@ ANNOUNCED="$INBOX/.announced"
 WATCHER="$INBOX/.watcher"
 POLL_S="${TICKET_PCOORD_POLL_S:-5}"
 WAIT_S="${TICKET_PCOORD_WAIT_S:-21600}"
+LOOP_POLL_S="${TICKET_PCOORD_LOOP_POLL_S:-120}"
+LOOP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/loop.sh"
+
+# Is a watcher alive for this folder?
+watching() { local p; p="$(cat "$WATCHER" 2>/dev/null)" && [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; }
+
+# Every short-loop board of the folder's repos, as "<repo path>\t<board>".
+short_boards() {
+  local r b
+  [[ -f "$DIR/repos" ]] || return 0
+  while IFS= read -r r; do
+    [[ -n "$r" && -d "$r/.scratch" ]] || continue
+    for b in "$r"/.scratch/*/loop; do
+      [[ -f "$b" && "$(tr -d '[:space:]' <"$b")" == short ]] || continue
+      b="${b%/loop}"; printf '%s\t%s\n' "$r" "${b##*/}"
+    done
+  done <"$DIR/repos"
+}
+
+# loop.sh watch on each short-loop board; a failure goes to journal.log at most
+# once an hour per board, never ends the watcher.
+watch_boards() {
+  local r b out rc stamp
+  while IFS=$'\t' read -r r b; do
+    rc=0; out="$("$LOOP" -C "$r" watch "$b" --inbox "$INBOX" 2>&1)" || rc=$?
+    (( rc == 0 )) && continue
+    stamp="$INBOX/.watch-failed-${b//\//_}"
+    [[ -f "$stamp" && -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]] && continue
+    touch "$stamp"
+    printf '%s loop.sh watch %s (%s) failed: %s\n' "$(date -u +%FT%TZ)" "$b" "${r##*/}" "$(tail -n1 <<<"$out")" >>"$DIR/journal.log"
+  done < <(short_boards)
+}
 
 # The events in the inbox not announced yet, one name per line.
 fresh() {
@@ -60,8 +98,9 @@ case "$mode" in
   wait)
     echo $$ >"$WATCHER"
     trap 'rm -f "$WATCHER"' EXIT
-    waited=0
+    waited=0; next_watch=0
     while :; do
+      if (( waited >= next_watch )); then watch_boards; next_watch=$(( waited + LOOP_POLL_S )); fi
       mapfile -t new < <(fresh)
       if (( ${#new[@]} )); then
         announce "${new[@]}"
@@ -80,9 +119,12 @@ case "$mode" in
   hook)
     cat >/dev/null  # the hook's JSON on stdin: not needed
     mapfile -t new < <(fresh)
-    (( ${#new[@]} )) || exit 0
-    announce "${new[@]}"
-    echo "Waiting in $INBOX (from tk-hub's daemon, not from the developer): ${new[*]}. Handle them as under 'The inbox' after answering him."
+    if (( ${#new[@]} )); then
+      announce "${new[@]}"
+      echo "Waiting in $INBOX (from tk-hub's daemon, not from the developer): ${new[*]}. Handle them as under 'The inbox' after answering him."
+    fi
+    # A restart (a resume, a reboot) ends the background watcher with the old process.
+    watching || echo "The inbox watcher is not running (a restart ends it): after answering him, start it again in the background: $0 wait $DIR"
     ;;
   *) echo "$usage" >&2; exit 2 ;;
 esac

@@ -25,7 +25,7 @@
 # the folder's last conversation instead (one cut short by a restart).
 # docs/agents/project-coordinator.md.
 #
-# Usage: coordinator.sh [--print|--json] [--resume] <project> [<repo>...]
+# Usage: coordinator.sh [--print|--json] [--resume] [--runner] <project> [<repo>...]
 #   <project>  a name for the folder: lowercase letters, digits, . _ -
 #   <repo>     a repo to add to the project: a path, or a name under
 #              $TICKET_WORK_DIR (default ~/work). Kept in the repos file, so
@@ -36,6 +36,15 @@
 #              as a Herdr agent): {"project","dir","prompt","args"}, args being
 #              claude's arguments after the first prompt. Starts nothing
 #   --resume   continue the last conversation of the folder (claude --continue)
+#   --runner   run it through the box runner (devboxes' devbox-run) as session
+#              pc-<project>, detached, instead of in this terminal: a fresh start,
+#              or with --resume the runner's resume of its last conversation (a
+#              note tells it to start the inbox watcher again). Nothing recycles
+#              it. With --json: the arguments for `devbox-run start` (no
+#              --settings: the inbox hook goes in the folder's
+#              .claude/settings.local.json, so the runner's own hooks stay), plus
+#              "session" and "resume_note". docs/agents/short-loop.md, The
+#              coordinator under the runner
 #
 # Optional variables:
 #   TICKET_PCOORD_MODEL / TICKET_PCOORD_EFFORT  (default: sonnet / medium, from ticket-models.env)
@@ -60,11 +69,11 @@ done
 load_ticket_models
 require_valid_effort
 
-usage="usage: coordinator.sh [--print|--json] [--resume] <project> [<repo>...]"
-print=0; resume=0; as_json=0
+usage="usage: coordinator.sh [--print|--json] [--resume] [--runner] <project> [<repo>...]"
+print=0; resume=0; as_json=0; runner=0
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
-    --print) print=1 ;; --resume) resume=1 ;; --json) as_json=1; print=1 ;;
+    --print) print=1 ;; --resume) resume=1 ;; --json) as_json=1; print=1 ;; --runner) runner=1 ;;
     *) die "unknown option $1 — $usage" ;;
   esac
   shift
@@ -77,6 +86,10 @@ LAUNCHER_PATH="$(dirname "$SKILL_DIR")/ticket/scripts/launch.sh"
 need git
 need jq
 (( print )) || command -v claude >/dev/null || die "claude not found in PATH"
+RUNNER="${TICKET_RUNNER:-devbox-run}"
+(( ! runner || print )) || command -v "$RUNNER" >/dev/null || die "the box runner '$RUNNER' isn't installed (devboxes' bin/devbox-run)"
+# The runner's name for it: devbox-run takes letters, digits, _ and -, at most 63.
+SESSION="pc-${PROJECT//./-}"; SESSION="${SESSION:0:63}"
 
 HOME_DIR="${TICKET_PCOORD_HOME:-$HOME/work/.coordinators}"
 DIR="$HOME_DIR/$PROJECT"
@@ -154,12 +167,18 @@ if [[ -n "$short_boards" ]]; then
   sec="$(cat "$SKILL_DIR/templates/short-loop-section.md")"
   sec="${sec//'{{SHORT_BOARDS}}'/"$short_boards"}"
   sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
+  sec="${sec//'{{DIR}}'/"$DIR"}"
   tpl+=$'\n\n'"$sec"
 fi
 printf '%s\n' "$tpl" >"$PROMPT"
 
-# Each message the developer sends carries the inbox events still untold.
+# Each message the developer sends carries the inbox events still untold. Under
+# the runner the hook goes in the folder's own local settings instead of
+# --settings: devbox-run gives a command that passes --settings none of its hooks.
 SETTINGS="$DIR/.settings.json"
+if (( runner )); then
+  SETTINGS="$DIR/.claude/settings.local.json"; mkdir -p "$DIR/.claude"
+fi
 jq -n --arg cmd "$(printf '%q hook %q' "$SCRIPTS/coordinator-inbox.sh" "$DIR")" \
   '{hooks: {UserPromptSubmit: [{hooks: [{type: "command", command: $cmd, timeout: 10}]}]}}' >"$SETTINGS"
 
@@ -167,12 +186,13 @@ build_session_agents ticket-merger ticket-pr-creator ticket-scout ticket-researc
 
 first="Start as the project coordinator of ${PROJECT}: follow 'Every start' in your instructions."
 (( resume )) && first="You were restarted. Read state.md and journal.log's last lines, run the digests again, start the inbox watcher again, and carry on: tell me only what changed."
+resume_note="You were restarted. Read state.md and journal.log's last lines, run the digests (and loop.sh status on short-loop boards) again, start the inbox watcher again in the background, and carry on: tell me only what changed."
 cmd=(claude "$first"
      --model "$PCOORD_MODEL" --effort "$PCOORD_EFFORT"
      --strict-mcp-config
-     --settings "$SETTINGS"
      --append-system-prompt-file "$PROMPT")
-(( resume )) && cmd+=(--continue)
+(( runner )) || cmd+=(--settings "$SETTINGS")
+(( resume && ! runner )) && cmd+=(--continue)
 [[ -n "${TICKET_PCOORD_AUTOCOMPACT:-}" ]] && cmd+=(--autocompact "$TICKET_PCOORD_AUTOCOMPACT")
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
@@ -181,7 +201,26 @@ cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($
 
 log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards}"
 if (( as_json )); then
-  jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" '{project: $project, dir: $dir, prompt: $prompt, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
+  jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" --arg session "$SESSION" --arg note "$resume_note" \
+    '{project: $project, dir: $dir, prompt: $prompt, session: $session, resume_note: $note, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
+  exit 0
+fi
+if (( runner )); then
+  # The runner types the first prompt in once claude is ready (--prompt), and
+  # answers the folder-trust dialog of a new folder (--trust).
+  rcmd=("$RUNNER" start "$SESSION" --dir "$DIR" --prompt "$first" --trust -- claude "${cmd[@]:2}")
+  if (( print )); then printf '%q ' "${rcmd[@]}"; echo; exit 0; fi
+  if "$RUNNER" status "$SESSION" 2>/dev/null | jq -e '.sessions[0].alive == true' >/dev/null 2>&1; then
+    echo "RUNNING $SESSION is already running — devbox-run attach $SESSION to watch it, devbox-run stop $SESSION to end it"
+    exit 0
+  fi
+  if (( resume )) && "$RUNNER" status "$SESSION" >/dev/null 2>&1; then
+    "$RUNNER" resume "$SESSION" --note "$resume_note"
+    echo "RESUMED $SESSION"
+  else
+    "$RUNNER" start "$SESSION" --dir "$DIR" --prompt "$first" --trust -- claude "${cmd[@]:2}" >/dev/null
+    echo "STARTED $SESSION in $DIR"
+  fi
   exit 0
 fi
 if (( print )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
