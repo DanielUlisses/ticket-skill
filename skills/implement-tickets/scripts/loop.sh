@@ -236,7 +236,13 @@ derive() {
   if [[ "$status" == dropped ]]; then state=dropped; why="the ticket says dropped"
   elif [[ "$status" == resolved ]]; then state="done"; why="the ticket says resolved"
   else
-    if [[ "$has_branch" == true ]]; then landed_ans="$(landed "$branch" "$(jq -r '.base // ""' <<<"$t")")"; fi
+    # Asked even with no branch here: a ticket the old loop worked elsewhere
+    # (its branch never fetched, or deleted after the merge) lands by its PR.
+    if [[ "$has_branch" == false && -n "$elsewhere" ]] && (( HAS_REMOTE )); then
+      run_git_net fetch "$REMOTE" "+refs/heads/$branch:refs/remotes/$REMOTE/$branch" --quiet 2>/dev/null \
+        && git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$branch" && has_branch=true
+    fi
+    landed_ans="$(landed "$branch" "$(jq -r '.base // ""' <<<"$t")")"
     # The runner asks the forge too (status --pr): a PR it saw merged is landed,
     # whatever git or our own forge call could see from here.
     if [[ "$landed_ans" != yes* && "$has_branch" == true ]] && command -v "$RUNNER" >/dev/null 2>&1; then
