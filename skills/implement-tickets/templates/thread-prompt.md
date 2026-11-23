@@ -29,6 +29,8 @@ The plan behind this ticket was already settled with the developer before this s
 
 {{TICKET}}
 
+**Wait for your subagents.** Run every subagent in the foreground and stay in your turn until it returns: never dispatch one in the background and end your turn. The project coordinator reads an ended turn with no report as a session that stopped.
+
 ## Phase 0 — Recon (parallel, cheap)
 
 Before anything is written, find out what the implementer will need to know, **in one message with several Agent tool calls** so they run side by side:
