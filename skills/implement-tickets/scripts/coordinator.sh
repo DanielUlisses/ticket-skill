@@ -132,10 +132,14 @@ First start: nothing here yet. Read the boards and build it.
 STATE
 fi
 
-repo_lines=""
+repo_lines=""; short_boards=""
 for r in "${REPOS[@]}"; do
   boards="$(find "$r/.scratch" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f ' 2>/dev/null || true)"
   repo_lines+="- \`$r\` — boards: ${boards:-none yet}"$'\n'
+  # A board marked for the short loop (loop.sh adopt) is run with loop.sh, not tk.sh.
+  for b in $boards; do
+    [[ "$(tr -d '[:space:]' <"$r/.scratch/$b/loop" 2>/dev/null)" == short ]] && short_boards+="${short_boards:+, }\`$b\` ($(basename "$r"))"
+  done
 done
 
 PROMPT="$DIR/.brief.md"
@@ -146,6 +150,12 @@ tpl="${tpl//'{{TK}}'/"$SCRIPTS/tk.sh"}"
 tpl="${tpl//'{{MERGER}}'/"$SCRIPTS/merge-conflict.sh"}"
 tpl="${tpl//'{{INBOX}}'/"$SCRIPTS/coordinator-inbox.sh"}"
 fill_prose '{{REPOS}}' "${repo_lines%$'\n'}"
+if [[ -n "$short_boards" ]]; then
+  sec="$(cat "$SKILL_DIR/templates/short-loop-section.md")"
+  sec="${sec//'{{SHORT_BOARDS}}'/"$short_boards"}"
+  sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
+  tpl+=$'\n\n'"$sec"
+fi
 printf '%s\n' "$tpl" >"$PROMPT"
 
 # Each message the developer sends carries the inbox events still untold.
@@ -167,9 +177,9 @@ cmd=(claude "$first"
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # Its own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)")
 
-log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS"
+log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards}"
 if (( as_json )); then
   jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" '{project: $project, dir: $dir, prompt: $prompt, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
   exit 0

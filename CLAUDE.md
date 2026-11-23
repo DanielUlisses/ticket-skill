@@ -118,6 +118,10 @@ Every coordinator report ends with a `## Test plan`: 3 to 6 steps on the deploye
 
 `tk.sh export` gives every ticket a `next`: its one next step, computed from the row the status board draws (`scripts/next-step.jq`), never stored. `owner` is `agent` (build, review, fix, conflict), `hub` (launch, resume, resolve, pr under `night_shift`, merge under `auto_merge`), `daniel` (review, merge, answer, start/work for an `**Owner:** me` ticket) or `none` (blocked, wait, done); `step` is the word, `since` when the ticket last changed, `reason` one line. tk-hub's Day list is the tickets whose step is the developer's, and the hub adds what only it knows (a park, a ready batch's Test, the Deploy he ticks, a refused resolve). See `docs/agents/next-step.md`.
 
+### Short loop (pilot)
+
+A board marked with `.scratch/<board>/loop` (`short`, written by `loop.sh adopt`) is run by the project coordinator alone with `skills/implement-tickets/scripts/loop.sh`: state derived on each call from the ticket file, git, the forge and the box runner (`devbox-run`, devboxes), never stored; one detached session per ticket (`templates/thread-prompt.md`: scouts, implementer, testers, reviewer; no commits); the coordinator opens a draft PR (`loop.sh pr`, no attribution, no model names) and merges only on the developer's word. `tk.sh`'s acting verbs refuse a marked board, and `coordinator.sh` adds `templates/short-loop-section.md` to its brief when a project has one. See `docs/agents/short-loop.md` and `docs/adr/0012-the-short-loop.md`.
+
 ### OpenSpec (proposed)
 
 Not built. For a repo that does spec-driven development with OpenSpec, the plan is a third ticket kind, `**Kind:** spec`, turned on by the repo policy key `spec: openspec`: `/ticket` writes one OpenSpec change per ticket, the board builds it with our usual brief (tasks ticked, one criteria checker per scenario), a `spec` gate runs `openspec validate --strict`, and the ticket's branch archives the change before the PR. tk-hub needs no change. See `docs/adr/0010-openspec-spec-tickets.md`, which ends with the build order.
