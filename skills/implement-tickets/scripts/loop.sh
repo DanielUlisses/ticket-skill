@@ -369,8 +369,8 @@ render_brief() {
   tpl="${tpl//'{{WORKTREE}}'/"$wt"}"
   tpl="${tpl//'{{BASE_BRANCH}}'/"$BASE_BRANCH"}"
   tpl="${tpl//'{{BASE_COMMIT}}'/"$base_commit"}"
-  tpl="${tpl//'{{REPORT_FILE}}'/"$dir/report.md"}"
-  tpl="${tpl//'{{QUESTIONS_FILE}}'/"$dir/questions.json"}"
+  tpl="${tpl//'{{REPORT_FILE}}'/"${BRIEF_REPORT:-$dir/report.md}"}"
+  tpl="${tpl//'{{QUESTIONS_FILE}}'/"${BRIEF_QUESTIONS:-$dir/questions.json}"}"
   tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
   tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
   tpl="${tpl//'{{REVIEW_EFFORT}}'/"$review_effort"}"
@@ -381,13 +381,17 @@ render_brief() {
   fill_prose '{{PROJECT_MEMORY}}' "${MEMORY_BLOCK:-}"
   fill_prose '{{ANSWERS_LEDGER}}' "$(answers_ledger_block "$BOARD_ID" "$(jq -r .nn <<<"$t")")"
   fill_prose '{{TICKET}}' "$(cat "$file")"
+  fill_prose '{{AGENT_USER_NOTE}}' "$(agent_brief_note)"
   printf '%s\n' "$tpl" >"$dir/brief.md"
 }
 
 # Starts the thread session for one ticket in <wt> through the runner.
 start_session() {
   local sess="$1" wt="$2" brief="$3" first="$4" model="$5" effort="$6"
-  local -a cmd agents_arg=()
+  local -a cmd agents_arg=() as_agent=()
+  # With the box's agent user on, the session runs as that user (the runner's
+  # --agent: sudo and devboxes' wrapper), reading its brief from the shared copy.
+  agent_on && as_agent=(--agent)
   build_session_agents ticket-implementer ticket-reviewer ticket-scout ticket-researcher ticket-tester ticket-criteria-checker
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   cmd=(claude --model "$COORD_MODEL" --effort "$COORD_EFFORT"
@@ -402,7 +406,7 @@ start_session() {
   # The first prompt goes to the runner, not into claude's arguments, so its
   # resume doesn't send it again; --trust answers the folder-trust dialog.
   local pf; pf="$(dirname "$brief")/first-prompt.md"; printf '%s\n' "$first" >"$pf"
-  "$RUNNER" start "$sess" --dir "$wt" --trust --prompt-file "$pf" \
+  "$RUNNER" start "$sess" --dir "$wt" --trust --prompt-file "$pf" ${as_agent[@]+"${as_agent[@]}"} \
     --env "TICKET_IMPL_MODEL=$model" --env "TICKET_IMPL_EFFORT=$effort" -- "${cmd[@]}" >/dev/null
 }
 
@@ -419,9 +423,8 @@ cmd_start() {
   done
   [[ -z "$type" || "$type" =~ ^(feat|fix|refactor|chore|docs|test|perf|ci)$ ]] || die "--type must be one of feat fix refactor chore docs test perf ci"
   loop_init "$board"; need_runner
-  agent_on && die "the agent user is on for this box — the short loop runs sessions as the box user; turn it off for the pilot"
   derive_all
-  local t s state branch wt dir sess base_commit first
+  local t s state branch wt dir sess base_commit first brief
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"; s="$(state_of "$nn")"
   state="$(jq -r .state <<<"$s")"
   [[ "$state" == ready || "$state" == stopped ]] || die "ticket $nn is $state ($(jq -r .why <<<"$s")) — only a ready or stopped ticket starts"
@@ -451,19 +454,42 @@ cmd_start() {
   fi
   base_commit="$(git -C "$wt" merge-base HEAD "$BASE_REF" 2>/dev/null || git -C "$wt" rev-parse HEAD)"
 
-  # A report or questions from an earlier run would read as this run's: keep them aside.
+  # A report or questions from an earlier run would read as this run's: keep
+  # them aside. A copy, not a move: with the agent user on they are links to
+  # the shared copies, which this run reuses.
   local f stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  for f in report.md questions.json; do [[ -e "$dir/$f" ]] && mv "$dir/$f" "$dir/$f.$stamp"; done
-  [[ -f "$dir/questions.json.$stamp" ]] && jq '[.[]? | select((.a // "") != "")]' "$dir/questions.json.$stamp" >"$dir/questions.json" 2>/dev/null || true
+  for f in report.md questions.json; do
+    [[ -e "$dir/$f" ]] && cp -L "$dir/$f" "$dir/$f.$stamp"
+    rm -f "$dir/$f"
+  done
+  if [[ -f "$dir/questions.json.$stamp" ]]; then
+    jq '[.[]? | select((.a // "") != "")]' "$dir/questions.json.$stamp" >"$dir/questions.json" 2>/dev/null || printf '[]' >"$dir/questions.json"
+  fi
 
+  # With the agent user on, the agent can't enter the developer's home: its
+  # brief, report and questions are shared copies (agent_state_file), linked
+  # from these paths, which are the ones this script reads. Each starts as this
+  # run's plain file, which agent_state_file copies over once.
+  BRIEF_REPORT="" BRIEF_QUESTIONS="" brief="$dir/brief.md"
+  if agent_on; then
+    : >"$dir/report.md"
+    [[ -f "$dir/questions.json" ]] || printf '[]' >"$dir/questions.json"
+    BRIEF_REPORT="$(agent_state_file "$dir/report.md")"
+    BRIEF_QUESTIONS="$(agent_state_file "$dir/questions.json" '[]')"
+    rm -f "$dir/brief.md"
+  fi
   render_brief "$t" "$branch" "$wt" "$base_commit" "$dir"
+  if agent_on; then
+    agent_prepare_worktree "$wt"
+    brief="$(agent_state_file "$dir/brief.md")"
+  fi
   WT="$wt"; export WT; trust_worktree_mise || true
   first="Start ticket $nn: follow your instructions from Phase 0."
   if [[ "$state" == stopped ]]; then
     first="Ticket $nn: an earlier session worked in this worktree and stopped. Look at what it left (git status, git diff $base_commit), then carry on from the phase that work reaches; don't redo what is done."
   fi
   [[ -n "$note" && -s "$note" ]] && first+=$'\n\n'"$(cat "$note")"
-  start_session "$sess" "$wt" "$dir/brief.md" "$first" "$model" "$effort"
+  start_session "$sess" "$wt" "$brief" "$first" "$model" "$effort"
   echo "STARTED $nn as $sess on $branch ($wt) — implementer $model @ $effort, reviewer $REVIEW_MODEL"
   echo "REPORT $dir/report.md"
 }
