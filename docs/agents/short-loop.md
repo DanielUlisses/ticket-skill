@@ -29,6 +29,8 @@ brief gets the agent-user note. Off, sessions run as the box user, as before.
 
 ## States
 
+A ticket that has landed (its branch is in the base by git, or a merged PR from it, asked of the forge here and of the runner's `status --pr`) is `done`, and `status` then records the one fact other boards need: `**Status:** resolved — merged into <base> as <sha or PR> on <date>` in the ticket file, as `tk.sh resolve` writes it, because a cross-repo blocker (`<repo>:<NN>`) is read from that line. It also stops the ticket's finished session (`devbox-run stop`), unless that session is still working.
+
 Derived on every call, in this order: `dropped`, `done` (the ticket says resolved, or the branch landed),
 `yours` (`**Owner:** me`), `blocked` (a `Blocked by` ticket not done, cross-board refs included), `elsewhere` (in progress in another checkout: its `**Worktree:**` exists there, or its branch is nowhere here),
 `approved` / `changes` / `review` (an open PR, by its review; GitHub's latest reviews when no rule makes
@@ -39,6 +41,41 @@ with no report), `stopped` (a worktree or branch, no live session), `ready`.
 `loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, running, next, tickets}`;
 each ticket carries its state, why, branch, worktree, session, PR, report and questions paths. It is
 what the new daemon reports to the hub.
+
+## Watching
+
+No daemon writes events for a short-loop board. The coordinator's inbox watcher (`coordinator-inbox.sh wait`)
+runs `loop.sh -C <repo> watch <board> --inbox <folder>/inbox` on each of its project's short-loop boards every
+`TICKET_PCOORD_LOOP_POLL_S` seconds (default 120), and the events land in the inbox like the daemon's. `watch`
+derives every ticket as `status` does and compares with the last pass (`seen.json` beside the tickets' files: a
+notification cursor, not ticket state; deleting it only makes the next pass record again):
+
+| Event | When |
+|---|---|
+| `start` | a ticket becomes `ready` from `blocked`, or a new ticket appears `ready` |
+| `built` | it becomes `built`, or its report is rewritten while `built` |
+| `question` | its count of open blocking questions rises |
+| `idle` | `idle` two passes in a row |
+| `resume` | `stopped` two passes in a row, coming from working, idle, asking or built |
+| `changes`, `approved` | the PR's review says so |
+| `fixed` | a newer report while the PR is in `review` or `changes` |
+| `landed` | `done` from anything but dropped |
+
+The first pass on a board records only. A pass whose `devbox-run status` or forge listing failed records and
+sends nothing (exit 3), since a failed lookup reads as "no session" or "no PR"; the watcher notes a failure in
+`journal.log` at most hourly. One pass per board at a time (`flock`). The runner is asked once per pass for
+every session, not once per ticket.
+
+## The coordinator under the runner
+
+`coordinator.sh --runner <project>` starts the coordinator as the runner session `pc-<project>` in its folder:
+detached, no Herdr, no terminal, the folder-trust dialog answered and the first prompt typed in by the runner.
+`--runner --resume` resumes its conversation with a note to start the inbox watcher again; a reboot brings it
+back through devboxes' `devbox-run-resume.service` (no note: the inbox hook then reminds it, on his next
+message, that the watcher is not running). Nothing recycles it. The inbox hook goes in the folder's
+`.claude/settings.local.json`, not `--settings`, because the runner gives a command that passes its own
+`--settings` none of its hooks (turn, notice, session id after `/clear`). `--json --runner` prints what tk-hub's
+slim daemon needs to start it itself: `{project, dir, prompt, session, resume_note, args}`.
 
 ## Files
 
