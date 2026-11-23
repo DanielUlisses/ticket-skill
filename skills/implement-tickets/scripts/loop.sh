@@ -47,6 +47,8 @@
 #   TICKET_PR_REVIEWER  who reviews the draft PR: a GitHub login or an Azure DevOps user/email.
 #                       Empty: none requested (GitHub refuses a review request from the PR's author)
 #   TICKET_PR_ASSIGNEE  GitHub only, default @me
+#   TICKET_RELAY        the relay between runner sessions (default tk-relay on PATH or in
+#                       ~/.local/bin; none: devbox-run say). say and watch's messages use it
 #   TICKET_LOOP_PERMISSION_MODE  the thread session's --permission-mode (default bypassPermissions,
 #                       as the old launcher's; commit, push and PR commands stay disallowed)
 #
@@ -536,6 +538,31 @@ cmd_resume() {
   "$0" "${a[@]}"
 }
 
+# relay_message <from-session|""> <to-session> <text>: a message between runner
+# sessions goes through tk-relay (the slim daemon's, TICKET_RELAY overrides), so the
+# hub shows it on both threads. tk-relay names the sender from TK_RELAY_FROM, else
+# from the session whose folder holds the cwd: an empty <from> runs it from the
+# caller's own directory (the coordinator's, before -C). Without tk-relay:
+# devbox-run say, with the same first-line envelope when the sender is named.
+# Exit as say's: 5 = not deliverable (a dialog).
+relay_message() {
+  local from="$1" to="$2" text="$3" relay="${TICKET_RELAY:-}"
+  [[ -n "$relay" ]] || relay="$(command -v tk-relay 2>/dev/null || true)"
+  [[ -n "$relay" || ! -x "$HOME/.local/bin/tk-relay" ]] || relay="$HOME/.local/bin/tk-relay"
+  if [[ -n "$relay" && -n "$from" ]]; then
+    printf '%s' "$text" | TK_RELAY_FROM="$from" "$relay" "$to" - >/dev/null 2>&1
+  elif [[ -n "$relay" ]]; then
+    # exit 2: the caller's folder is no runner session's (a shell of the developer's): say it plainly
+    local rc=0; printf '%s' "$text" | (cd "$CALLER_DIR" && "$relay" "$to" -) >/dev/null 2>&1 || rc=$?
+    (( rc == 2 )) || return "$rc"
+    printf '%s' "$text" | "$RUNNER" say "$to" - >/dev/null 2>&1
+  elif [[ -n "$from" ]]; then
+    printf '[relay from %s]\n%s' "$from" "$text" | "$RUNNER" say "$to" - >/dev/null 2>&1
+  else
+    printf '%s' "$text" | "$RUNNER" say "$to" - >/dev/null 2>&1
+  fi
+}
+
 cmd_say() {
   local usage="usage: loop.sh say <board> <NN> <file|->"
   local board="${1:?$usage}" nn="${2:?$usage}" src="${3:?$usage}"
@@ -543,9 +570,10 @@ cmd_say() {
   local sess; sess="$(session_name "$(jq -r .nn <<<"$(ticket_json "$nn")")")"
   [[ "$(jq -r '.alive // false' <<<"$(runner_status "$sess")")" == true ]] || { echo "NOT SENT — $sess isn't running (loop.sh resume)"; return 21; }
   local rc=0
-  if [[ "$src" == - ]]; then "$RUNNER" say "$sess" - >/dev/null || rc=$?; else "$RUNNER" say "$sess" - <"$src" >/dev/null || rc=$?; fi
+  local text; if [[ "$src" == - ]]; then text="$(cat)"; else text="$(cat "$src")"; fi
+  relay_message "${TK_RELAY_FROM:-}" "$sess" "$text" || rc=$?
   (( rc != 5 )) || { echo "NOT SENT — $sess shows a dialog or its pane is dead (loop.sh log)"; return 21; }
-  (( rc == 0 )) || die "devbox-run say failed (exit $rc)"
+  (( rc == 0 )) || die "the relay to $sess failed (exit $rc)"
   echo "SENT to $sess"
 }
 
@@ -600,7 +628,7 @@ cmd_answer() {
     echo "NOT SENT — $sess isn't running; its next start or resume reads the answer"; return 21
   fi
   msg="$(printf 'The developer answered%s:\n\n> %s\n\n%s\n\nIt is also in the ticket'"'"'s ## Answers. Carry on from where you stopped.' "${id:+ your question $id}" "${q//$'\n'/ }" "$a")"
-  "$RUNNER" say "$sess" - <<<"$msg" >/dev/null || { echo "NOT SENT — $sess shows a dialog or its pane is dead; its next resume reads the answer"; return 21; }
+  relay_message "${TK_RELAY_FROM:-}" "$sess" "$msg" || { echo "NOT SENT — $sess shows a dialog or its pane is dead; its next resume reads the answer"; return 21; }
   echo "SENT to $sess"
 }
 
@@ -749,6 +777,7 @@ cmd_done() {
 
 # -C <repo>: run as if from that checkout, so one allowed command shape
 # (`loop.sh -C <repo> …`) serves every repo of a project.
+CALLER_DIR="$PWD"
 if [[ "${1:-}" == -C ]]; then
   cd "${2:?usage: loop.sh -C <repo> <verb> ...}" || die "no such checkout: $2"; shift 2
 fi
@@ -765,11 +794,12 @@ fi
 # reboot the boot unit is already resuming). The first pass on a board records only.
 # Threads talk through the coordinator: each ticket's session appends
 # {to, text} to its messages.json (the brief's "The other threads"); a watch
-# pass delivers the new ones (`devbox-run say` into the target's session, as
-# "From thread NN (<title>): …") and hands every one to the coordinator as a
+# pass delivers the new ones (relay_message from the sender's session: tk-relay,
+# else say under "[relay from <session>]", text "Thread NN (<title>): …") and hands every one to the coordinator as a
 # `message` event. seen.json counts what each file had, so a message goes once;
 # a file shorter than the count (a fresh start) counts from zero. The first pass
 # only counts. Prints <out> with the message events and counts added.
+
 deliver_messages() {
   local seen="$1" out="$2" row nn title mf len prev i m to text tgt sess alive why line rc
   while IFS= read -r row; do
@@ -792,12 +822,11 @@ deliver_messages() {
             sess="$(jq -r .session <<<"$tgt")"; alive="$(jq -r .alive <<<"$tgt")"
             if [[ "$alive" != true ]]; then why="not delivered: $to has no live session ($(jq -r .state <<<"$tgt")) — deliver it when it starts, or answer it yourself"
             else
-              line="From thread $nn ($title): $text"
-              rc=0; printf '%s' "$line" | "$RUNNER" say "$sess" - >/dev/null 2>&1 || rc=$?
+              rc=0; relay_message "$(jq -r .session <<<"$row")" "$sess" "Thread $nn ($title): $text" || rc=$?
               case "$rc" in
                 0) why="delivered to $to" ;;
                 5) why="not delivered: $to's screen shows a dialog — loop.sh say it once that is answered" ;;
-                *) why="not delivered: devbox-run say failed (exit $rc)" ;;
+                *) why="not delivered: the relay failed (exit $rc)" ;;
               esac
             fi
           fi

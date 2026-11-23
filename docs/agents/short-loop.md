@@ -65,8 +65,11 @@ notification cursor, not ticket state; deleting it only makes the next pass reco
 Threads talk to each other through it. Each thread's brief (`templates/thread-prompt.md`, *The other threads*)
 lists the board's other open tickets as it started, and a thread that depends on another appends
 `{"to": "<NN>|coordinator", "text": …}` to its own `messages.json` (beside its report; a shared copy with the agent
-user on). A pass delivers each new entry into the target's session with `devbox-run say`, as
-`From thread NN (<title>): …`, and hands every one to the coordinator as a `message` event saying whether it was
+user on). A pass delivers each new entry into the target's session through `tk-relay` (the slim daemon's,
+`TICKET_RELAY` overrides) with `TK_RELAY_FROM` set to the sender's session, as `Thread NN (<title>): …`, so the hub
+shows it on both threads; without tk-relay it falls back to `devbox-run say` under the same first line,
+`[relay from <session>]`, which only the receiver's thread shows. `loop.sh say` and `answer` relay the same way, the
+sender being the session whose folder the caller runs in (the coordinator's, before `-C`). A pass hands every one to the coordinator as a `message` event saying whether it was
 delivered (a target with no live session, or at a dialog, is not: the coordinator passes it on). `seen.json` counts
 each file's entries, so a message goes once; a fresh start keeps the old file aside and counts from zero. No thread
 ever edits another's worktree.

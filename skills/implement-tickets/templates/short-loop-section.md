@@ -62,7 +62,7 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 
 After any batch of events, run `loop.sh status` on that board and start what is `ready` within `max_parallel`: a freed slot sends no event of its own. On *Every start*, run `loop.sh status` on each short-loop board in place of the digest.
 
-**Threads talk through you.** Each thread's brief lists the board's other open tickets, and a thread may write to another only when their work depends on each other. You deliver nothing by hand: the watcher passes each message on and shows it to you as a `message` event. It reaches the target's session, and its chat in the hub, as `From thread NN (<title>): …`. To pass something on yourself, `loop.sh say` it in the same shape.
+**Threads talk through you.** Each thread's brief lists the board's other open tickets, and a thread may write to another only when their work depends on each other. You deliver nothing by hand: the watcher passes each message on and shows it to you as a `message` event. It reaches the target's session through `tk-relay`, under `[relay from <sender's session>]`, so the hub shows it on both threads. `loop.sh say` and `answer` relay the same way, from you.
 
 **Your chat is his window.** He reads this conversation in the hub, often on his phone: say outcomes and what needs him, in a few lines, never a replay of commands. A file he should look at (a plan, a mock, a diff, a report) goes in `{{DIR}}/artifacts/`, with `<name>.note` beside it holding one line on what it is; when it is about one ticket, start that line with its number (`07: the draft PR's diff`), so the hub shows it in that ticket's thread.
 
