@@ -17,10 +17,12 @@
 #   DOC_TEMPLATE      the template a `--doc` launch renders instead — a board
 #                     ticket whose deliverable is a document (`**Kind:** doc`),
 #                     not code. ADR 0007.
-#                     `--doc-type <ead|tdd|other>` (with `--doc`) fills the
-#                     template's {{DOC_GUIDANCE}}: for ead/tdd, a pointer to the
-#                     installed skill and its validator; for `other`, or a skill
-#                     that isn't installed, nothing — the generic doc brief.
+#                     `--doc-type <ead|tdd|hlr|other>` (with `--doc`) fills the
+#                     template's {{DOC_GUIDANCE}}: for tdd/hlr, the pythian-docs
+#                     document folder, `pdocs check` and `pdocs pdf`; for ead, a
+#                     pointer to the installed skill and its validator; for
+#                     `other`, or a tool that isn't there, nothing — the generic
+#                     doc brief.
 #   HELPER_TEMPLATE   the template a `--helper` launch renders instead — a
 #                     ticket that is the developer's (`**Owner:** me`), opened
 #                     with a helper session the developer drives. With `--doc`
@@ -447,24 +449,27 @@ ${lines%$'\n'}"
 
 # ---- a document ticket's type ------------------------------------------------
 # The doc types a `--doc-type` may name. One list, so the check and the message
-# that names the valid values can't drift apart.
-DOC_TYPES="ead tdd other"
+# that names the valid values can't drift apart. PDOCS_DOC_TYPES are the ones
+# pythian-docs builds (Markdown chapters → PDF); `ead` is still a skill of its own.
+DOC_TYPES="ead tdd hlr other"
+PDOCS_DOC_TYPES="tdd hlr"
 
 # Sets DOC_GUIDANCE_BLOCK (what {{DOC_GUIDANCE}} becomes) and KIND_STATUS (the
-# summary's KIND= line). `ead` and `tdd` are skills of their own, installed
-# beside this one: the brief points the drafter at the skill and its validator.
-# A skill counts as installed only with both its SKILL.md and its
+# summary's KIND= line). `tdd` and `hlr` are pythian-docs types
+# (resolve_pdocs_guidance). `ead` is a skill of its own, installed beside this
+# one: the brief points the drafter at the skill and its validator. A skill
+# counts as installed only with both its SKILL.md and its
 # scripts/check_<type>.py — a directory of the same name holding some other
-# skill (mattpocock's `tdd` is test-driven development, not a design document)
-# would otherwise send the drafter to the wrong rules. Missing means one WARN
-# line and the generic brief, never a refusal: the generic brief still writes
-# the document. TICKET_SKILLS_DIR overrides where to look.
+# skill would otherwise send the drafter to the wrong rules. Missing means one
+# WARN line and the generic brief, never a refusal: the generic brief still
+# writes the document. TICKET_SKILLS_DIR overrides where to look.
 resolve_doc_guidance() {
   DOC_GUIDANCE_BLOCK=""
   if (( ! ${DOC:-0} )); then KIND_STATUS="code"; return 0; fi
   if [[ -z "$DOC_TYPE" ]]; then KIND_STATUS="doc"; return 0; fi
   KIND_STATUS="doc $DOC_TYPE"
   [[ "$DOC_TYPE" == other ]] && return 0
+  if [[ " $PDOCS_DOC_TYPES " == *" $DOC_TYPE "* ]]; then resolve_pdocs_guidance; return 0; fi
   local dir="${TICKET_SKILLS_DIR:-$HOME/.claude/skills}/$DOC_TYPE"
   local check="$dir/scripts/check_${DOC_TYPE}.py"
   if [[ ! -f "$dir/SKILL.md" || ! -f "$check" ]]; then
@@ -489,6 +494,102 @@ The ticket's doc type is **$DOC_TYPE**, and the \`$DOC_TYPE\` skill is installed
   gets its output.
 - Pass the reviewer the skill's path too, so it can check the document against
   the skill's own section rules."
+}
+
+# A pythian-docs document (`tdd`, `hlr`): Markdown chapters and a document.yaml
+# in one document folder, `pdocs check` the validator and `pdocs pdf` the
+# artifact. The checkout is TICKET_PDOCS_DIR (default ~/work/pythian-docs);
+# usable means its `pdocs` script and `types/<type>/document.yaml`, else one WARN
+# and the generic brief. pdocs only builds a folder inside its own checkout
+# (Docker mounts nothing else), so the ticket's repo is meant to be a client
+# repo, `clients/<client>/` made with `pdocs new <client> <type> --git`, whose
+# ../<repo>--<branch> worktree lands in clients/ too; a worktree anywhere else
+# (outside <checkout>/clients/) gets a WARN and the same brief, and its
+# validator will refuse the folder. AGENTS.md is named only where the checkout
+# has one (an older checkout may not: one WARN, the brief starts at README.md).
+# The document folder is <worktree>/<type>/. docs/agents/doc-tickets.md.
+resolve_pdocs_guidance() {
+  local pd="${TICKET_PDOCS_DIR:-$HOME/work/pythian-docs}"
+  if [[ ! -x "$pd/pdocs" || ! -f "$pd/types/$DOC_TYPE/document.yaml" ]]; then
+    echo "WARN doc type '$DOC_TYPE': no pythian-docs checkout with types/$DOC_TYPE at $pd (set TICKET_PDOCS_DIR) — launching with the generic doc brief" >&2
+    KIND_STATUS="doc $DOC_TYPE (pythian-docs missing — generic brief)"
+    return 0
+  fi
+  pd="$(cd "$pd" && pwd -P)"
+  local parent folder="$WT/$DOC_TYPE"
+  parent="$(cd "$(dirname "$ROOT")" 2>/dev/null && pwd -P || dirname "$ROOT")"
+  KIND_STATUS="doc $DOC_TYPE (pythian-docs $pd, folder $folder)"
+  case "$parent/" in
+    "$pd/clients/"*) ;;
+    *) echo "WARN doc type '$DOC_TYPE': the worktree $WT is outside the pythian-docs checkout's clients/ ($pd/clients) — pdocs will refuse to check or build it (make the client repo with \`pdocs new <client> $DOC_TYPE --git\` there)" >&2
+       KIND_STATUS="doc $DOC_TYPE (pythian-docs $pd; worktree outside its clients/ — pdocs can't build it)" ;;
+  esac
+  local rules="\`$pd/AGENTS.md\` first, then
+\`$pd/README.md\`,"
+  if [[ ! -f "$pd/AGENTS.md" ]]; then
+    echo "WARN doc type '$DOC_TYPE': no AGENTS.md in the pythian-docs checkout $pd (git -C \"$pd\" pull) — the brief starts its rules at README.md" >&2
+    rules="\`$pd/README.md\` first, then"
+  fi
+  # Provider terminology: tdd-skill's references/<provider>/ (aws, azure, gcp:
+  # terminology.md, references.md), reference material only, named where it is.
+  local refs="${TICKET_TDD_SKILL_DIR:-$HOME/work/tdd-skill}/references"
+  local refs_line="Provider terminology (how to name a cloud's services) is reference, not a
+  rule any tool checks: tdd-skill's \`references/<provider>/\` is not on this
+  machine (\`$refs\`; set TICKET_TDD_SKILL_DIR), so name services from the
+  ticket's sources."
+  if [[ -d "$refs" ]]; then
+    refs="$(cd "$refs" && pwd -P)"
+    refs_line="Provider terminology (how to name a cloud's services) is reference, not a
+  rule any tool checks: read \`$refs/<provider>/terminology.md\` (and its
+  \`references.md\`, the provider's primary sources) before naming its services."
+  fi
+  DOC_GUIDANCE_BLOCK="## Document type: \`$DOC_TYPE\` (pythian-docs)
+
+The ticket's doc type is **$DOC_TYPE**, built with pythian-docs at \`$pd\`: Markdown
+chapters and one \`document.yaml\` in a document folder, built into a PDF. Its
+rules are the house rules for this document — $rules
+\`$pd/docs/markdown.md\` (callouts, key figures, requirement lists, tables) and
+\`$pd/docs/diagrams.md\`. Every point below is for the drafter — whoever writes
+the document:
+
+- **The document folder is \`$folder\`** — this repo is the client's
+  (\`clients/<client>/\` in pythian-docs), one folder per document type. Where
+  the ticket's \`## Outline\` names another folder in the worktree, that one. If
+  it doesn't exist yet, create it the way \`pdocs new\` would, but here — \`pdocs
+  new\` writes to the main checkout, never this worktree: copy
+  \`$pd/types/$DOC_TYPE/\` to it, replace \`[[TODAY]]\` in its \`document.yaml\` with
+  today's date, make \`assets/\` and \`out/\` in it, and make sure the repo's
+  \`.gitignore\` lists \`out/\`.
+- **The outline becomes chapters.** Each section of the \`## Outline\` is a
+  chapter file \`NN-slug.md\` (an appendix \`A-slug.md\`); the type's stub
+  chapters and their \`<!-- guide: ... -->\` comments are the starting point,
+  renamed, added or deleted to match the outline — the outline wins, and the
+  hand-off says where it departs from the type's stubs. One \`#\` heading per
+  file, \`##\` for subsections, never a number typed in a heading (the file name
+  sets the order). Diagrams are SVG files in \`assets/\`. Every \`[[...]]\` value
+  in \`document.yaml\` is replaced (a value nobody gave — reference,
+  classification, approvers — is a marked assumption); an unknown key is an
+  error. \`built_with\` is written by \`pdocs pdf\` itself: never edit it by
+  hand; its change in the diff is expected.
+- **The validator is \`\"$pd/pdocs\" check \"$folder\"\`**: it lists what is
+  unfinished or broken and exits 1, or exits 0 when the document is clean.
+  \`tests=pass\` only on exit 0. The drafter runs it before handing back and
+  again after every later edit (the humanizer pass, a fix), and whoever runs
+  the ticket's checks runs it too, alongside whatever the ticket's **Seams
+  under test** line names.
+- **The artifact is the PDF**: \`\"$pd/pdocs\" pdf \"$folder\"\` writes
+  \`$folder/out/<Type> - <Customer> - <revision>.pdf\` and prints its path,
+  marked Draft while \`check\` has findings. Build it after the last edit and
+  **read the PDF** (the Read tool opens PDFs) before calling the document done;
+  the hand-off names its path. Never commit the PDF — \`out/\` stays ignored.
+- **Only Markdown and the PDF.** The deliverable is the chapters and the PDF
+  built from them, with no other format and no other renderer.
+- Both commands run in Docker; the first one builds an image (a few minutes),
+  so run the first \`pdocs\` command with a 10-minute timeout. No Docker, or
+  no access to it, is an environment failure: report it, don't work around it.
+- $refs_line
+- Pass \`ticket-doc-reviewer\` the document folder and the PDF's path: it reads
+  the chapters and the built PDF, and gets the \`pdocs check\` output."
 }
 
 # ---- mise trust ---------------------------------------------------------------

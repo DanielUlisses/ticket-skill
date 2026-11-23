@@ -43,7 +43,7 @@ Before anything is written, gather what the drafter will need, **in one message 
 - **`ticket-scout`** (`model: {{SCOUT_MODEL}}`), one per narrow question about this repo — the source material the outline names, earlier documents of the same kind or for the same client, templates, the house structure and tone, how documents are rendered (`Makefile`, `pandoc`, `typst`, a `docs/` build). Where the ticket carries a **Suggested helpers** line, start from it.
 - **`ticket-researcher`** (`model: {{RESEARCH_MODEL}}`), one per external fact the document will rest on — a product's capabilities or limits, a service's pricing, a standard. A *low confidence* answer on something load-bearing is worth one re-ask on a stronger model (`model: sonnet`) before the drafter builds on it.
 
-Each gets one question, the worktree path, and the inviolable rules below. Also settle, from a scout's answer, **the validator**: the command the ticket's **Seams under test** line names (a `check_*.py`, a link or Markdown check, a render), and whether it is there to run.
+Each gets one question, the worktree path, and the inviolable rules below. Also settle, from a scout's answer, **the validator**: the command the ticket's **Seams under test** line names (a `check_*.py`, `pdocs check <folder>`, a link or Markdown check, a render), and whether it is there to run.
 
 ## Phase 1 — Draft (`ticket-implementer`)
 
@@ -54,7 +54,7 @@ Delegate the whole document to `ticket-implementer` (`model: {{IMPL_MODEL}}`) in
 - Phase 0's findings — the facts, with their `path:line` or source, not the scouts' prose;
 - whatever in a **Project memory** section above bears on the document — you are the only one in this workflow who was given it;
 - the approved items from any **Retro results** file named above that bear on it — read the file yourself and pass the items on, not the path alone;
-- where a **Document type** section appears above, what it says: the skill to follow and its validator;
+- where a **Document type** section appears above, what it says: the rules to follow, its validator and, for a pythian-docs type, the document folder and the PDF it builds;
 - the inviolable rules at the end.
 
 Tell it: follow the outline section by section, and the repo's existing templates, structure and tone; every factual claim traces to a source it was given; numbers are shown with how they were reached; and the **unattended rule** — anything the outline and sources don't settle is written as a marked assumption in the text and listed in its summary (where in the document, and what it assumed), never asked. Where the ticket names a validator, it runs it before handing back and reports the command and its output. If the outline is long, it drafts in sections.
@@ -67,7 +67,7 @@ A second `ticket-implementer` call (`model: {{IMPL_MODEL}}`), given the document
 
 ## Phase 3 — Review (`ticket-doc-reviewer`)
 
-`ticket-doc-reviewer` (`model: {{DOC_REVIEW_MODEL}}`), passing the ticket with its outline, the sources Phase 0 found, the base commit `{{BASE_COMMIT}}` (the change is `git diff {{BASE_COMMIT}}` plus untracked files — nothing has been committed), the drafter's summary and assumptions list, the validator's output so far, and — where a **Document type** section appears above — the skill's path. Tell it: leftover AI tells (filler, puffery, stock phrasing the humanizer missed) are **suggestions**, never blocking; blocking is for commitments, accuracy, numbers and coverage. Its model and effort are fixed by the developer's config (`TICKET_DOC_REVIEW_*`), independent of the drafter's.
+`ticket-doc-reviewer` (`model: {{DOC_REVIEW_MODEL}}`), passing the ticket with its outline, the sources Phase 0 found, the base commit `{{BASE_COMMIT}}` (the change is `git diff {{BASE_COMMIT}}` plus untracked files — nothing has been committed), the drafter's summary and assumptions list, the validator's output so far, and — where a **Document type** section appears above — the skill's path, or for a pythian-docs type the document folder and the built PDF's path (it reads the chapters and the PDF). Tell it: leftover AI tells (filler, puffery, stock phrasing the humanizer missed) are **suggestions**, never blocking; blocking is for commitments, accuracy, numbers and coverage. Its model and effort are fixed by the developer's config (`TICKET_DOC_REVIEW_*`), independent of the drafter's.
 
 ## Phase 4 — Validate, then the criteria
 
@@ -82,7 +82,7 @@ A second `ticket-implementer` call (`model: {{IMPL_MODEL}}`), given the document
 Stop. Report, in this order:
 
 1. **Assumptions to confirm** — every marked assumption and open question in the document, each with where it sits (`file:line` or section) and what was assumed. This list leads the report: it is what the developer confirms before the document goes anywhere.
-2. The document file(s), and the rendered output's path if there is one.
+2. The document file(s), and the rendered output's path if there is one (for a pythian-docs type, the PDF `pdocs pdf` wrote).
 3. The outline as delivered, and any deviation from the ticket's.
 4. How it was checked: the validator command(s) and what they printed — or that the ticket names none and the repo has none.
 5. The criteria table.
