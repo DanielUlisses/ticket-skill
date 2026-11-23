@@ -23,6 +23,8 @@ user.
 
 ## States
 
+A ticket that has landed (its branch is in the base by git, or a merged PR from it, asked of the forge here and of the runner's `status --pr`) is `done`, and `status` then records the one fact other boards need: `**Status:** resolved — merged into <base> as <sha or PR> on <date>` in the ticket file, as `tk.sh resolve` writes it, because a cross-repo blocker (`<repo>:<NN>`) is read from that line. It also stops the ticket's finished session (`devbox-run stop`), unless that session is still working.
+
 Derived on every call, in this order: `dropped`, `done` (the ticket says resolved, or the branch landed),
 `yours` (`**Owner:** me`), `blocked` (a `Blocked by` ticket not done, cross-board refs included), `elsewhere` (in progress in another checkout: its `**Worktree:**` exists there, or its branch is nowhere here),
 `approved` / `changes` / `review` (an open PR, by its review; GitHub's latest reviews when no rule makes

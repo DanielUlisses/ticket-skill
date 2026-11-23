@@ -18,7 +18,7 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 | `review` | a PR is open (draft or not), no decision | nothing; it waits on him |
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |
 | `approved` | he approved the PR | tell him; merge only on his word |
-| `done` / `dropped` | landed, or the ticket says so | nothing |
+| `done` / `dropped` | landed (git, or a merged PR), or the ticket says so. On landing, status writes the ticket's `**Status:** resolved` line and stops its finished session | nothing |
 
 | Command | Does |
 |---|---|
