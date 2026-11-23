@@ -359,6 +359,17 @@ cmd_status() {
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
 }
 
+# The board's other open tickets, one line each, for a thread's brief (from
+# STATES, which derive_all set).
+other_threads() {
+  local lines
+  lines="$(jq -r --arg n "$1" '[.[] | select((.nn | tonumber) != ($n | tonumber))
+      | select(.state | IN("done", "dropped") | not)]
+    | if length == 0 then "- none: this is the board'"'"'s only open ticket"
+      else .[] | "- **\(.nn)** \(.title): \(.state)\(if .state == "working" or .state == "idle" or .state == "built" then " (branch `\(.branch)`)" else "" end)" end' <<<"$STATES")"
+  printf '%s\n' "$lines"
+}
+
 # The thread brief for one ticket, rendered to <dir>/brief.md.
 render_brief() {
   local t="$1" branch="$2" wt="$3" base_commit="$4" dir="$5" file tpl untested=0
@@ -377,6 +388,7 @@ render_brief() {
   tpl="${tpl//'{{BASE_COMMIT}}'/"$base_commit"}"
   tpl="${tpl//'{{REPORT_FILE}}'/"${BRIEF_REPORT:-$dir/report.md}"}"
   tpl="${tpl//'{{QUESTIONS_FILE}}'/"${BRIEF_QUESTIONS:-$dir/questions.json}"}"
+  tpl="${tpl//'{{MESSAGES_FILE}}'/"${BRIEF_MESSAGES:-$dir/messages.json}"}"
   tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
   tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
   tpl="${tpl//'{{REVIEW_EFFORT}}'/"$review_effort"}"
@@ -387,6 +399,7 @@ render_brief() {
   fill_prose '{{PROJECT_MEMORY}}' "${MEMORY_BLOCK:-}"
   fill_prose '{{ANSWERS_LEDGER}}' "$(answers_ledger_block "$BOARD_ID" "$(jq -r .nn <<<"$t")")"
   fill_prose '{{TICKET}}' "$(cat "$file")"
+  fill_prose '{{OTHER_THREADS}}' "$(other_threads "$(jq -r .nn <<<"$t")")"
   fill_prose '{{AGENT_USER_NOTE}}' "$(agent_brief_note)"
   printf '%s\n' "$tpl" >"$dir/brief.md"
 }
@@ -464,7 +477,7 @@ cmd_start() {
   # them aside. A copy, not a move: with the agent user on they are links to
   # the shared copies, which this run reuses.
   local f stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  for f in report.md questions.json; do
+  for f in report.md questions.json messages.json; do
     [[ -e "$dir/$f" ]] && cp -L "$dir/$f" "$dir/$f.$stamp"
     rm -f "$dir/$f"
   done
@@ -476,12 +489,14 @@ cmd_start() {
   # brief, report and questions are shared copies (agent_state_file), linked
   # from these paths, which are the ones this script reads. Each starts as this
   # run's plain file, which agent_state_file copies over once.
-  BRIEF_REPORT="" BRIEF_QUESTIONS="" brief="$dir/brief.md"
+  BRIEF_REPORT="" BRIEF_QUESTIONS="" BRIEF_MESSAGES="" brief="$dir/brief.md"
+  printf '[]' >"$dir/messages.json"
   if agent_on; then
     : >"$dir/report.md"
     [[ -f "$dir/questions.json" ]] || printf '[]' >"$dir/questions.json"
     BRIEF_REPORT="$(agent_state_file "$dir/report.md")"
     BRIEF_QUESTIONS="$(agent_state_file "$dir/questions.json" '[]')"
+    BRIEF_MESSAGES="$(agent_state_file "$dir/messages.json" '[]')"
     rm -f "$dir/brief.md"
   fi
   render_brief "$t" "$branch" "$wt" "$base_commit" "$dir"
@@ -748,6 +763,56 @@ fi
 # since a failed lookup reads as "no session" or "no PR". idle and stopped must
 # hold for two passes in a row before they are news (a subagent's quiet spell, a
 # reboot the boot unit is already resuming). The first pass on a board records only.
+# Threads talk through the coordinator: each ticket's session appends
+# {to, text} to its messages.json (the brief's "The other threads"); a watch
+# pass delivers the new ones (`devbox-run say` into the target's session, as
+# "From thread NN (<title>): …") and hands every one to the coordinator as a
+# `message` event. seen.json counts what each file had, so a message goes once;
+# a file shorter than the count (a fresh start) counts from zero. The first pass
+# only counts. Prints <out> with the message events and counts added.
+deliver_messages() {
+  local seen="$1" out="$2" row nn title mf len prev i m to text tgt sess alive why line rc
+  while IFS= read -r row; do
+    nn="$(jq -r .nn <<<"$row")"; title="$(jq -r .title <<<"$row")"
+    mf="$(ticket_dir "$nn")/messages.json"; len=0
+    [[ -s "$mf" ]] && len="$(jq 'if type == "array" then length else 0 end' "$mf" 2>/dev/null || echo 0)"
+    prev="$(jq -r --arg n "$nn" '.tickets[$n].msgs // 0' <<<"$seen" 2>/dev/null || echo 0)"
+    [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+    (( len < prev )) && prev=0
+    if [[ "$seen" != null ]]; then
+      for (( i = prev; i < len; i++ )); do
+        m="$(jq -c --argjson i "$i" '.[$i]' "$mf")"
+        to="$(jq -r '.to // "" | tostring' <<<"$m")"; text="$(jq -r '.text // "" | tostring' <<<"$m")"
+        [[ -n "$text" ]] || continue
+        why="for the coordinator"
+        if [[ "$to" != coordinator ]]; then
+          tgt="$(state_of "$to")"
+          if [[ -z "$tgt" ]]; then why="not delivered: no ticket $to on this board"
+          else
+            sess="$(jq -r .session <<<"$tgt")"; alive="$(jq -r .alive <<<"$tgt")"
+            if [[ "$alive" != true ]]; then why="not delivered: $to has no live session ($(jq -r .state <<<"$tgt")) — deliver it when it starts, or answer it yourself"
+            else
+              line="From thread $nn ($title): $text"
+              rc=0; printf '%s' "$line" | "$RUNNER" say "$sess" - >/dev/null 2>&1 || rc=$?
+              case "$rc" in
+                0) why="delivered to $to" ;;
+                5) why="not delivered: $to's screen shows a dialog — loop.sh say it once that is answered" ;;
+                *) why="not delivered: devbox-run say failed (exit $rc)" ;;
+              esac
+            fi
+          fi
+        fi
+        out="$(jq -c --arg nn "$nn" --arg title "$title" --arg to "$to" --arg text "$text" --arg why "$why" \
+          --arg board "$BOARD_ID" --arg repo "$REPO_NAME" \
+          '.events += [{kind: "message", text: "\($nn) → \($to) (\($why)): \($text)", board: $board, repo: $repo,
+                        nn: $nn, title: $title, to: $to, delivered: ($why | startswith("delivered"))}]' <<<"$out")"
+      done
+    fi
+    out="$(jq -c --arg nn "$nn" --argjson len "$len" '.seen.tickets[$nn].msgs = $len' <<<"$out")"
+  done < <(jq -c '.[]' <<<"$STATES")
+  printf '%s\n' "$out"
+}
+
 cmd_watch() {
   local usage="usage: loop.sh watch <board> --inbox <dir>"
   local board="${1:?$usage}" inbox=""; shift
@@ -806,11 +871,12 @@ cmd_watch() {
             | .events += [$evs[] | . + {board: $board, repo: $repo, nn: $t.nn, title: $t.title, state: $t.state, from: $from, pr: $t.pr}]
           end)
     | {seen: {tickets: .seen}, events: .events}')" || die "watch: could not compare states"
+  out="$(deliver_messages "$seen" "$out")"
   local at n=0 ev f
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   while IFS= read -r ev; do
     [[ -n "$ev" ]] || continue
-    f="$inbox/$(date -u +%Y%m%dT%H%M%S)-${BOARD_SLUG}-$(jq -r .nn <<<"$ev")-$(jq -r .kind <<<"$ev").json"
+    f="$inbox/$(date -u +%Y%m%dT%H%M%S)-${BOARD_SLUG}-$(jq -r .nn <<<"$ev")-$(jq -r .kind <<<"$ev")-$n.json"
     jq --arg at "$at" '{at: $at} + .' <<<"$ev" >"$f.tmp" && mv "$f.tmp" "$f"
     n=$((n + 1))
   done < <(jq -c '.events[]' <<<"$out")

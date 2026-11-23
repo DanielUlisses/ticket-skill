@@ -60,6 +60,16 @@ notification cursor, not ticket state; deleting it only makes the next pass reco
 | `changes`, `approved` | the PR's review says so |
 | `fixed` | a newer report while the PR is in `review` or `changes` |
 | `landed` | `done` from anything but dropped |
+| `message` | a thread added a message to its `messages.json` (below) |
+
+Threads talk to each other through it. Each thread's brief (`templates/thread-prompt.md`, *The other threads*)
+lists the board's other open tickets as it started, and a thread that depends on another appends
+`{"to": "<NN>|coordinator", "text": …}` to its own `messages.json` (beside its report; a shared copy with the agent
+user on). A pass delivers each new entry into the target's session with `devbox-run say`, as
+`From thread NN (<title>): …`, and hands every one to the coordinator as a `message` event saying whether it was
+delivered (a target with no live session, or at a dialog, is not: the coordinator passes it on). `seen.json` counts
+each file's entries, so a message goes once; a fresh start keeps the old file aside and counts from zero. No thread
+ever edits another's worktree.
 
 The first pass on a board records only. A pass whose `devbox-run status` or forge listing failed records and
 sends nothing (exit 3), since a failed lookup reads as "no session" or "no PR"; the watcher notes a failure in
