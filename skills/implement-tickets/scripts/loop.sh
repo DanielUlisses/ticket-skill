@@ -64,6 +64,8 @@ source "$SKILL_DIR/scripts/board-lib.sh"
 load_ticket_models
 
 RUNNER="${TICKET_RUNNER:-devbox-run}"
+# Cross-repo blockers (<repo>:<NN>) are read from the sibling clone first.
+export TICKET_XBOARD_SIBLING_FIRST=1
 THREAD_TEMPLATE="$SKILL_DIR/templates/thread-prompt.md"
 LOOP_MARK=short
 
