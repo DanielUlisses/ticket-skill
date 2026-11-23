@@ -129,6 +129,20 @@ need_runner() { command -v "$RUNNER" >/dev/null 2>&1 || die "the box runner '$RU
 
 # ---- state, from facts ------------------------------------------------------------
 
+# Does a session that finished its turn still have background subagents? Either
+# fact is enough: Claude Code's footer naming running agents ("↓ to manage"),
+# or a subagent transcript under the session's folder written in the last
+# TICKET_LOOP_SUBAGENT_QUIET_S seconds (default 120).
+subagents_running() {
+  local rs="$1" sess="$2" tr sid dir quiet="${TICKET_LOOP_SUBAGENT_QUIET_S:-120}"
+  "$RUNNER" log "$sess" --lines 8 2>/dev/null | grep -qE 'to manage|agents? running|background (task|agent)' && return 0
+  tr="$(jq -r '.transcript // ""' <<<"$rs")"; sid="$(jq -r '.session_id // ""' <<<"$rs")"
+  [[ -n "$tr" && -n "$sid" ]] || return 1
+  dir="$(dirname "$tr")/$sid"
+  [[ -d "$dir" ]] || return 1
+  [[ -n "$(find "$dir" -type f -name '*.jsonl' -newermt "-${quiet} seconds" -print -quit 2>/dev/null)" ]]
+}
+
 # GitHub leaves reviewDecision empty where no rule requires a review: read the
 # latest review of each reviewer instead. Prints the PR object with .review set.
 review_decision() {
@@ -160,6 +174,9 @@ derive() {
   rs="$(runner_status "$sess")"
   alive="$(jq -r '.alive // false' <<<"$rs")"; turn="$(jq -r '.last_turn // ""' <<<"$rs")"
   local dialog; dialog="$(jq -r '.dialog // ""' <<<"$rs")"
+  # The main turn can end while a subagent it dispatched in the background
+  # still runs: the runner then says assistant_done. Count it as working.
+  if [[ "$alive" == true && "$turn" == assistant_done ]] && subagents_running "$rs" "$sess"; then turn=working; fi
   # A ticket the old loop started in another checkout (a board copied from it):
   # its run-state lines name a worktree that isn't ours. While that worktree
   # exists, or its branch is nowhere we can see (unpushed over there), the work
