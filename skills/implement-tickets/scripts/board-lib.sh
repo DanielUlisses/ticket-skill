@@ -195,7 +195,13 @@ load_board() {
   while IFS=$'\t' read -r r n; do
     [[ -n "$r" ]] || continue
     path=""
-    [[ -f "$BOARD_PATH/repos" ]] && path="$(awk -v r="$r" '$1 == r { $1 = ""; sub(/^ +/, ""); print; exit }' "$BOARD_PATH/repos")"
+    # The short loop (loop.sh sets TICKET_XBOARD_SIBLING_FIRST) runs boards copied
+    # into a separate folder: the sibling clone there is the one it updates, while
+    # the repos file still names the old checkouts.
+    if [[ "${TICKET_XBOARD_SIBLING_FIRST:-0}" == 1 && -d "$(dirname "$ROOT")/$r/.scratch/$BOARD_ID" ]]; then
+      path="$(dirname "$ROOT")/$r"
+    fi
+    [[ -z "$path" && -f "$BOARD_PATH/repos" ]] && path="$(awk -v r="$r" '$1 == r { $1 = ""; sub(/^ +/, ""); print; exit }' "$BOARD_PATH/repos")"
     [[ -n "$path" ]] || path="$(dirname "$ROOT")/$r"
     st="missing"
     f="$(find "$path/.scratch/$BOARD_ID/issues" -maxdepth 1 -name '*.md' 2>/dev/null \
