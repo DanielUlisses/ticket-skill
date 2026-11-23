@@ -24,7 +24,7 @@ user.
 ## States
 
 Derived on every call, in this order: `dropped`, `done` (the ticket says resolved, or the branch landed),
-`yours` (`**Owner:** me`), `blocked` (a `Blocked by` ticket not done, cross-board refs included),
+`yours` (`**Owner:** me`), `blocked` (a `Blocked by` ticket not done, cross-board refs included), `elsewhere` (in progress in another checkout: its `**Worktree:**` exists there, or its branch is nowhere here),
 `approved` / `changes` / `review` (an open PR, by its review; GitHub's latest reviews when no rule makes
 `reviewDecision` say), `working` (the runner session is working), `asking` (a blocking question with no
 answer), `built` (a report beside real work: changes or commits), `idle` (a live session at its prompt

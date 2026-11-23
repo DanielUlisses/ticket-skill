@@ -13,6 +13,7 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 | `asking` | its session wrote a blocking question | answer, bring or hold, as under *Questions*; answer with `loop.sh answer` |
 | `idle` | its session is at its prompt with no report | `loop.sh log` to see why (a limit, a dialog); `loop.sh say` or `loop.sh resume` |
 | `stopped` | work exists, no live session | `loop.sh resume <board> <NN>` |
+| `elsewhere` | the old loop started it in another checkout and works it there (its `**Worktree:**` exists there, or its branch is nowhere here) | nothing; never start it. Tell him; it comes here once that worktree is gone and the branch is pushed |
 | `built` | its report is written beside real work | read the report, open the draft PR (below) |
 | `review` | a PR is open (draft or not), no decision | nothing; it waits on him |
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |

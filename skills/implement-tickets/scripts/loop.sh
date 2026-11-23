@@ -159,6 +159,26 @@ derive() {
   fi
   rs="$(runner_status "$sess")"
   alive="$(jq -r '.alive // false' <<<"$rs")"; turn="$(jq -r '.last_turn // ""' <<<"$rs")"
+  # A ticket the old loop started in another checkout (a board copied from it):
+  # its run-state lines name a worktree that isn't ours. While that worktree
+  # exists, or its branch is nowhere we can see (unpushed over there), the work
+  # lives there and this loop must not start a second agent on it.
+  local elsewhere="" owt
+  owt="$(jq -r '.worktree // ""' <<<"$t")"
+  if [[ "$status" == in-progress && -n "$owt" && "$owt" != "$wt" && "$has_wt" == false && "$alive" != true ]]; then
+    if [[ -d "$owt" ]]; then elsewhere="the old loop works it in $owt — finish it there, or remove that worktree to bring it here"
+    elif [[ "$has_branch" == false ]]; then elsewhere="started by the old loop in $owt, and branch $branch is nowhere here (unpushed there?) — push it from there to bring it here"
+    fi
+  fi
+  # A board copied before its ticket started has no run-state lines: look for
+  # the old loop's worktree of this number beside the main checkouts (~/work).
+  local work="${TICKET_WORK_DIR:-$HOME/work}" d
+  if [[ -z "$elsewhere" && "$has_wt" == false && "$alive" != true && "$(dirname "$ROOT")" != "$(readlink -f "$work" 2>/dev/null || echo "$work")" ]]; then
+    for d in "$work/$REPO_NAME"--*-"$nn"-*; do
+      [[ -d "$d" && "$d" != "$wt" ]] || continue
+      elsewhere="the old loop has a worktree for it: $d — finish it there, or remove that worktree to bring it here"; break
+    done
+  fi
   open_blockers="$(jq -r --argjson fin "$DONE" '[.blockers[] | select(IN($fin[]) | not)] + (.xblockers_open // []) | join(",")' <<<"$t")"
 
   if [[ "$status" == dropped ]]; then state=dropped; why="the ticket says dropped"
@@ -168,6 +188,7 @@ derive() {
     if [[ "$landed_ans" == yes* ]]; then state="done"; why="landed (${landed_ans#yes:})"
     elif [[ "$owner" == me ]]; then state=yours; why="**Owner:** me — loop.sh done when he says it is"
     elif [[ -n "$open_blockers" ]]; then state=blocked; why="blocked by $open_blockers"
+    elif [[ -n "$elsewhere" ]]; then state=elsewhere; why="$elsewhere"
     else
       if [[ "$has_branch" == true ]] && forge_ok; then pr="$(forge_pr_open "$branch" 2>/dev/null || true)"; fi
       [[ -n "$pr" ]] && pr="$(review_decision "$pr")"
