@@ -48,3 +48,6 @@ the one thing the developer talks to and cuts the rest down.
 - Nothing pushes events for a short-loop board: the coordinator's own inbox watcher runs `loop.sh watch`, which
   turns state changes into inbox events (docs/agents/short-loop.md, Watching). The coordinator itself runs as a
   runner session (`coordinator.sh --runner`), so the box needs neither Herdr nor the old daemon for the loop.
+- Threads may talk to each other where their work depends on each other (the developer's call, 2026-11-23), always through
+  the coordinator: a thread writes to its `messages.json`, the watcher delivers and shows it to the coordinator. No
+  thread touches another's worktree.

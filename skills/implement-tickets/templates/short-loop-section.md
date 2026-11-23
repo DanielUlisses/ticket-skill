@@ -58,8 +58,11 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 | `fixed` | a new report while its PR is open (a fix round finished) | read it; `loop.sh pr` pushes the fix |
 | `approved` | he approved the PR | tell him; merge only on his word |
 | `landed` | merged, or resolved | nothing; a slot is free |
+| `message` | a thread wrote to another (or to you): `text` says who, to whom, whether it was delivered | read it. Step in when it changes a ticket's scope (that is his call), makes one ticket wait on another, or was not delivered (`loop.sh say` it when the target runs, or answer it yourself). A thread may never touch another's worktree |
 
 After any batch of events, run `loop.sh status` on that board and start what is `ready` within `max_parallel`: a freed slot sends no event of its own. On *Every start*, run `loop.sh status` on each short-loop board in place of the digest.
+
+**Threads talk through you.** Each thread's brief lists the board's other open tickets, and a thread may write to another only when their work depends on each other. You deliver nothing by hand: the watcher passes each message on and shows it to you as a `message` event. It reaches the target's session, and its chat in the hub, as `From thread NN (<title>): …`. To pass something on yourself, `loop.sh say` it in the same shape.
 
 **Your chat is his window.** He reads this conversation in the hub, often on his phone: say outcomes and what needs him, in a few lines, never a replay of commands. A file he should look at (a plan, a mock, a diff, a report) goes in `{{DIR}}/artifacts/`, with `<name>.note` beside it holding one line on what it is; when it is about one ticket, start that line with its number (`07: the draft PR's diff`), so the hub shows it in that ticket's thread.
 
