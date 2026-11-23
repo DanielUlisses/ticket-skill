@@ -552,7 +552,10 @@ relay_message() {
   if [[ -n "$relay" && -n "$from" ]]; then
     printf '%s' "$text" | TK_RELAY_FROM="$from" "$relay" "$to" - >/dev/null 2>&1
   elif [[ -n "$relay" ]]; then
-    printf '%s' "$text" | (cd "$CALLER_DIR" && "$relay" "$to" -) >/dev/null 2>&1
+    # exit 2: the caller's folder is no runner session's (a shell of the developer's): say it plainly
+    local rc=0; printf '%s' "$text" | (cd "$CALLER_DIR" && "$relay" "$to" -) >/dev/null 2>&1 || rc=$?
+    (( rc == 2 )) || return "$rc"
+    printf '%s' "$text" | "$RUNNER" say "$to" - >/dev/null 2>&1
   elif [[ -n "$from" ]]; then
     printf '[relay from %s]\n%s' "$from" "$text" | "$RUNNER" say "$to" - >/dev/null 2>&1
   else
