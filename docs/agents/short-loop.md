@@ -18,8 +18,14 @@ the board back to the old loop; nothing else changes. With tk-hub driving the bo
 
 For the pilot, the board runs in a separate clone with only its files copied in, so an old-loop agent
 can't share a worktree with a new one (`loop.sh` ignores a copied `**Worktree:**` line and works beside
-its own checkout, `../<repo>--<branch>`). The agent user must be off: the runner runs sessions as the box
-user.
+its own checkout, `../<repo>--<branch>`).
+
+With the box's agent user on (`agent_user`, `lib/ticket-agent.sh`), `loop.sh start` prepares the
+worktree for it (`agent_prepare_worktree`: group `tkwork`, git metadata not writable), puts the brief,
+report and questions files in the shared state dir (`agent_state_file`, linked from the ticket's
+directory, where the loop reads them) and starts the session with the runner's `--agent`, which runs
+claude as `<user>-agent` through devboxes' wrapper (needs devbox-run with `--agent`, devboxes #64). The
+brief gets the agent-user note. Off, sessions run as the box user, as before.
 
 ## States
 
