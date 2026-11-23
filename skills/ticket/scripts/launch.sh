@@ -9,7 +9,7 @@
 # ticket must land unstaged for review.
 #
 # Usage:
-#   launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <ead|tdd|other>]] [--helper] <tab-label> <branch> <ticket-file> [model]
+#   launch.sh [--account <name>] [--effort <level>] [--doc [--doc-type <ead|tdd|hlr|other>]] [--helper] <tab-label> <branch> <ticket-file> [model]
 #   launch.sh prompt <agent-name> <prompt-file>
 #   launch.sh defaults
 #
@@ -52,7 +52,9 @@
 #   TICKET_ACCOUNT         — the claude-acc account this ticket runs on; --account beats it. Unset means inherit whatever the worktree's parent directory is linked to, which writes no link at all. See docs/agents/accounts.md
 #   TICKET_ACCOUNT_VERIFY_WAIT (default: 5) — seconds to wait for the started agent's process before giving up on reading the account it got
 #   TICKET_ACCOUNT_LOCK_WAIT (default: 10) — seconds to wait for the lock on ~/.claude-switch/links before refusing to write it
-#   TICKET_SKILLS_DIR      (default: ~/.claude/skills) — where a `--doc-type` ead/tdd skill is looked for (<dir>/<type>/SKILL.md and scripts/check_<type>.py)
+#   TICKET_SKILLS_DIR      (default: ~/.claude/skills) — where a `--doc-type ead` skill is looked for (<dir>/ead/SKILL.md and scripts/check_ead.py)
+#   TICKET_PDOCS_DIR       (default: ~/work/pythian-docs) — the pythian-docs checkout a `--doc-type tdd|hlr` document is built with (<dir>/pdocs, <dir>/types/<type>/); docs/agents/doc-tickets.md
+#   TICKET_TDD_SKILL_DIR   (default: ~/work/tdd-skill) — whose references/<provider>/ a tdd|hlr brief names as provider terminology (reference, not rules); absent, the brief says so
 #   TICKET_HELPER_PERMISSION_MODE (default: acceptEdits) — a --helper session's permission mode; the developer is there to answer prompts
 #   TICKET_DRY_RUN         (default: 0) — 1 renders the prompt and prints the summary, then stops: no pull, no worktree, no agent, no Herdr needed
 #

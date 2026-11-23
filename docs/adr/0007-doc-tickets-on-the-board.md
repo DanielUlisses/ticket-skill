@@ -13,7 +13,7 @@ This record moves documents onto the board loop.
 
 ## 1. `**Kind:**` is an open list
 
-A ticket's body may carry `**Kind:** <word>`, with an optional `**Doc type:** ead|tdd|other`.
+A ticket's body may carry `**Kind:** <word>`, with an optional `**Doc type:** ead|tdd|other` (`hlr` since the amendment to §3).
 `board-lib.sh` reads the first word of each, lowercased. The known kinds are `TICKET_KINDS="code doc"`
 (`board-lib.sh`); a new kind is one more word there and one more `case` arm in `tk.sh launch`.
 
@@ -37,6 +37,8 @@ become marked assumptions, listed first in the hand-off. The loop is:
 5. A fix loop of at most two rounds.
 
 ## 3. `ead` and `tdd` are checked, not bundled
+
+> Amended: `tdd` and the new `hlr` are pythian-docs documents. The outline becomes Markdown chapters in a pythian-docs document folder (`<worktree>/<type>/`, the checkout at `TICKET_PDOCS_DIR`, default `~/work/pythian-docs`), `pdocs check` is the validator and the PDF `pdocs pdf` builds is the artifact, which `ticket-doc-reviewer` reads with the chapters. tdd-skill's paste-ready HTML flow is no longer used on the board; tdd-skill stays installed, until the developer archives it, as the fallback for a TDD written outside the board. On the board a missing checkout means one `WARN` and the generic brief, as below — never tdd-skill. `ead` is unchanged. See `docs/agents/doc-tickets.md`.
 
 `--doc-type ead|tdd` fills the brief's `{{DOC_GUIDANCE}}` with the installed skill and its validator,
 looked up in `$TICKET_SKILLS_DIR` (default `~/.claude/skills`) as `<type>/SKILL.md` and
