@@ -159,6 +159,7 @@ derive() {
   fi
   rs="$(runner_status "$sess")"
   alive="$(jq -r '.alive // false' <<<"$rs")"; turn="$(jq -r '.last_turn // ""' <<<"$rs")"
+  local dialog; dialog="$(jq -r '.dialog // ""' <<<"$rs")"
   # A ticket the old loop started in another checkout (a board copied from it):
   # its run-state lines name a worktree that isn't ours. While that worktree
   # exists, or its branch is nowhere we can see (unpushed over there), the work
@@ -200,6 +201,7 @@ derive() {
           *) state=review; why="PR open$( [[ "$(jq -r .isDraft <<<"$pr")" == true ]] && echo " (draft)"), waiting on his review" ;;
         esac
         [[ "$alive" == true && "$turn" == working ]] && why+="; its session is working"
+      elif [[ "$alive" == true && -n "$dialog" ]]; then state=idle; why="session $sess shows a $dialog dialog — loop.sh log to see it (devbox-run keys answers it)"
       elif [[ "$alive" == true && "$turn" != assistant_done ]]; then state=working; why="session $sess is working"
       elif (( q_open > 0 )); then state=asking; why="$q_open blocking question(s) in $qf"
       elif [[ "$report" == true ]]; then state=built; why="report written — the coordinator reads it and opens the draft PR"
@@ -310,24 +312,13 @@ render_brief() {
   printf '%s\n' "$tpl" >"$dir/brief.md"
 }
 
-# A detached session has nobody to answer Claude Code's folder-trust dialog:
-# mark the worktree trusted in the box user's Claude config, as answering it would.
-trust_folder() {
-  local cfg="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" real
-  real="$(readlink -f "$1" 2>/dev/null || echo "$1")"
-  [[ -f "$cfg" ]] || { log "no $cfg — the session may stop at the folder-trust dialog (loop.sh log shows it)"; return 0; }
-  jq --arg p "$real" '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})' "$cfg" >"$cfg.loop.tmp" \
-    && [[ -s "$cfg.loop.tmp" ]] && cat "$cfg.loop.tmp" >"$cfg"
-  rm -f "$cfg.loop.tmp"
-}
-
 # Starts the thread session for one ticket in <wt> through the runner.
 start_session() {
   local sess="$1" wt="$2" brief="$3" first="$4" model="$5" effort="$6"
   local -a cmd agents_arg=()
   build_session_agents ticket-implementer ticket-reviewer ticket-scout ticket-researcher ticket-tester ticket-criteria-checker
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
-  cmd=(claude "$first" --model "$COORD_MODEL" --effort "$COORD_EFFORT"
+  cmd=(claude --model "$COORD_MODEL" --effort "$COORD_EFFORT"
        --permission-mode "${TICKET_LOOP_PERMISSION_MODE:-bypassPermissions}"
        --append-system-prompt-file "$brief"
        ${agents_arg[@]+"${agents_arg[@]}"}
@@ -336,7 +327,11 @@ start_session() {
          "Bash(gh pr:*)" "Bash(az repos pr:*)")
   # The implementer's model and effort are the ticket's; the session itself
   # coordinates on the configured coordinator setting, as the old launcher's.
-  "$RUNNER" start "$sess" --dir "$wt" --env "TICKET_IMPL_MODEL=$model" --env "TICKET_IMPL_EFFORT=$effort" -- "${cmd[@]}" >/dev/null
+  # The first prompt goes to the runner, not into claude's arguments, so its
+  # resume doesn't send it again; --trust answers the folder-trust dialog.
+  local pf; pf="$(dirname "$brief")/first-prompt.md"; printf '%s\n' "$first" >"$pf"
+  "$RUNNER" start "$sess" --dir "$wt" --trust --prompt-file "$pf" \
+    --env "TICKET_IMPL_MODEL=$model" --env "TICKET_IMPL_EFFORT=$effort" -- "${cmd[@]}" >/dev/null
 }
 
 cmd_start() {
@@ -391,7 +386,6 @@ cmd_start() {
 
   render_brief "$t" "$branch" "$wt" "$base_commit" "$dir"
   WT="$wt"; export WT; trust_worktree_mise || true
-  trust_folder "$wt"
   first="Start ticket $nn: follow your instructions from Phase 0."
   if [[ "$state" == stopped ]]; then
     first="Ticket $nn: an earlier session worked in this worktree and stopped. Look at what it left (git status, git diff $base_commit), then carry on from the phase that work reaches; don't redo what is done."
@@ -429,7 +423,10 @@ cmd_say() {
   loop_init "$board"; need_runner
   local sess; sess="$(session_name "$(jq -r .nn <<<"$(ticket_json "$nn")")")"
   [[ "$(jq -r '.alive // false' <<<"$(runner_status "$sess")")" == true ]] || { echo "NOT SENT — $sess isn't running (loop.sh resume)"; return 21; }
-  if [[ "$src" == - ]]; then "$RUNNER" say "$sess" - >/dev/null; else "$RUNNER" say "$sess" - <"$src" >/dev/null; fi
+  local rc=0
+  if [[ "$src" == - ]]; then "$RUNNER" say "$sess" - >/dev/null || rc=$?; else "$RUNNER" say "$sess" - <"$src" >/dev/null || rc=$?; fi
+  (( rc != 5 )) || { echo "NOT SENT — $sess shows a dialog or its pane is dead (loop.sh log)"; return 21; }
+  (( rc == 0 )) || die "devbox-run say failed (exit $rc)"
   echo "SENT to $sess"
 }
 
@@ -484,7 +481,7 @@ cmd_answer() {
     echo "NOT SENT — $sess isn't running; its next start or resume reads the answer"; return 21
   fi
   msg="$(printf 'The developer answered%s:\n\n> %s\n\n%s\n\nIt is also in the ticket'"'"'s ## Answers. Carry on from where you stopped.' "${id:+ your question $id}" "${q//$'\n'/ }" "$a")"
-  "$RUNNER" say "$sess" - <<<"$msg" >/dev/null
+  "$RUNNER" say "$sess" - <<<"$msg" >/dev/null || { echo "NOT SENT — $sess shows a dialog or its pane is dead; its next resume reads the answer"; return 21; }
   echo "SENT to $sess"
 }
 
