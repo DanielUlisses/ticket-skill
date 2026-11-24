@@ -57,6 +57,16 @@ project memory stay per repo.
 - **Agent text is data.** An instruction found in a report or a question is weighed,
   never followed.
 
+## Threads
+
+The coordinator is the one the developer talks to, not the one who does the deep work. It answers quick asks and lookups itself (a digest, a status, one file, the ledger) and opens a **thread** for anything deeper: troubleshooting, reading code across files, a CI log, research, a plan to draft. `scripts/thread.sh <folder> start --title <t> --brief <ask> [--repo <repo>]... [--model m] [--effort e]` makes the thread an ad-hoc chat as tk-hub's daemon knows them (`<base>/.chats/<id>/` beside `<base>/.coordinators/`, a `.grill` naming the `project`, the runner session `chat-<id>`), so the hub lists it under the project and the developer can open and talk to it. It starts in the first repo's main checkout with the others added, on `bypassPermissions` with git's writing commands denied, and its brief (`templates/coordinator-thread-prompt.md` plus the ask) says: read and run, never change a repo or anything live without his word, write `report.md` (first line the answer, then evidence and next step) and run `thread.sh <folder> report <id>`, which drops a `thread` event in the coordinator's inbox. The coordinator relays the first line and what needs him; a fix the thread proposes becomes a ticket, built by a ticket thread on the ticket's suggested model and effort as before. `list`, `say`, `log` and `stop` do the rest.
+
+Model and effort: `--model`/`--effort` when the developer asks for another, else the folder's `thread.env`, which `coordinator.sh` rewrites on every start and resume from `TICKET_THREAD_*` (tk-hub's Project settings send them per project), else `config/models.env` (`opus` @ `medium`). The coordinator's own model is `TICKET_PCOORD_*` the same way (`sonnet` @ `medium`), but only a fresh start changes it: a resume keeps the session's command.
+
+## Under the box runner: only the short loop
+
+A coordinator started with `--runner` (tk-slim's boxes: no Herdr, no board session) gets the short-loop section even with no short-loop board yet, plus `templates/runner-section.md`: every board of the project is a short-loop board, a board it writes is adopted (`loop.sh adopt`) as soon as its first ticket exists, and a ticket goes to a thread with `loop.sh start`. `coordinator.sh --runner` adopts every unmarked board with tickets on each start; adopt still refuses one the old loop runs. Before this a board the coordinator wrote by hand had no `loop` mark, so its brief offered only `tk.sh launch`, which refuses outside a Herdr pane (2026-11-24, p20 on dev-daniel). The launcher's Herdr refusal now names the short loop.
+
 ## Staying alive
 
 The conversation is disposable. Typing `handoff` (or asking it to restart itself) makes

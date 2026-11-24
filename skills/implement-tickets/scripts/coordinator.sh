@@ -48,6 +48,9 @@
 #
 # Optional variables:
 #   TICKET_PCOORD_MODEL / TICKET_PCOORD_EFFORT  (default: sonnet / medium, from ticket-models.env)
+#   TICKET_THREAD_MODEL / TICKET_THREAD_EFFORT  (default: opus / medium) — the threads it opens
+#                             with thread.sh; written to <folder>/thread.env on every start
+#                             and resume, so a resumed session's next thread picks them up
 #   TICKET_PCOORD_HOME        (default: ~/work/.coordinators)
 #   TICKET_PCOORD_AUTOCOMPACT (optional) — Claude Code's --autocompact window; unset
 #                             leaves Claude Code's own. The handoff is the intended
@@ -151,6 +154,14 @@ for r in "${REPOS[@]}"; do
   repo_lines+="- \`$r\` — boards: ${boards:-none yet}"$'\n'
   # A board marked for the short loop (loop.sh adopt) is run with loop.sh, not tk.sh.
   for b in $boards; do
+    # Under the box runner there is no other loop (no Herdr, no board session):
+    # a board without the mark is one the coordinator wrote by hand or one from
+    # before the rollout, and it is adopted here so loop.sh runs it. A board the
+    # old loop still runs is refused by adopt and left as it is, said.
+    if (( runner )) && [[ ! -f "$r/.scratch/$b/loop" && -n "$(find "$r/.scratch/$b" -maxdepth 1 -name '[0-9]*.md' -print -quit 2>/dev/null)" ]]; then
+      if out="$("$SCRIPTS/loop.sh" -C "$r" adopt "$b" 2>&1)"; then log "board $b ($(basename "$r")): ${out%%$'\n'*}"
+      else echo "WARN board $b ($(basename "$r")) not adopted: ${out%%$'\n'*}" >&2; fi
+    fi
     if [[ -f "$r/.scratch/$b/loop" && "$(tr -d '[:space:]' <"$r/.scratch/$b/loop")" == short ]]; then
       short_boards+="${short_boards:+, }\`$b\` ($(basename "$r"))"
     fi
@@ -164,12 +175,22 @@ tpl="${tpl//'{{DIR}}'/"$DIR"}"
 tpl="${tpl//'{{TK}}'/"$SCRIPTS/tk.sh"}"
 tpl="${tpl//'{{MERGER}}'/"$SCRIPTS/merge-conflict.sh"}"
 tpl="${tpl//'{{INBOX}}'/"$SCRIPTS/coordinator-inbox.sh"}"
+tpl="${tpl//'{{THREAD}}'/"$SCRIPTS/thread.sh $DIR"}"
+tpl="${tpl//'{{THREAD_MODEL}}'/"$THREAD_MODEL"}"
+tpl="${tpl//'{{THREAD_EFFORT}}'/"$THREAD_EFFORT"}"
 fill_prose '{{REPOS}}' "${repo_lines%$'\n'}"
+# Under the runner the section goes in even before the first board: the
+# boards the coordinator writes run on the short loop too.
+if (( runner )) && [[ -z "$short_boards" ]]; then short_boards="none yet: every board you write"; fi
 if [[ -n "$short_boards" ]]; then
   sec="$(cat "$SKILL_DIR/templates/short-loop-section.md")"
   sec="${sec//'{{SHORT_BOARDS}}'/"$short_boards"}"
   sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
   sec="${sec//'{{DIR}}'/"$DIR"}"
+  if (( runner )); then
+    sec+=$'\n\n'"$(cat "$SKILL_DIR/templates/runner-section.md")"
+    sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
+  fi
   tpl+=$'\n\n'"$sec"
 fi
 printf '%s\n' "$tpl" >"$PROMPT"
@@ -199,6 +220,11 @@ mcp_names="$(for f in "${mcp_layers[@]}"; do if [[ -s "$f" ]]; then jq -c '.mcp 
 mcp_user_args "$mcp_names"
 [[ -z "$MCP_MISSING" ]] || echo "WARN MCP server(s) not on this box, started without: $MCP_MISSING (devboxes mcp_servers, then devbox sync)" >&2
 
+# What thread.sh opens its threads with, resolved here (the hub's per-project
+# setting arrives as TICKET_THREAD_* in this script's environment).
+printf 'TICKET_THREAD_MODEL=%q\nTICKET_THREAD_EFFORT=%q\nTICKET_THREAD_MCP=%q\n' \
+  "$THREAD_MODEL" "$THREAD_EFFORT" "$mcp_names" >"$DIR/thread.env"
+
 first="Start as the project coordinator of ${PROJECT}: follow 'Every start' in your instructions."
 (( resume )) && first="You were restarted. Read state.md and journal.log's last lines, run the digests again, start the inbox watcher again, and carry on: tell me only what changed."
 resume_note="You were restarted. Read state.md and journal.log's last lines, run the digests (and loop.sh status on short-loop boards) again, start the inbox watcher again in the background, and carry on: tell me only what changed."
@@ -212,9 +238,9 @@ cmd=(claude "$first"
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # Its own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)")
 
-log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
+log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT, threads on $THREAD_MODEL @ $THREAD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
 if (( as_json )); then
   jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" --arg session "$SESSION" --arg note "$resume_note" \
     '{project: $project, dir: $dir, prompt: $prompt, session: $session, resume_note: $note, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
