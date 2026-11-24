@@ -154,6 +154,14 @@ for r in "${REPOS[@]}"; do
   repo_lines+="- \`$r\` — boards: ${boards:-none yet}"$'\n'
   # A board marked for the short loop (loop.sh adopt) is run with loop.sh, not tk.sh.
   for b in $boards; do
+    # Under the box runner there is no other loop (no Herdr, no board session):
+    # a board without the mark is one the coordinator wrote by hand or one from
+    # before the rollout, and it is adopted here so loop.sh runs it. A board the
+    # old loop still runs is refused by adopt and left as it is, said.
+    if (( runner )) && [[ ! -f "$r/.scratch/$b/loop" && -n "$(find "$r/.scratch/$b" -maxdepth 1 -name '[0-9]*.md' -print -quit 2>/dev/null)" ]]; then
+      if out="$("$SCRIPTS/loop.sh" -C "$r" adopt "$b" 2>&1)"; then log "board $b ($(basename "$r")): ${out%%$'\n'*}"
+      else echo "WARN board $b ($(basename "$r")) not adopted: ${out%%$'\n'*}" >&2; fi
+    fi
     if [[ -f "$r/.scratch/$b/loop" && "$(tr -d '[:space:]' <"$r/.scratch/$b/loop")" == short ]]; then
       short_boards+="${short_boards:+, }\`$b\` ($(basename "$r"))"
     fi
@@ -171,11 +179,18 @@ tpl="${tpl//'{{THREAD}}'/"$SCRIPTS/thread.sh $DIR"}"
 tpl="${tpl//'{{THREAD_MODEL}}'/"$THREAD_MODEL"}"
 tpl="${tpl//'{{THREAD_EFFORT}}'/"$THREAD_EFFORT"}"
 fill_prose '{{REPOS}}' "${repo_lines%$'\n'}"
+# Under the runner the section goes in even before the first board: the
+# boards the coordinator writes run on the short loop too.
+if (( runner )) && [[ -z "$short_boards" ]]; then short_boards="none yet: every board you write"; fi
 if [[ -n "$short_boards" ]]; then
   sec="$(cat "$SKILL_DIR/templates/short-loop-section.md")"
   sec="${sec//'{{SHORT_BOARDS}}'/"$short_boards"}"
   sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
   sec="${sec//'{{DIR}}'/"$DIR"}"
+  if (( runner )); then
+    sec+=$'\n\n'"$(cat "$SKILL_DIR/templates/runner-section.md")"
+    sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
+  fi
   tpl+=$'\n\n'"$sec"
 fi
 printf '%s\n' "$tpl" >"$PROMPT"

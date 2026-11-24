@@ -1211,7 +1211,7 @@ launcher_main() {
   # no Herdr pane. For checking what a ticket would launch as.
   DRY_RUN=0; [[ "${TICKET_DRY_RUN:-0}" == 1 ]] && DRY_RUN=1
   if (( ! DRY_RUN )); then
-    [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1)"
+    [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a Herdr pane (HERDR_ENV != 1) — on a box without Herdr the short loop runs tickets: loop.sh adopt <board>, then loop.sh start <board> <NN>"
     need herdr
   fi
   need git; need jq

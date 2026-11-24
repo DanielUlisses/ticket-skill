@@ -63,6 +63,10 @@ The coordinator is the one the developer talks to, not the one who does the deep
 
 Model and effort: `--model`/`--effort` when the developer asks for another, else the folder's `thread.env`, which `coordinator.sh` rewrites on every start and resume from `TICKET_THREAD_*` (tk-hub's Project settings send them per project), else `config/models.env` (`opus` @ `medium`). The coordinator's own model is `TICKET_PCOORD_*` the same way (`sonnet` @ `medium`), but only a fresh start changes it: a resume keeps the session's command.
 
+## Under the box runner: only the short loop
+
+A coordinator started with `--runner` (tk-slim's boxes: no Herdr, no board session) gets the short-loop section even with no short-loop board yet, plus `templates/runner-section.md`: every board of the project is a short-loop board, a board it writes is adopted (`loop.sh adopt`) as soon as its first ticket exists, and a ticket goes to a thread with `loop.sh start`. `coordinator.sh --runner` adopts every unmarked board with tickets on each start; adopt still refuses one the old loop runs. Before this a board the coordinator wrote by hand had no `loop` mark, so its brief offered only `tk.sh launch`, which refuses outside a Herdr pane (2026-11-24, p20 on dev-daniel). The launcher's Herdr refusal now names the short loop.
+
 ## Staying alive
 
 The conversation is disposable. Typing `handoff` (or asking it to restart itself) makes
