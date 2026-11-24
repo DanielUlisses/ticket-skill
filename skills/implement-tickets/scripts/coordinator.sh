@@ -151,7 +151,9 @@ for r in "${REPOS[@]}"; do
   repo_lines+="- \`$r\` — boards: ${boards:-none yet}"$'\n'
   # A board marked for the short loop (loop.sh adopt) is run with loop.sh, not tk.sh.
   for b in $boards; do
-    [[ "$(tr -d '[:space:]' <"$r/.scratch/$b/loop" 2>/dev/null)" == short ]] && short_boards+="${short_boards:+, }\`$b\` ($(basename "$r"))"
+    if [[ -f "$r/.scratch/$b/loop" && "$(tr -d '[:space:]' <"$r/.scratch/$b/loop")" == short ]]; then
+      short_boards+="${short_boards:+, }\`$b\` ($(basename "$r"))"
+    fi
   done
 done
 
@@ -193,7 +195,7 @@ for r in "${REPOS[@]}"; do
   mcp_layers+=("$r/.scratch/policy.json")
   for f in "$r"/.scratch/*/policy.json; do [[ -f "$f" ]] && mcp_layers+=("$f"); done
 done
-mcp_names="$(for f in "${mcp_layers[@]}"; do [[ -s "$f" ]] && jq -c '.mcp // []' "$f" 2>/dev/null; done | jq -s 'add // []' | mcp_csv)"
+mcp_names="$(for f in "${mcp_layers[@]}"; do if [[ -s "$f" ]]; then jq -c '.mcp // []' "$f" 2>/dev/null || true; fi; done | jq -s 'add // []' | mcp_csv)"
 mcp_user_args "$mcp_names"
 [[ -z "$MCP_MISSING" ]] || echo "WARN MCP server(s) not on this box, started without: $MCP_MISSING (devboxes mcp_servers, then devbox sync)" >&2
 
