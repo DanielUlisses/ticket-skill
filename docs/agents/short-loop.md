@@ -53,7 +53,7 @@ Derived on every call, in this order: `dropped`, `done` (the ticket says resolve
 answer), `built` (a report beside real work: changes or commits), `idle` (a live session at its prompt
 with no report), `stopped` (a worktree or branch, no live session), `ready`.
 
-`loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, running, next, tickets}`;
+`loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, policy, running, next, tickets}`;
 each ticket carries its state, why, branch, worktree, session, PR, report and questions paths. It is
 what the new daemon reports to the hub.
 
@@ -111,6 +111,23 @@ Per ticket, outside the repo: `~/.local/state/ticket-skill/<repo>/loop/<board>/<
 (the rendered `templates/thread-prompt.md`), `report.md` and `questions.json`. A start moves an earlier
 report and questions aside (answered questions are kept). Answers still go to the ticket's `## Answers`
 and the repo's answers ledger.
+
+## The board's rules
+
+Read from the board policy (`tk.sh policy`'s layers: box, repo, board; see `policy.md`), which the
+hub's Project settings writes on each of a project's boards through `tk.sh policy-set`. `loop.sh
+status` prints them as one `RULES` line, `--json` as `policy`:
+
+| Key | The short loop |
+|---|---|
+| `max_parallel` | the coordinator starts ready tickets while fewer than this are working |
+| `require_human_before_pr` | `true`: `loop.sh pr` opens a new PR only with `--his-word`. Unlike `tk.sh`, unset is `false`: the short loop's own rule is a draft PR as soon as a ticket is built, waiting on his review |
+| `auto_merge` | `true`: the coordinator merges an approved PR (green checks, no conflict) without waiting for his word. `loop.sh merge` still refuses anything not approved |
+| `skills` | `loop.sh start` links each catalog skill (`/opt/skills`) into the worktree's `.claude/skills/`, git-excluded, and records them on the ticket's `**Skills:**` line |
+| `forge`, `base_branch` | as for `tk.sh` |
+
+`night_shift`, `autonomy`, `usage_gate_pct`, `fix_rounds` and `synthesis` belong to tk-hub's old
+scheduler: nothing in the short loop reads them, and the slim daemon reports them off.
 
 ## Settings
 

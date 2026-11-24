@@ -17,7 +17,7 @@ There is no board session, no phase file and no stored state. `loop.sh status <b
 | `built` | its report is written beside real work | read the report, open the draft PR (below) |
 | `review` | a PR is open (draft or not), no decision | nothing; it waits on him |
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |
-| `approved` | he approved the PR | tell him; merge only on his word |
+| `approved` | he approved the PR | tell him; merge only on his word (`merge=once-approved`: merge it now) |
 | `done` / `dropped` | landed (git, or a merged PR), or the ticket says so. On landing, status writes the ticket's `**Status:** resolved` line and stops its finished session | nothing |
 
 Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part out.
@@ -30,20 +30,31 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 | `loop.sh say <board> <NN> <file>` · `loop.sh log <board> <NN> [lines]` | talk to its session · read its screen |
 | `loop.sh report <board> <NN>` | its report |
 | `loop.sh answer <board> <NN> <file>` | as `tk.sh answer`: questions file, `## Answers`, the ledger, then the session |
-| `loop.sh pr <board> <NN> --title <t> --body-file <f> [--message-file <f>] [--paths-file <f>]` | commit the worktree, push, open a **draft** PR with him as reviewer; on an open PR, push the new commits |
-| `loop.sh merge <board> <NN> [--his-word "<his words>"]` | only on his word: approved, checks green, no conflict; a draft is marked ready, then merged |
+| `loop.sh pr <board> <NN> --title <t> --body-file <f> [--message-file <f>] [--paths-file <f>] [--his-word "<his words>"]` | commit the worktree, push, open a **draft** PR with him as reviewer (`pr=ask-first`: only with his words); on an open PR, push the new commits |
+| `loop.sh merge <board> <NN> [--his-word "<his words>"]` | on his word, or his forge approval on a `merge=once-approved` board: approved, checks green, no conflict; a draft is marked ready, then merged |
 | `loop.sh done <board> <NN> "<what>"` | his own ticket (a gate), when he says it is done |
 
 **Starting.** Start `ready` tickets yourself, in number order, while fewer than the policy's `max_parallel` are `working` (`loop.sh status --json` gives both). Never start a `blocked` or `yours` ticket, and never work around a refusal.
 
-**The draft PR is yours.** The ticket's session never commits, pushes or opens a PR. When a ticket is `built`:
+**Each board's rules.** `loop.sh status` prints them on its `RULES` line (`--json`: `policy`); he sets them per project in the hub's Project settings, which writes them to the board's policy file. Read them again before every PR and merge:
+
+| Rule | Means |
+|---|---|
+| `max_parallel=N` | start ready tickets while fewer than N are `working` |
+| `pr=draft-when-built` | open the draft PR as soon as a ticket is `built` (below) |
+| `pr=ask-first` | when a ticket is `built`, tell him it is built and what it did, and open the PR only once he says so: `loop.sh pr … --his-word "<his words>"` (the script refuses without them) |
+| `merge=his-word` | merge only when he says so in this chat |
+| `merge=once-approved` | his approval on the forge is the go: on `approved`, merge with `loop.sh merge` (no `--his-word`) when checks are green and nothing conflicts, then tell him. A refusal goes to him as printed |
+| `skills=…` | catalog skills `loop.sh start` links into each new thread's worktree; nothing for you to do |
+
+**The draft PR is yours.** The ticket's session never commits, pushes or opens a PR. When a ticket is `built` (and, on an `ask-first` board, once he said so):
 
 1. `loop.sh report`, and read it. If the reviewer left a blocking finding, or the criteria aren't met, send it back with `loop.sh say` instead.
 2. Write the commit message and the PR body to files: what changed and why, how it was verified, the report's `## Test plan`. The title and body name the Jira id where there is one, never an internal ticket number ("ticket 05"), never a model, an AI tool, a `Co-authored-by` or any attribution line. `loop.sh pr` refuses those.
 3. Pass `--paths-file` with only the files the change is made of when the worktree holds anything else (a test's leftovers).
 4. Tell him the link in one line. The PR waits for his review: an approval on the forge, or his word here.
 
-**Merging.** Only when he says so in this chat. `loop.sh merge` refuses without a forge approval; when he opened the PR himself the forge can't take his approval, and then his words here are the approval: pass them with `--his-word`. A refusal (red checks, a conflict, changes requested) goes to him as printed, with what you would do about it.
+**Merging.** Only when he says so in this chat, or on an `approved` PR of a `merge=once-approved` board. `loop.sh merge` refuses without a forge approval; when he opened the PR himself the forge can't take his approval, and then his words here are the approval: pass them with `--his-word`. A refusal (red checks, a conflict, changes requested) goes to him as printed, with what you would do about it.
 
 **Watching.** Nobody else watches these boards for you: while your inbox watcher waits, it runs `loop.sh watch` on each of them every two minutes, and a ticket that moved becomes an event in your inbox like any other (`board`, `nn`, `repo`, `state`, `from`, `text`, `pr`):
 
@@ -56,7 +67,7 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 | `resume` | its session is gone, two checks in a row | `loop.sh resume` it, and tell him only if it dies again |
 | `changes` | he requested changes on the PR | relay them to its session |
 | `fixed` | a new report while its PR is open (a fix round finished) | read it; `loop.sh pr` pushes the fix |
-| `approved` | he approved the PR | tell him; merge only on his word |
+| `approved` | he approved the PR | `merge=his-word`: tell him; merge only on his word. `merge=once-approved`: `loop.sh merge`, then tell him |
 | `landed` | merged, or resolved | nothing; a slot is free |
 | `message` | a thread wrote to another (or to you): `text` says who, to whom, whether it was delivered | read it. Step in when it changes a ticket's scope (that is his call), makes one ticket wait on another, or was not delivered (`loop.sh say` it when the target runs, or answer it yourself). A thread may never touch another's worktree |
 
