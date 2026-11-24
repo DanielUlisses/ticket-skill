@@ -89,7 +89,8 @@ events in the inbox: <path>"), and only into a session quiet for a while; its da
 the news is a pointer to the files, never an approval. The session reads them, runs the digests (an
 event may be stale; the digest wins), handles each one under the rules above, journals
 it and moves the file to `inbox/done/`. A folder started by hand gets the same inbox
-when the box runs the daemon.
+when the box runs the daemon. On short-loop boards the watcher itself writes the events (`loop.sh watch`), and the session can run under
+the box runner instead of a terminal (`coordinator.sh --runner`): docs/agents/short-loop.md.
 
 `coordinator.sh --json <project> [<repo>...]` starts nothing: it makes the folder and
 the brief and prints `{"project", "dir", "prompt", "args"}`, the folder, the first

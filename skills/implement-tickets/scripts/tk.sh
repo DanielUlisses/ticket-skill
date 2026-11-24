@@ -2565,6 +2565,8 @@ HELP
 }
 
 verb="${1:-}"; shift || true
+TK_VERB="$verb"   # read by board-lib.sh short_loop_guard
+export TK_VERB
 case "$verb" in
   digest|launch|resume|rebase|gates|ready|pr|push|merge|resolve|why|say|answer|answers|show|helpers|retro|view|boards|export|batch|deployed|help) "cmd_$verb" "$@" ;;
   retro-save) cmd_retro_save "$@" ;;

@@ -195,7 +195,13 @@ load_board() {
   while IFS=$'\t' read -r r n; do
     [[ -n "$r" ]] || continue
     path=""
-    [[ -f "$BOARD_PATH/repos" ]] && path="$(awk -v r="$r" '$1 == r { $1 = ""; sub(/^ +/, ""); print; exit }' "$BOARD_PATH/repos")"
+    # The short loop (loop.sh sets TICKET_XBOARD_SIBLING_FIRST) runs boards copied
+    # into a separate folder: the sibling clone there is the one it updates, while
+    # the repos file still names the old checkouts.
+    if [[ "${TICKET_XBOARD_SIBLING_FIRST:-0}" == 1 && -d "$(dirname "$ROOT")/$r/.scratch/$BOARD_ID" ]]; then
+      path="$(dirname "$ROOT")/$r"
+    fi
+    [[ -z "$path" && -f "$BOARD_PATH/repos" ]] && path="$(awk -v r="$r" '$1 == r { $1 = ""; sub(/^ +/, ""); print; exit }' "$BOARD_PATH/repos")"
     [[ -n "$path" ]] || path="$(dirname "$ROOT")/$r"
     st="missing"
     f="$(find "$path/.scratch/$BOARD_ID/issues" -maxdepth 1 -name '*.md' 2>/dev/null \
@@ -486,6 +492,7 @@ board_init() {
     git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$BASE_BRANCH" && BASE_REF="$REMOTE/$BASE_BRANCH"
   fi
   resolve_board "${1:-}"
+  short_loop_guard
   policy_forge_env
   forge_detect
   # Local mode merges into the local base and never pushes it, so that is what
@@ -499,6 +506,19 @@ board_init() {
   else
     load_board
   fi
+}
+
+# A short-loop board (.scratch/<board>/loop holding `short`, written by loop.sh
+# adopt) is run by the project coordinator through loop.sh: the verbs of tk.sh
+# that act on tickets refuse it, so the two loops never act on one board.
+# Reading verbs (digest, export, view, boards, policy) still work. TK_VERB is
+# set by tk.sh's dispatch; scripts that never set it are not guarded here.
+short_loop_guard() {
+  [[ -f "$BOARD_PATH/loop" && "$(tr -d '[:space:]' <"$BOARD_PATH/loop")" == short ]] || return 0
+  case "${TK_VERB:-}" in
+    launch|resume|rebase|pr|push|merge|resolve|say|answer|batch|deployed|rescope|rescope-apply)
+      die "board $BOARD_ID runs on the short loop ($BOARD_PATH/loop) — tk.sh $TK_VERB doesn't act on it; the project coordinator runs it with loop.sh" ;;
+  esac
 }
 
 # ---- the forge: where PRs live ---------------------------------------------------
