@@ -306,6 +306,8 @@ link_catalog_skills() {
   mkdir -p "$WT/.claude/skills" "$(dirname "$exclude")"
   for name in "${SKILLS_LINKED[@]}"; do
     dest="$WT/.claude/skills/$name"
+    # Linked by an earlier start of this worktree: keep it.
+    if [[ -L "$dest" && "$(readlink "$dest")" == "$CATALOG_DIR/$name" ]]; then kept+=("$name"); continue; fi
     if [[ -e "$dest" || -L "$dest" ]]; then
       log "skill '$name': the repo has its own .claude/skills/$name — keeping it, not the catalog's"
       SKILLS_MISSING+=("$name(repo's own)")

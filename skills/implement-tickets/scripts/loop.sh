@@ -31,9 +31,11 @@
 #   loop.sh report  <board> <NN>            the ticket's report, as the session saved it
 #   loop.sh answer  <board> <NN> <answer.json>   {"id","a"[,"scope":"project"]}: the questions file, the
 #                                           ticket's ## Answers, the repo's answers ledger, then the session
-#   loop.sh pr      <board> <NN> --title <t> --body-file <f> [--message-file <f>]
+#   loop.sh pr      <board> <NN> --title <t> --body-file <f> [--message-file <f>] [--his-word "<…>"]
 #                                           commit the worktree, push the branch, open a DRAFT PR, ask the
-#                                           developer to review it; a PR already open gets the new commits
+#                                           developer to review it; a PR already open gets the new commits.
+#                                           A board whose policy asks first (require_human_before_pr: true)
+#                                           opens one only with his words (--his-word)
 #   loop.sh merge   <board> <NN> [--his-word "<what he said>"]
 #                                           on the developer's word only: the PR approved (or his word, where
 #                                           the forge can't record his approval), checks not red, not
@@ -87,6 +89,23 @@ is_short_board() { [[ -f "$BOARD_PATH/loop" ]] && [[ "$(tr -d '[:space:]' <"$BOA
 loop_init() {
   board_init "${1:-}"
   is_short_board || die "board $BOARD_ID is not a short-loop board (no $BOARD_PATH/loop) — the board session runs it; loop.sh adopt $BOARD_ID moves it here"
+}
+
+# The board's rules the short loop acts on, as one JSON object: max_parallel,
+# auto_merge and skills from the resolved policy (tk.sh policy's layers), and
+# require_human_before_pr only where a layer sets it true: the short loop's own
+# default is a draft PR as soon as a ticket is built (it waits on his review
+# either way), which tk.sh's default of true would turn off for every board.
+# In a subshell, so FORGE and TICKET_FORGE stay loop_init's.
+LOOP_POLICY_DEFAULT='{"max_parallel":4,"auto_merge":false,"skills":[],"require_human_before_pr":false}'
+loop_policy() {
+  ( policy_resolve - >/dev/null 2>&1 || exit 1
+    jq -c --argjson layers "$POLICY_LAYERS" '{
+        max_parallel: (if (.max_parallel | type) == "number" and .max_parallel >= 1 then .max_parallel else 4 end),
+        auto_merge: (.auto_merge == true),
+        skills: (if (.skills | type) == "array" then .skills else [] end),
+        require_human_before_pr: ($layers.require_human_before_pr == true)}' <<<"$POLICY_JSON"
+  ) 2>/dev/null || echo "$LOOP_POLICY_DEFAULT"
 }
 
 # Where a ticket's own files live: brief, report, questions. Outside the repo
@@ -456,13 +475,14 @@ cmd_status() {
   [[ -n "$one" ]] && out="$(jq -c --arg n "$one" '[.[] | select((.nn | tonumber) == ($n | tonumber))]' <<<"$STATES")"
   if (( json )); then
     jq -n --arg board "$BOARD_ID" --arg repo "$ROOT" --arg base "$BASE_BRANCH" --arg forge "$FORGE" \
-      --argjson max "$(policy_resolve 2>/dev/null | jq '.max_parallel // 3' 2>/dev/null || echo 3)" --argjson t "$out" \
-      '{board: $board, repo: $repo, base: $base, forge: $forge, max_parallel: $max,
+      --argjson policy "$(loop_policy)" --argjson t "$out" \
+      '{board: $board, repo: $repo, base: $base, forge: $forge, max_parallel: $policy.max_parallel, policy: $policy,
         running: ([$t[] | select(.state == "working")] | length),
         next: [$t[] | select(.state == "ready") | .nn], tickets: $t}'
     return
   fi
   echo "BOARD $BOARD_ID  repo $ROOT  base $BASE_BRANCH  forge $FORGE"
+  jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end)"' <<<"$(loop_policy)"
   jq -r '.[] | "\(.nn)  \(.state | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
 }
@@ -613,6 +633,13 @@ cmd_start() {
     brief="$(agent_state_file "$dir/brief.md")"
   fi
   WT="$wt"; export WT; trust_worktree_mise || true
+  # The board's catalog skills (policy `skills`, which Project settings writes),
+  # linked into the worktree and git-excluded, as the old launcher did.
+  # shellcheck disable=SC2034  # read by resolve_catalog_skills (lib/ticket-launcher.sh)
+  SKILLS_REQUESTED="$(jq -r '.skills | join(",")' <<<"$(loop_policy)")"
+  resolve_catalog_skills
+  link_catalog_skills
+  t="$(jq -c --arg s "$(IFS=,; echo "${SKILLS_LINKED[*]-}")" '.skills = ($s | if . == "" then [] else split(",") end)' <<<"$t")"
   first="Start ticket $nn: follow your instructions from Phase 0."
   if [[ "$state" == stopped ]]; then
     first="Ticket $nn: an earlier session worked in this worktree and stopped. Look at what it left (git status, git diff $base_commit), then carry on from the phase that work reaches; don't redo what is done."
@@ -745,13 +772,14 @@ cmd_answer() {
 model_names() { grep -iE '(^|[^[:alnum:]])(claude|anthropic|opus|sonnet|haiku|fable|chatgpt|gpt-[0-9]|copilot)([^[:alnum:]]|$)' "$1" || true; }
 
 cmd_pr() {
-  local usage="usage: loop.sh pr <board> <NN> --title <t> --body-file <f> [--message-file <f>] [--paths-file <f>]"
+  local usage="usage: loop.sh pr <board> <NN> --title <t> --body-file <f> [--message-file <f>] [--paths-file <f>] [--his-word \"<what he said>\"]"
   local board="${1:?$usage}" nn="${2:?$usage}"; shift 2
-  local title="" body="" msgf="" pathsf=""
+  local title="" body="" msgf="" pathsf="" word=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title) title="$2"; shift 2 ;; --body-file) body="$2"; shift 2 ;;
       --message-file) msgf="$2"; shift 2 ;; --paths-file) pathsf="$2"; shift 2 ;;
+      --his-word) word="$2"; shift 2 ;;
       *) die "unknown argument: $1 — $usage" ;;
     esac
   done
@@ -771,6 +799,13 @@ cmd_pr() {
   [[ -d "$wt" ]] || die "no worktree at $wt"
   [[ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" == "$branch" ]] || die "worktree $wt is not on $branch"
   [[ "$(jq -r '.last_turn // ""' <<<"$s")" == working ]] && die "ticket $nn's session is still working — wait for it"
+
+  # The board's rule "ask me first" (require_human_before_pr set true): a new PR
+  # only on his word. Pushing to a PR already open needs none.
+  if [[ "$pr" == null && "$(jq -r .require_human_before_pr <<<"$(loop_policy)")" == true ]]; then
+    [[ -n "$word" ]] || die "NOT OPENED — this board asks him first (require_human_before_pr): tell him ticket $nn is built, then pass his words with --his-word"
+    log "ticket $nn: opening the PR on his word: $word"
+  fi
 
   # The PR's words are checked before anything is committed or pushed.
   if [[ "$pr" == null ]]; then
