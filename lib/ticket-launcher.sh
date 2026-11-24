@@ -251,6 +251,31 @@ resolve_remote_control() {
   return 0
 }
 
+# ---- MCP servers -------------------------------------------------------------------
+# The MCP servers a session loads (docs/agents/policy.md, mcp): devboxes'
+# mcp_servers writes one Claude --mcp-config file per server, for the box user in
+# ${TICKET_MCP_DIR:-~/.config/devbox/mcp}/<name>.json and for the agent user in its
+# own home; the policy key `mcp` (a list of names) turns some on for a board,
+# repo or box. Nothing is on by default. A name the box doesn't hold is skipped
+# and said, never fatal.
+
+# The names in a JSON list on stdin that are valid server names, comma-separated.
+mcp_csv() { jq -r '[(if type == "array" then . else [] end)[] | strings
+                    | select(test("^[a-z0-9][a-z0-9_-]{0,63}$"))] | unique | join(",")' 2>/dev/null || true; }
+
+# Sets MCP_ARGS (--mcp-config <file> per name in csv $1 the box user has) and
+# MCP_MISSING (the names it doesn't, space-separated).
+mcp_user_args() {
+  local dir="${TICKET_MCP_DIR:-$HOME/.config/devbox/mcp}" n
+  MCP_ARGS=(); MCP_MISSING=""
+  [[ -n "${1:-}" ]] || return 0
+  local -a names; IFS=, read -r -a names <<<"$1"
+  for n in "${names[@]}"; do
+    if [[ -s "$dir/$n.json" ]]; then MCP_ARGS+=(--mcp-config "$dir/$n.json")
+    else MCP_MISSING+="${MCP_MISSING:+ }$n"; fi
+  done
+}
+
 # ---- catalog skills ---------------------------------------------------------------
 # The skills-catalog skills this ticket gets (docs/agents/skills.md): devboxes syncs
 # the catalog to ${TICKET_SKILLS_CATALOG:-/opt/skills}/<name>/ (never into

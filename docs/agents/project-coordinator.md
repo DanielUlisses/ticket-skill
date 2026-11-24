@@ -16,7 +16,9 @@ tkc <project> [<repo>...]      # coordinator.sh; --print shows the command, --re
   folder's `repos` file, so they are named once; a first start with none takes the repo
   the shell is in. Each is resolved to its main checkout and added with `--add-dir`.
 - The session runs in the folder, on `TICKET_PCOORD_MODEL` @ `TICKET_PCOORD_EFFORT`
-  (`sonnet` @ `medium`), with no MCP servers, the brief
+  (`sonnet` @ `medium`), with only the MCP servers the policy key `mcp` names in the
+  box layer, its repos' `.scratch/policy.json` or their boards' (`docs/agents/policy.md`;
+  the files are devboxes' `mcp_servers`) and no others (`--strict-mcp-config`), the brief
   `templates/project-coordinator-prompt.md` appended to its system prompt, and
   `ticket-merger`, `ticket-pr-creator`, `ticket-scout` and `ticket-researcher` to
   dispatch. `tk.sh`, the launcher, `merge-conflict.sh` and `pr-open.sh` run without a

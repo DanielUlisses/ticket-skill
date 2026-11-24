@@ -184,12 +184,25 @@ jq -n --arg cmd "$(printf '%q hook %q' "$SCRIPTS/coordinator-inbox.sh" "$DIR")" 
 
 build_session_agents ticket-merger ticket-pr-creator ticket-scout ticket-researcher
 
+# The project's MCP servers: every name the policy key `mcp` lists in the box
+# layer, its repos' layer or any of their boards' (devboxes writes the files,
+# mcp_servers). It runs as the box user, so its files are the box user's; the
+# --strict-mcp-config below keeps everything else out.
+mcp_layers=("${TICKET_BOX_POLICY:-$HOME/.config/tk-daemon/policy.json}")
+for r in "${REPOS[@]}"; do
+  mcp_layers+=("$r/.scratch/policy.json")
+  for f in "$r"/.scratch/*/policy.json; do [[ -f "$f" ]] && mcp_layers+=("$f"); done
+done
+mcp_names="$(for f in "${mcp_layers[@]}"; do [[ -s "$f" ]] && jq -c '.mcp // []' "$f" 2>/dev/null; done | jq -s 'add // []' | mcp_csv)"
+mcp_user_args "$mcp_names"
+[[ -z "$MCP_MISSING" ]] || echo "WARN MCP server(s) not on this box, started without: $MCP_MISSING (devboxes mcp_servers, then devbox sync)" >&2
+
 first="Start as the project coordinator of ${PROJECT}: follow 'Every start' in your instructions."
 (( resume )) && first="You were restarted. Read state.md and journal.log's last lines, run the digests again, start the inbox watcher again, and carry on: tell me only what changed."
 resume_note="You were restarted. Read state.md and journal.log's last lines, run the digests (and loop.sh status on short-loop boards) again, start the inbox watcher again in the background, and carry on: tell me only what changed."
 cmd=(claude "$first"
      --model "$PCOORD_MODEL" --effort "$PCOORD_EFFORT"
-     --strict-mcp-config
+     --strict-mcp-config ${MCP_ARGS[@]+"${MCP_ARGS[@]}"}
      --append-system-prompt-file "$PROMPT")
 (( runner )) || cmd+=(--settings "$SETTINGS")
 (( resume && ! runner )) && cmd+=(--continue)
@@ -199,7 +212,7 @@ for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 # Its own scripts run without a prompt each time; anything else asks.
 cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)")
 
-log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards}"
+log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
 if (( as_json )); then
   jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" --arg session "$SESSION" --arg note "$resume_note" \
     '{project: $project, dir: $dir, prompt: $prompt, session: $session, resume_note: $note, args: $ARGS.positional}' --args -- "${cmd[@]:2}"

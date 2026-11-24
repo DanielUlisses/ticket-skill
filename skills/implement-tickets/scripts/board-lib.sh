@@ -944,10 +944,11 @@ load_models_env() {
 POLICY_CHECK='
   def kinds: {forge: "forge", require_human_before_pr: "bool", auto_merge: "bool", night_shift: "bool",
               autonomy: "autonomy", max_parallel: "count", usage_gate_pct: "pct", synthesis: "object",
-              base_branch: "branch", skills: "names", fix_rounds: "rounds"};
+              base_branch: "branch", skills: "names", mcp: "mcps", fix_rounds: "rounds"};
   def want: {bool: "true or false", forge: "github, azure or none", autonomy: "assist or auto",
              count: "a whole number from 1 to 1000", pct: "a number from 0 to 100", object: "a JSON object",
              branch: "a branch name", names: "a list of skill names ([a-z0-9][a-z0-9._-]*)",
+             mcps: "a list of MCP server names ([a-z0-9][a-z0-9_-]*)",
              rounds: "a whole number from 0 to 10"};
   def ok($t; $v):
     if   $t == "bool"     then ($v | type) == "boolean"
@@ -958,6 +959,7 @@ POLICY_CHECK='
     elif $t == "pct"      then ($v | type) == "number" and $v >= 0 and $v <= 100
     elif $t == "branch"   then ($v | type) == "string" and $v != ""
     elif $t == "names"    then ($v | type) == "array" and all($v[]; type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$"))
+    elif $t == "mcps"     then ($v | type) == "array" and all($v[]; type == "string" and test("^[a-z0-9][a-z0-9_-]{0,63}$"))
     else ($v | type) == "object" end;
   to_entries[] | select($only == "" or .key == $only)
   | kinds[.key] as $t | select($t != null) | select(ok($t; .value) | not)
@@ -1039,7 +1041,7 @@ policy_resolve() {
   POLICY_JSON="$(jq -c --arg detected "$FORGE" --arg env "$env_forge" --argjson remote "$HAS_REMOTE" '
     {forge: $detected, require_human_before_pr: true, auto_merge: false, night_shift: false,
      autonomy: "assist", max_parallel: 4, usage_gate_pct: 90,
-     synthesis: {backends: ["agy"], timeout: 300}, skills: [], fix_rounds: 1} * .
+     synthesis: {backends: ["agy"], timeout: 300}, skills: [], mcp: [], fix_rounds: 1} * .
     | if $env != "" then .forge = $env else . end
     | if $remote == 0 then .forge = "none" else . end
     | '"$POLICY_NORM" <<<"$POLICY_LAYERS")"

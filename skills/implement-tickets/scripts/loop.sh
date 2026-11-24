@@ -97,13 +97,14 @@ loop_init() {
 # default is a draft PR as soon as a ticket is built (it waits on his review
 # either way), which tk.sh's default of true would turn off for every board.
 # In a subshell, so FORGE and TICKET_FORGE stay loop_init's.
-LOOP_POLICY_DEFAULT='{"max_parallel":4,"auto_merge":false,"skills":[],"require_human_before_pr":false}'
+LOOP_POLICY_DEFAULT='{"max_parallel":4,"auto_merge":false,"skills":[],"mcp":[],"require_human_before_pr":false}'
 loop_policy() {
   ( policy_resolve - >/dev/null 2>&1 || exit 1
     jq -c --argjson layers "$POLICY_LAYERS" '{
         max_parallel: (if (.max_parallel | type) == "number" and .max_parallel >= 1 then .max_parallel else 4 end),
         auto_merge: (.auto_merge == true),
         skills: (if (.skills | type) == "array" then .skills else [] end),
+        mcp: (if (.mcp | type) == "array" then .mcp else [] end),
         require_human_before_pr: ($layers.require_human_before_pr == true)}' <<<"$POLICY_JSON"
   ) 2>/dev/null || echo "$LOOP_POLICY_DEFAULT"
 }
@@ -482,7 +483,7 @@ cmd_status() {
     return
   fi
   echo "BOARD $BOARD_ID  repo $ROOT  base $BASE_BRANCH  forge $FORGE"
-  jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end)"' <<<"$(loop_policy)"
+  jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end) mcp=\(if (.mcp | length) == 0 then "none" else (.mcp | join(",")) end)"' <<<"$(loop_policy)"
   jq -r '.[] | "\(.nn)  \(.state | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
 }
@@ -535,16 +536,28 @@ render_brief() {
 # Starts the thread session for one ticket in <wt> through the runner.
 start_session() {
   local sess="$1" wt="$2" brief="$3" first="$4" model="$5" effort="$6"
-  local -a cmd agents_arg=() as_agent=()
+  local -a cmd agents_arg=() as_agent=() mcp_env=() mcp
   # With the box's agent user on, the session runs as that user (the runner's
   # --agent: sudo and devboxes' wrapper), reading its brief from the shared copy.
   agent_on && as_agent=(--agent)
+  # The board's MCP servers (policy `mcp`): the agent's own copies through the
+  # wrapper (TICKET_MCP), or the box user's files. None on the box: said, skipped.
+  mcp="$(jq -c '.mcp' <<<"$(loop_policy)" | mcp_csv)"
+  MCP_ARGS=(); MCP_MISSING=""
+  if [[ -n "$mcp" ]]; then
+    if agent_on; then mcp_env=(--env "TICKET_MCP=$mcp")
+    else
+      mcp_user_args "$mcp"
+      [[ -z "$MCP_MISSING" ]] || echo "WARN MCP server(s) not on this box, started without: $MCP_MISSING (devboxes mcp_servers, then devbox sync)" >&2
+    fi
+  fi
   build_session_agents ticket-implementer ticket-reviewer ticket-scout ticket-researcher ticket-tester ticket-criteria-checker
   [[ -n "$SESSION_AGENTS_JSON" ]] && agents_arg=(--agents "$SESSION_AGENTS_JSON")
   cmd=(claude --model "$COORD_MODEL" --effort "$COORD_EFFORT"
        --permission-mode "${TICKET_LOOP_PERMISSION_MODE:-bypassPermissions}"
        --append-system-prompt-file "$brief"
        ${agents_arg[@]+"${agents_arg[@]}"}
+       ${MCP_ARGS[@]+"${MCP_ARGS[@]}"}
        --disallowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" "Bash(git stash:*)"
          "Bash(git reset:*)" "Bash(git rebase:*)" "Bash(git checkout:*)" "Bash(git switch:*)"
          "Bash(gh pr:*)" "Bash(az repos pr:*)")
@@ -554,7 +567,7 @@ start_session() {
   # resume doesn't send it again; --trust answers the folder-trust dialog.
   local pf; pf="$(dirname "$brief")/first-prompt.md"; printf '%s\n' "$first" >"$pf"
   "$RUNNER" start "$sess" --dir "$wt" --trust --prompt-file "$pf" ${as_agent[@]+"${as_agent[@]}"} \
-    --env "TICKET_IMPL_MODEL=$model" --env "TICKET_IMPL_EFFORT=$effort" -- "${cmd[@]}" >/dev/null
+    --env "TICKET_IMPL_MODEL=$model" --env "TICKET_IMPL_EFFORT=$effort" ${mcp_env[@]+"${mcp_env[@]}"} -- "${cmd[@]}" >/dev/null
 }
 
 cmd_start() {
