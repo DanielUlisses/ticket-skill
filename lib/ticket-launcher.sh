@@ -864,7 +864,7 @@ require_valid_effort() {
   # reason: an unknown level in an --agents definition is as silent as one on
   # the command line.
   local role var
-  for role in COORD BOARD PCOORD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
+  for role in COORD BOARD PCOORD THREAD REVIEW TEST SCOUT RESEARCH CHECK MERGE RETRO PR DOCREVIEW; do
     var="${role}_EFFORT"
     effort_valid "${!var}" \
       || die "invalid effort '${!var}' for TICKET_${role/DOCREVIEW/DOC_REVIEW}_EFFORT (from $MODELS_CONF or the environment) — one of: $EFFORT_LEVELS"
@@ -921,6 +921,7 @@ load_ticket_models() {
   REVIEW_EFFORT_UNTESTED="${TICKET_REVIEW_EFFORT_UNTESTED:-high}"
   BOARD_MODEL="${TICKET_BOARD_MODEL:-haiku}";      BOARD_EFFORT="${TICKET_BOARD_EFFORT:-low}"
   PCOORD_MODEL="${TICKET_PCOORD_MODEL:-sonnet}";   PCOORD_EFFORT="${TICKET_PCOORD_EFFORT:-medium}"
+  THREAD_MODEL="${TICKET_THREAD_MODEL:-opus}";     THREAD_EFFORT="${TICKET_THREAD_EFFORT:-medium}"
   MERGE_MODEL="${TICKET_MERGE_MODEL:-sonnet}";     MERGE_EFFORT="${TICKET_MERGE_EFFORT:-medium}"
   RETRO_MODEL="${TICKET_RETRO_MODEL:-sonnet}";     RETRO_EFFORT="${TICKET_RETRO_EFFORT:-medium}"
   PR_MODEL="${TICKET_PR_MODEL:-sonnet}";           PR_EFFORT="${TICKET_PR_EFFORT:-low}"
@@ -984,6 +985,7 @@ print_launch_defaults() {
   # What board.sh starts the board session on.
   echo "BOARD=$BOARD_MODEL @ $BOARD_EFFORT (from config — the board session board.sh starts)"
   echo "PROJECT_COORDINATOR=$PCOORD_MODEL @ $PCOORD_EFFORT (from config — the project coordinator session coordinator.sh starts)"
+  echo "COORDINATOR_THREADS=$THREAD_MODEL @ $THREAD_EFFORT (from config — the discovery threads the project coordinator opens with thread.sh)"
 
   # Without the switcher there is nothing to choose between: no link can be
   # written, so every ticket runs on the standard ~/.claude whatever
