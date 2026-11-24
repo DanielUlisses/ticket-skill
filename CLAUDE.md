@@ -94,7 +94,7 @@ The `project-manager` skill is the brief tk-hub's weekly project review (Opus) a
 ### Board policy
 
 How a board behaves — `forge`, `require_human_before_pr`, `auto_merge`, `night_shift`,
-`autonomy`, `max_parallel`, `usage_gate_pct`, `synthesis`, `base_branch` — is one JSON object that
+`autonomy`, `max_parallel`, `usage_gate_pct`, `synthesis`, `base_branch`, `skills`, `mcp` (the MCP servers devboxes' `mcp_servers` put on the box that its coordinator and threads load) — is one JSON object that
 tk-hub and the board session both read with `tk.sh policy <board>` (`tk.sh digest` prints it as one `POLICY` line), layered (later wins) from built-in defaults, the
 box (`~/.config/tk-daemon/policy.json`), the repo (`.scratch/policy.json`) and the board
 (`.scratch/<board>/policy.json`, written by `tk.sh policy-set`). Env `TICKET_FORGE` beats `forge`, and a

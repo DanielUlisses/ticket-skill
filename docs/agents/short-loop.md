@@ -124,6 +124,7 @@ status` prints them as one `RULES` line, `--json` as `policy`:
 | `require_human_before_pr` | `true`: `loop.sh pr` opens a new PR only with `--his-word`. Unlike `tk.sh`, unset is `false`: the short loop's own rule is a draft PR as soon as a ticket is built, waiting on his review |
 | `auto_merge` | `true`: the coordinator merges an approved PR (green checks, no conflict) without waiting for his word. `loop.sh merge` still refuses anything not approved |
 | `skills` | `loop.sh start` links each catalog skill (`/opt/skills`) into the worktree's `.claude/skills/`, git-excluded, and records them on the ticket's `**Skills:**` line |
+| `mcp` | `loop.sh start` loads the board's MCP servers in the thread: `--env TICKET_MCP=<names>` to the runner with the agent user on (devboxes' wrapper adds the agent's own `--mcp-config` files), else `--mcp-config` on the box user's files; one not on the box is skipped with a `WARN` |
 | `forge`, `base_branch` | as for `tk.sh` |
 
 `night_shift`, `autonomy`, `usage_gate_pct`, `fix_rounds` and `synthesis` belong to tk-hub's old
