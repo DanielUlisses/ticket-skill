@@ -44,6 +44,13 @@
 #   loop.sh watch   <board> --inbox <dir>   for the coordinator's inbox watcher: one event file per ticket
 #                                           that moved (start, built, question, idle, resume, changes, fixed,
 #                                           approved, landed); exit 3 when a lookup failed (nothing recorded)
+#   loop.sh publish <board>                 an offline board, on the box that runs it: copy its files into the
+#                                           bridge repo's clone, commit and push (watch does it on every pass)
+#
+# An offline board (docs/agents/bridge.md) commits `.scratch/<board>/offline`, naming the box that
+# runs it. On that box it is an ordinary short-loop board that `publish` copies to a bridge repo;
+# on any other box (a clone of the bridge repo, only pulled) status and watch read its ticket files
+# as they stand and every other verb refuses.
 #
 # Any verb takes `-C <repo>` first (loop.sh -C <repo> status …): run as if from that checkout.
 #
@@ -54,6 +61,10 @@
 #   TICKET_PR_ASSIGNEE  GitHub only, default @me
 #   TICKET_RELAY        the relay between runner sessions (default tk-relay on PATH or in
 #                       ~/.local/bin; none: devbox-run say). say and watch's messages use it
+#   TICKET_BOX          this box's name as an offline board's `offline` file spells it
+#                       (default `hostname -s`)
+#   TICKET_BRIDGE_DIR   the bridge repo's clone `publish` copies an offline board into; else the
+#                       path in <repo>/.scratch/bridge (one line, never committed)
 #   TICKET_LOOP_PERMISSION_MODE  the thread session's --permission-mode (default bypassPermissions,
 #                       as the old launcher's; commit, push and PR commands stay disallowed)
 #
@@ -85,9 +96,28 @@ LOOP_MARK=short
 
 is_short_board() { [[ -f "$BOARD_PATH/loop" ]] && [[ "$(tr -d '[:space:]' <"$BOARD_PATH/loop")" == "$LOOP_MARK" ]]; }
 
-# board_init, then refuse a board that hasn't opted in.
+# An offline board names the box that runs it in .scratch/<board>/offline.
+this_box() { echo "${TICKET_BOX:-$(hostname -s 2>/dev/null || hostname)}"; }
+offline_name() { [[ -f "$BOARD_PATH/offline" ]] || return 0; awk 'NF { print $1; exit }' "$BOARD_PATH/offline"; }
+# The box that runs this board when it isn't this one, else nothing.
+offline_elsewhere() {
+  [[ -f "$BOARD_PATH/offline" ]] || return 0
+  local n; n="$(offline_name)"; n="${n:-elsewhere}"
+  [[ "$n" == "$(this_box)" ]] || echo "$n"
+}
+
+# board_init, then refuse a board that hasn't opted in. An offline board that
+# another box runs is read only here: status and watch, from its ticket files.
+OFFLINE=""
 loop_init() {
   board_init "${1:-}"
+  OFFLINE="$(offline_elsewhere)"
+  if [[ -n "$OFFLINE" ]]; then
+    case "${LOOP_VERB:-}" in
+      status|watch) return 0 ;;
+      *) die "board $BOARD_ID is an offline board: it runs on $OFFLINE, and this box only reads its ticket files (loop.sh status $BOARD_ID)" ;;
+    esac
+  fi
   is_short_board || die "board $BOARD_ID is not a short-loop board (no $BOARD_PATH/loop) — the board session runs it; loop.sh adopt $BOARD_ID moves it here"
 }
 
@@ -364,8 +394,29 @@ record_start() {
   mv "$tmp" "$f"
 }
 
+# An offline board another box runs: every ticket as its file reads, nothing
+# asked of git, the forge or the runner. `ready` is what that box starts next.
+derive_offline() {
+  RUNNER_FAILED=0; FORGE_FAILED=0
+  STATES="$(jq -c --arg box "$OFFLINE" '
+    [.[] | select(.status == "resolved" or .status == "dropped") | .nn] as $fin
+    | map(. as $t
+      | ([$t.blockers[] | select(IN($fin[]) | not)] + ($t.xblockers_open // [])) as $open
+      | (if $t.status == "dropped" then ["dropped", "the ticket says dropped"]
+         elif $t.status == "resolved" then ["done", "the ticket says resolved"]
+         elif ($open | length) > 0 then ["blocked", "waits for " + ($open | join(","))]
+         elif $t.status == "in-progress" then ["working", "in progress on \($box), by its ticket file"]
+         elif $t.owner == "me" then ["yours", "**Owner:** me, done on \($box)"]
+         else ["ready", "next on \($box): nothing started, every blocker done"] end) as $s
+      | {nn: $t.nn, title: $t.title, state: $s[0], why: $s[1], owner: $t.owner, blockers: $t.blockers,
+         branch: "", has_branch: false, worktree: "", has_worktree: false, session: "", alive: false,
+         last_turn: null, transcript: null, pr: null, landed: "-", report: "", reported: false,
+         questions: "", open_questions: 0, suggested_model: $t.smodel, suggested_effort: $t.seffort})' <<<"$BOARD_JSON")"
+}
+
 derive_all() {
   local pass t row rows done_now
+  if [[ -n "$OFFLINE" ]]; then derive_offline; return; fi
   fetch_board_refs >&2
   forge_cache_begin
   RUNNER_ALL=""; RUNNER_FAILED=0
@@ -408,6 +459,8 @@ cmd_adopt() {
   board_init "${1:?$usage}"
   local force=0 t nn agent live=() held=()
   [[ "${2:-}" == --force ]] && force=1
+  OFFLINE="$(offline_elsewhere)"
+  if [[ -n "$OFFLINE" ]]; then echo "NOT ADOPTED $BOARD_ID — an offline board: it runs on $OFFLINE, this box only reads it"; return 1; fi
   if is_short_board; then echo "ALREADY $BOARD_ID is a short-loop board"; return 0; fi
   # Once marked, tk.sh refuses this board (pr, merge, resolve, say, answer…), so
   # an old-loop agent still running here would be stranded, and this loop would
@@ -476,13 +529,15 @@ cmd_status() {
   [[ -n "$one" ]] && out="$(jq -c --arg n "$one" '[.[] | select((.nn | tonumber) == ($n | tonumber))]' <<<"$STATES")"
   if (( json )); then
     jq -n --arg board "$BOARD_ID" --arg repo "$ROOT" --arg base "$BASE_BRANCH" --arg forge "$FORGE" \
-      --argjson policy "$(loop_policy)" --argjson t "$out" \
+      --argjson policy "$(loop_policy)" --argjson t "$out" --arg offline "$OFFLINE" \
       '{board: $board, repo: $repo, base: $base, forge: $forge, max_parallel: $policy.max_parallel, policy: $policy,
+        offline: (if $offline == "" then null else $offline end),
         running: ([$t[] | select(.state == "working")] | length),
         next: [$t[] | select(.state == "ready") | .nn], tickets: $t}'
     return
   fi
   echo "BOARD $BOARD_ID  repo $ROOT  base $BASE_BRANCH  forge $FORGE"
+  [[ -z "$OFFLINE" ]] || echo "OFFLINE runs on $OFFLINE — read only here: each state is the ticket file's own, as of the last pull ($(git -C "$ROOT" log -1 --format=%cr 2>/dev/null || echo unknown))"
   jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end) mcp=\(if (.mcp | length) == 0 then "none" else (.mcp | join(",")) end)"' <<<"$(loop_policy)"
   jq -r '.[] | "\(.nn)  \(.state | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
@@ -1018,6 +1073,76 @@ pr_comment_count() {
   return 0
 }
 
+# An offline board, on the box that runs it: its files copied into the bridge
+# repo's clone (<bridge>/.scratch/<board>/), committed and pushed. The copy is
+# the only thing that leaves this box, so the bridge repo's own pre-commit hook
+# sees everything that does; a commit it refuses leaves nothing pushed. One
+# bridge repo per working repo: a board another repo published there is refused.
+bridge_dir() {
+  local d="${TICKET_BRIDGE_DIR:-}"
+  [[ -n "$d" || ! -s "$ROOT/.scratch/bridge" ]] || d="$(awk 'NF { print; exit }' "$ROOT/.scratch/bridge")"
+  d="${d/#\~/$HOME}"
+  [[ -n "$d" ]] || die "no bridge repo named: put its clone's path in $ROOT/.scratch/bridge (or TICKET_BRIDGE_DIR) — docs/agents/bridge.md"
+  git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "the bridge $d is not a git checkout"
+  ( cd "$d" && git rev-parse --show-toplevel )
+}
+
+cmd_publish() {
+  board_init "${1:?usage: loop.sh publish <board>}"
+  [[ -f "$BOARD_PATH/offline" ]] || die "board $BOARD_ID has no offline file — only a board that names its box in $BOARD_PATH/offline is published"
+  OFFLINE="$(offline_elsewhere)"
+  [[ -z "$OFFLINE" ]] || die "board $BOARD_ID runs on $OFFLINE: only that box publishes it (this one is $(this_box))"
+  local bridge dest rel f out
+  bridge="$(bridge_dir)"
+  [[ "$bridge" != "$ROOT" ]] || die "the bridge is this repo itself — name the bridge repo's own clone"
+  rel=".scratch/$BOARD_SLUG"; dest="$bridge/$rel"
+  if [[ -s "$dest/.source" && "$(cat "$dest/.source")" != "$REPO_NAME" ]]; then
+    die "$dest was published from $(cat "$dest/.source"), not $REPO_NAME — one bridge repo per working repo"
+  fi
+  # The board's files, nothing a session or a script keeps beside them.
+  rm -rf "$dest/issues" "$dest/batches"
+  mkdir -p "$dest/issues"
+  cp -p "$BOARD_PATH"/issues/*.md "$dest/issues/" 2>/dev/null || true
+  if compgen -G "$BOARD_PATH/batches/*.md" >/dev/null; then mkdir -p "$dest/batches"; cp -p "$BOARD_PATH"/batches/*.md "$dest/batches/"; fi
+  for f in board.md loop offline; do
+    if [[ -f "$BOARD_PATH/$f" ]]; then cp -p "$BOARD_PATH/$f" "$dest/$f"; else rm -f "$dest/$f"; fi
+  done
+  printf '%s\n' "$REPO_NAME" >"$dest/.source"
+  git -C "$bridge" add -A -- "$rel"
+  local committed=0
+  if ! git -C "$bridge" diff --cached --quiet -- "$rel"; then
+    if ! out="$(git -C "$bridge" commit -q -m "$BOARD_ID: ticket files" -- "$rel" 2>&1)"; then
+      # Leave the clone as the remote has it: the refused text stays on this box only.
+      git -C "$bridge" reset -q -- "$rel" 2>/dev/null || true
+      git -C "$bridge" checkout -q -- "$rel" 2>/dev/null || true
+      git -C "$bridge" clean -fdq -- "$rel" 2>/dev/null || true
+      echo "$out" >&2
+      die "REFUSED $BOARD_ID — the bridge repo would not take the commit (its pre-commit hook?): rewrite the ticket text it names, never bypass the hook"
+    fi
+    committed=1
+  fi
+  if [[ -z "$(git -C "$bridge" remote)" ]]; then
+    echo "PUBLISHED $BOARD_ID locally — $bridge has no remote to push to"; return 0
+  fi
+  local -a net=(env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}")
+  command -v timeout >/dev/null 2>&1 && net+=(timeout "${TICKET_GIT_TIMEOUT:-120}")
+  local up; up="$(git -C "$bridge" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [[ -n "$up" ]]; then
+    "${net[@]}" git -C "$bridge" pull --rebase --autostash --quiet </dev/null >/dev/null 2>&1 \
+      || die "publish: could not pull $bridge (network, or a rebase to settle by hand) — the commit is kept, the next pass retries"
+    if [[ "$(git -C "$bridge" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" == 0 ]]; then
+      echo "UNCHANGED $BOARD_ID — nothing to publish"; return 0
+    fi
+    "${net[@]}" git -C "$bridge" push --quiet </dev/null >/dev/null 2>&1 \
+      || die "publish: could not push $bridge — the commit is kept, the next pass retries"
+  else
+    "${net[@]}" git -C "$bridge" push --quiet -u "$(git -C "$bridge" remote | head -n1)" HEAD </dev/null >/dev/null 2>&1 \
+      || die "publish: could not push $bridge — the commit is kept, the next pass retries"
+  fi
+  if (( committed )); then echo "PUBLISHED $BOARD_ID — its ticket files pushed to the bridge"
+  else echo "PUBLISHED $BOARD_ID — an earlier commit pushed"; fi
+}
+
 cmd_watch() {
   local usage="usage: loop.sh watch <board> --inbox <dir>"
   local board="${1:?$usage}" inbox=""; shift
@@ -1101,10 +1226,16 @@ cmd_watch() {
   jq '.seen' <<<"$out" >"$sd/seen.json.tmp" && mv "$sd/seen.json.tmp" "$sd/seen.json"
   if [[ "$seen" == null ]]; then echo "RECORDED $BOARD_ID — first pass, $(jq length <<<"$now") ticket(s), no events"
   else echo "WATCHED $BOARD_ID — $n event(s)"; fi
+  # An offline board this box runs: every pass publishes it (status just wrote
+  # what landed). A failure is said, never the pass's own.
+  if [[ -z "$OFFLINE" && -f "$BOARD_PATH/offline" ]]; then
+    ( cmd_publish "$BOARD_ID" ) 2>&1 | tail -n1 || true
+  fi
 }
 
 verb="${1:-}"; shift || true
+LOOP_VERB="$verb"
 case "$verb" in
-  adopt|status|start|take|resume|say|log|report|answer|pr|merge|done|watch) "cmd_$verb" "$@" ;;
-  *) sed -n '2,56p' "$0"; exit 1 ;;
+  adopt|status|start|take|resume|say|log|report|answer|pr|merge|done|watch|publish) "cmd_$verb" "$@" ;;
+  *) sed -n '2,71p' "$0"; exit 1 ;;
 esac

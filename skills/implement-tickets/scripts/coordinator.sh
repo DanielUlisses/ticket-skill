@@ -156,12 +156,24 @@ First start: nothing here yet. Read the boards and build it.
 STATE
 fi
 
-repo_lines=""; short_boards=""
+# An offline board (docs/agents/bridge.md) names the box that runs it in its
+# `offline` file: on that box it is a short-loop board the watcher publishes to
+# a bridge repo; on any other it is a clone this session only reads.
+this_box="${TICKET_BOX:-$(hostname -s 2>/dev/null || hostname)}"
+repo_lines=""; short_boards=""; offline_boards=""; published_boards=""
 for r in "${REPOS[@]}"; do
   boards="$(find "$r/.scratch" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f ' 2>/dev/null || true)"
   repo_lines+="- \`$r\` — boards: ${boards:-none yet}"$'\n'
   # A board marked for the short loop (loop.sh adopt) is run with loop.sh, not tk.sh.
   for b in $boards; do
+    if [[ -f "$r/.scratch/$b/offline" ]]; then
+      obox="$(awk 'NF { print $1; exit }' "$r/.scratch/$b/offline")"; obox="${obox:-elsewhere}"
+      if [[ "$obox" != "$this_box" ]]; then
+        offline_boards+="${offline_boards:+, }\`$b\` ($(basename "$r"), runs on $obox)"
+        continue
+      fi
+      published_boards+="${published_boards:+, }\`$b\` ($(basename "$r"))"
+    fi
     # Under the box runner there is no other loop (no Herdr, no board session):
     # a board without the mark is one the coordinator wrote by hand or one from
     # before the rollout, and it is adopted here so loop.sh runs it. A board the
@@ -200,6 +212,18 @@ if [[ -n "$short_boards" ]]; then
     sec+=$'\n\n'"$(cat "$SKILL_DIR/templates/runner-section.md")"
     sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
   fi
+  tpl+=$'\n\n'"$sec"
+fi
+if [[ -n "$published_boards" ]]; then
+  sec="$(cat "$SKILL_DIR/templates/bridge-section.md")"
+  sec="${sec//'{{PUBLISHED_BOARDS}}'/"$published_boards"}"
+  sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
+  tpl+=$'\n\n'"$sec"
+fi
+if [[ -n "$offline_boards" ]]; then
+  sec="$(cat "$SKILL_DIR/templates/offline-section.md")"
+  sec="${sec//'{{OFFLINE_BOARDS}}'/"$offline_boards"}"
+  sec="${sec//'{{LOOP}}'/"$SCRIPTS/loop.sh"}"
   tpl+=$'\n\n'"$sec"
 fi
 instructions="$(project_instructions_block "$DIR")"
@@ -252,7 +276,7 @@ for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 # Its own scripts run without a prompt each time; anything else asks.
 cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)" "Bash($SCRIPTS/wake.sh *)" "Bash($SCRIPTS/memory.sh *)")
 
-log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT, threads on $THREAD_MODEL @ $THREAD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
+log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT, threads on $THREAD_MODEL @ $THREAD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards}${offline_boards:+ — offline, read only: $offline_boards} — MCP: ${mcp_names:-none}"
 if (( as_json )); then
   jq -cn --arg project "$PROJECT" --arg dir "$DIR" --arg prompt "$first" --arg session "$SESSION" --arg note "$resume_note" \
     '{project: $project, dir: $dir, prompt: $prompt, session: $session, resume_note: $note, args: $ARGS.positional}' --args -- "${cmd[@]:2}"
