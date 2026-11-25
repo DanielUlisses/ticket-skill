@@ -132,6 +132,10 @@ status` prints them as one `RULES` line, `--json` as `policy`:
 `night_shift`, `autonomy`, `usage_gate_pct`, `fix_rounds` and `synthesis` belong to tk-hub's old
 scheduler: nothing in the short loop reads them, and the slim daemon reports them off.
 
+## Offline boards
+
+A board with an `offline` file names the box that runs it. There `loop.sh publish <board>` copies its ticket files to a bridge repo on every watcher pass; on any other box `status` and `watch` read the ticket files as they stand and every other verb refuses. See [bridge.md](bridge.md).
+
 ## Settings
 
 `TICKET_RUNNER` (default `devbox-run`), `TICKET_PR_REVIEWER` (the reviewer requested on the draft PR;
