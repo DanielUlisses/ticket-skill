@@ -19,6 +19,9 @@
 #                hears of them through coordinator-inbox.sh: a watcher it runs in
 #                the background, and a hook on each of the developer's messages
 #                (.settings.json here), so nothing is typed into its terminal
+#   wakes.json   the session's own wakes ("check the deploy in 20 minutes",
+#                "every weekday at 08:30"), set through wake.sh and fired into
+#                inbox/ by the watcher
 #   artifacts/   files the session keeps for the developer (a report, a plan's
 #                output); tk-hub's daemon sends them to the hub's Artifacts page
 #   instructions.md  the developer's instructions for the project, written by
@@ -181,6 +184,7 @@ tpl="${tpl//'{{TK}}'/"$SCRIPTS/tk.sh"}"
 tpl="${tpl//'{{MERGER}}'/"$SCRIPTS/merge-conflict.sh"}"
 tpl="${tpl//'{{INBOX}}'/"$SCRIPTS/coordinator-inbox.sh"}"
 tpl="${tpl//'{{THREAD}}'/"$SCRIPTS/thread.sh $DIR"}"
+tpl="${tpl//'{{WAKE}}'/"$SCRIPTS/wake.sh $DIR"}"
 tpl="${tpl//'{{THREAD_MODEL}}'/"$THREAD_MODEL"}"
 tpl="${tpl//'{{THREAD_EFFORT}}'/"$THREAD_EFFORT"}"
 fill_prose '{{REPOS}}' "${repo_lines%$'\n'}"
@@ -246,7 +250,7 @@ cmd=(claude "$first"
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # Its own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)" "Bash($SCRIPTS/memory.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)" "Bash($SCRIPTS/wake.sh *)" "Bash($SCRIPTS/memory.sh *)")
 
 log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT, threads on $THREAD_MODEL @ $THREAD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
 if (( as_json )); then

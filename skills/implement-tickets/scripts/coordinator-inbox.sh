@@ -25,6 +25,12 @@
 # TICKET_PCOORD_LOOP_POLL_S seconds (default 120), which writes an event into the
 # inbox for each ticket that moved (built, a question, a dead session, a PR
 # approved or sent back, landed, unblocked). docs/agents/short-loop.md, Watching.
+#
+# The coordinator's own wakes (wake.sh, <dir>/wakes.json) are fired here too:
+# every TICKET_PCOORD_WAKE_POLL_S seconds (default 30) while it waits, and on
+# each hook, `wake.sh <dir> due` writes a `wake` event for each one due, which
+# this then announces like any other. docs/agents/project-coordinator.md, Check
+# back later.
 # docs/agents/project-coordinator.md, The inbox.
 set -euo pipefail
 
@@ -38,7 +44,9 @@ WATCHER="$INBOX/.watcher"
 POLL_S="${TICKET_PCOORD_POLL_S:-5}"
 WAIT_S="${TICKET_PCOORD_WAIT_S:-21600}"
 LOOP_POLL_S="${TICKET_PCOORD_LOOP_POLL_S:-120}"
+WAKE_POLL_S="${TICKET_PCOORD_WAKE_POLL_S:-30}"
 LOOP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/loop.sh"
+WAKE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wake.sh"
 
 # Is a watcher alive for this folder?
 watching() { local p; p="$(cat "$WATCHER" 2>/dev/null)" && [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; }
@@ -70,6 +78,18 @@ watch_boards() {
   done < <(short_boards)
 }
 
+# The wakes due now into the inbox; a failure goes to journal.log at most once
+# an hour, never ends the watcher.
+fire_wakes() {
+  local out stamp
+  [[ -s "$DIR/wakes.json" ]] || return 0
+  out="$("$WAKE" "$DIR" due 2>&1)" && return 0
+  stamp="$INBOX/.wake-failed"
+  [[ -f "$stamp" && -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]] && return 0
+  touch "$stamp"
+  printf '%s wake.sh due failed: %s\n' "$(date -u +%FT%TZ)" "$(tail -n1 <<<"$out")" >>"$DIR/journal.log"
+}
+
 # The events in the inbox not announced yet, one name per line.
 fresh() {
   local f name
@@ -98,9 +118,10 @@ case "$mode" in
   wait)
     echo $$ >"$WATCHER"
     trap 'rm -f "$WATCHER"' EXIT
-    waited=0; next_watch=0
+    waited=0; next_watch=0; next_wake=0
     while :; do
       if (( waited >= next_watch )); then watch_boards; next_watch=$(( waited + LOOP_POLL_S )); fi
+      if (( waited >= next_wake )); then fire_wakes; next_wake=$(( waited + WAKE_POLL_S )); fi
       mapfile -t new < <(fresh)
       if (( ${#new[@]} )); then
         announce "${new[@]}"
@@ -118,6 +139,7 @@ case "$mode" in
     ;;
   hook)
     cat >/dev/null  # the hook's JSON on stdin: not needed
+    fire_wakes
     mapfile -t new < <(fresh)
     if (( ${#new[@]} )); then
       announce "${new[@]}"
