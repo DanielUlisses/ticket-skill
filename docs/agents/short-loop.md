@@ -53,8 +53,24 @@ Derived on every call, in this order: `dropped`, `done` (the ticket says resolve
 answer), `built` (a report beside real work: changes or commits), `idle` (a live session at its prompt
 with no report), `stopped` (a worktree or branch, no live session), `ready`.
 
+### Stages
+
+A working ticket says what it is doing. Its session writes one word to `stage` beside its report
+(`{{STAGE_FILE}}` in `templates/thread-prompt.md`, a shared copy with the agent user on) as each phase
+starts: `implementing` (recon and the implementer), `testing` (testers and criteria checkers),
+`reviewing` (`ticket-reviewer`), `fixing` (a fix round; `testing` and `reviewing` follow again). A stage
+counts while it is newer than the report: the report is saved after the last stage, so a newer report
+means the round is over, and a stage written after it is a new round (that report is the last one's, so
+the ticket is not `built` on it). `start` clears the file with the report.
+
+`status` prints a working ticket as `working:<stage>` and its why as `working: testing` (plus "a
+subagent still runs in the background" when the turn ended but one didn't); `--json` carries `stage`
+(null when none) and `busy` (the session or a background subagent still runs). `idle` and `stopped` name
+the stage they stopped in. Only `built` is finished: the coordinator's brief says a working ticket is never
+called finished, and `loop.sh pr` refuses while the session is `busy`, a background subagent included.
+
 `loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, policy, running, next, tickets}`;
-each ticket carries its state, why, branch, worktree, session, PR, report and questions paths. It is
+each ticket carries its state, stage, busy, why, branch, worktree, session, PR, report and questions paths. It is
 what the new daemon reports to the hub.
 
 ## Watching

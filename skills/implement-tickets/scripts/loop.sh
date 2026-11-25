@@ -232,6 +232,20 @@ subagents_running() {
   [[ -n "$(find "$dir" -type f -name '*.jsonl' -newermt "-${quiet} seconds" -print -quit 2>/dev/null)" ]]
 }
 
+# The stage a ticket's session is in, from the one word it writes to its stage
+# file at each phase (templates/thread-prompt.md): implementing, testing,
+# reviewing or fixing. Empty when it wrote none, or when its report is newer:
+# the report is saved after the last stage, so a newer report means built.
+STAGES="implementing testing reviewing fixing"
+ticket_stage() {
+  local sf="$1" rf="$2" s
+  [[ -s "$sf" ]] || return 0
+  s="$(head -c 64 "$sf" | tr -dc '[:lower:]')"
+  [[ " $STAGES " == *" $s "* ]] || return 0
+  [[ -s "$rf" && ! "$sf" -nt "$rf" ]] && return 0
+  echo "$s"
+}
+
 # GitHub leaves reviewDecision empty where no rule requires a review: read the
 # latest review of each reviewer instead. Prints the PR object with .review set.
 review_decision() {
@@ -244,13 +258,16 @@ review_decision() {
 # One ticket's facts and state as one JSON object. Needs DONE (a JSON array of
 # the numbers already derived done or dropped) for its blockers.
 derive() {
-  local t="$1" nn status owner branch wt dir sess rs alive turn pr="" prj='null' qf rf q_open=0 report=false
+  local t="$1" nn status owner branch wt dir sess rs alive turn pr="" prj='null' qf rf q_open=0 report=false stage background=false
   local landed_ans="-" state why has_branch=false has_wt=false open_blockers
   nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"; owner="$(jq -r .owner <<<"$t")"
   branch="$(ticket_branch "$t")"; wt="$(worktree_of "$branch")"
   dir="$(ticket_dir "$nn")"; sess="$(session_name "$nn")"
   rf="$dir/report.md"; qf="$dir/questions.json"
   [[ -s "$rf" ]] && report=true
+  stage="$(ticket_stage "$dir/stage" "$rf")"
+  # A stage written after the report is a new round (a fix): the report is the last one's.
+  [[ -n "$stage" ]] && report=false
   [[ -s "$qf" ]] && q_open="$(jq '[.[]? | select((.a // "") == "" and .blocks == true)] | length' "$qf" 2>/dev/null || echo 0)"
   git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" && has_branch=true
   (( HAS_REMOTE )) && git -C "$ROOT" show-ref --verify --quiet "refs/remotes/$REMOTE/$branch" && has_branch=true
@@ -265,7 +282,10 @@ derive() {
   local dialog; dialog="$(jq -r '.dialog // ""' <<<"$rs")"
   # The main turn can end while a subagent it dispatched in the background
   # still runs: the runner then says assistant_done. Count it as working.
-  if [[ "$alive" == true && "$turn" == assistant_done ]] && subagents_running "$rs" "$sess"; then turn=working; fi
+  if [[ "$alive" == true && "$turn" == assistant_done ]] && subagents_running "$rs" "$sess"; then turn=working; background=true; fi
+  # How a working session reads: its stage, and a subagent left in the background.
+  local doing="working${stage:+: $stage}"
+  [[ "$background" == true ]] && doing+=" (a subagent still runs in the background)"
   # A ticket the old loop started in another checkout (a board copied from it):
   # its run-state lines name a worktree that isn't ours. While that worktree
   # exists, or its branch is nowhere we can see (unpushed over there), the work
@@ -330,13 +350,14 @@ derive() {
           CHANGES_REQUESTED) state=changes; why="changes requested on the PR" ;;
           *) state=review; why="PR open$( [[ "$(jq -r .isDraft <<<"$pr")" == true ]] && echo " (draft)"), waiting on his review" ;;
         esac
-        [[ "$alive" == true && "$turn" == working ]] && why+="; its session is working"
+        [[ "$alive" == true && "$turn" == working ]] && why+="; its session is $doing"
       elif [[ "$alive" == true && -n "$dialog" ]]; then state=idle; why="session $sess shows a $dialog dialog — loop.sh log to see it (devbox-run keys answers it)"
-      elif [[ "$alive" == true && "$turn" != assistant_done ]]; then state=working; why="session $sess is working"
+      elif [[ "$alive" == true && "$turn" != assistant_done ]]; then
+        state=working; why="session $sess is $doing — not finished until it reports and its turn ends"
       elif (( q_open > 0 )); then state=asking; why="$q_open blocking question(s) in $qf"
       elif [[ "$report" == true ]]; then state=built; why="report written — the coordinator reads it and opens the draft PR"
-      elif [[ "$alive" == true ]]; then state=idle; why="session $sess is at its prompt with no report"
-      elif [[ "$has_wt" == true || "$has_branch" == true ]]; then state=stopped; why="work exists, no live session — loop.sh resume"
+      elif [[ "$alive" == true ]]; then state=idle; why="session $sess is at its prompt with no report${stage:+ (it stopped while $stage)}"
+      elif [[ "$has_wt" == true || "$has_branch" == true ]]; then state=stopped; why="work exists, no live session${stage:+ (it stopped while $stage)} — loop.sh resume"
       else state=ready; why="nothing started; every blocker done"
       fi
     fi
@@ -346,8 +367,9 @@ derive() {
     --arg session "$sess" --argjson runner "$rs" --argjson pr "$prj" --arg landed "$landed_ans" \
     --arg report "$rf" --argjson reported "$report" --arg questions "$qf" --argjson asking "$q_open" \
     --arg owner "$owner" --arg smodel "$(jq -r .smodel <<<"$t")" --arg seffort "$(jq -r .seffort <<<"$t")" \
-    --argjson blockers "$(jq -c .blockers <<<"$t")" \
-    '{nn: $nn, title: $title, state: $state, why: $why, owner: $owner, blockers: $blockers,
+    --argjson blockers "$(jq -c .blockers <<<"$t")" --arg stage "$stage" \
+    --argjson busy "$([[ "$alive" == true && "$turn" == working ]] && echo true || echo false)" \
+    '{nn: $nn, title: $title, state: $state, stage: (if $stage == "" then null else $stage end), busy: $busy, why: $why, owner: $owner, blockers: $blockers,
       branch: $branch, has_branch: $has_branch, worktree: $worktree, has_worktree: $has_worktree,
       session: $session, alive: ($runner.alive // false), last_turn: ($runner.last_turn // null),
       transcript: ($runner.transcript // null), pr: $pr, landed: $landed,
@@ -539,7 +561,7 @@ cmd_status() {
   echo "BOARD $BOARD_ID  repo $ROOT  base $BASE_BRANCH  forge $FORGE"
   [[ -z "$OFFLINE" ]] || echo "OFFLINE runs on $OFFLINE — read only here: each state is the ticket file's own, as of the last pull ($(git -C "$ROOT" log -1 --format=%cr 2>/dev/null || echo unknown))"
   jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end) mcp=\(if (.mcp | length) == 0 then "none" else (.mcp | join(",")) end)"' <<<"$(loop_policy)"
-  jq -r '.[] | "\(.nn)  \(.state | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
+  jq -r '.[] | "\(.nn)  \(.state + (if .stage and .state == "working" then ":" + .stage else "" end) | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
 }
 
@@ -550,7 +572,7 @@ other_threads() {
   lines="$(jq -r --arg n "$1" '[.[] | select((.nn | tonumber) != ($n | tonumber))
       | select(.state | IN("done", "dropped") | not)]
     | if length == 0 then "- none: this is the board'"'"'s only open ticket"
-      else .[] | "- **\(.nn)** \(.title): \(.state)\(if .state == "working" or .state == "idle" or .state == "built" then " (branch `\(.branch)`)" else "" end)" end' <<<"$STATES")"
+      else .[] | "- **\(.nn)** \(.title): \(.state)\(if .stage then " (" + .stage + ")" else "" end)\(if .state == "working" or .state == "idle" or .state == "built" then " (branch `\(.branch)`)" else "" end)" end' <<<"$STATES")"
   printf '%s\n' "$lines"
 }
 
@@ -573,6 +595,7 @@ render_brief() {
   tpl="${tpl//'{{REPORT_FILE}}'/"${BRIEF_REPORT:-$dir/report.md}"}"
   tpl="${tpl//'{{QUESTIONS_FILE}}'/"${BRIEF_QUESTIONS:-$dir/questions.json}"}"
   tpl="${tpl//'{{MESSAGES_FILE}}'/"${BRIEF_MESSAGES:-$dir/messages.json}"}"
+  tpl="${tpl//'{{STAGE_FILE}}'/"${BRIEF_STAGE:-$dir/stage}"}"
   tpl="${tpl//'{{IMPL_MODEL}}'/"$IMPL_MODEL"}"
   tpl="${tpl//'{{REVIEW_MODEL}}'/"$REVIEW_MODEL"}"
   tpl="${tpl//'{{REVIEW_EFFORT}}'/"$review_effort"}"
@@ -675,7 +698,7 @@ cmd_start() {
   # them aside. A copy, not a move: with the agent user on they are links to
   # the shared copies, which this run reuses.
   local f stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  for f in report.md questions.json messages.json; do
+  for f in report.md questions.json messages.json stage; do
     [[ -e "$dir/$f" ]] && cp -L "$dir/$f" "$dir/$f.$stamp"
     rm -f "$dir/$f"
   done
@@ -687,14 +710,15 @@ cmd_start() {
   # brief, report and questions are shared copies (agent_state_file), linked
   # from these paths, which are the ones this script reads. Each starts as this
   # run's plain file, which agent_state_file copies over once.
-  BRIEF_REPORT="" BRIEF_QUESTIONS="" BRIEF_MESSAGES="" brief="$dir/brief.md"
+  BRIEF_REPORT="" BRIEF_QUESTIONS="" BRIEF_MESSAGES="" BRIEF_STAGE="" brief="$dir/brief.md"
   printf '[]' >"$dir/messages.json"
   if agent_on; then
-    : >"$dir/report.md"
+    : >"$dir/report.md"; : >"$dir/stage"
     [[ -f "$dir/questions.json" ]] || printf '[]' >"$dir/questions.json"
     BRIEF_REPORT="$(agent_state_file "$dir/report.md")"
     BRIEF_QUESTIONS="$(agent_state_file "$dir/questions.json" '[]')"
     BRIEF_MESSAGES="$(agent_state_file "$dir/messages.json" '[]')"
+    BRIEF_STAGE="$(agent_state_file "$dir/stage")"
     rm -f "$dir/brief.md"
   fi
   render_brief "$t" "$branch" "$wt" "$base_commit" "$dir"
@@ -868,7 +892,8 @@ cmd_pr() {
   [[ "$state" == idle ]] && log "ticket $nn has no report — opening the PR on your word anyway"
   [[ -d "$wt" ]] || die "no worktree at $wt"
   [[ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" == "$branch" ]] || die "worktree $wt is not on $branch"
-  [[ "$(jq -r '.last_turn // ""' <<<"$s")" == working ]] && die "ticket $nn's session is still working — wait for it"
+  # busy counts a subagent left running in the background too (the turn ended, a tester didn't).
+  [[ "$(jq -r '.busy' <<<"$s")" == true ]] && die "ticket $nn's session is still $(jq -r '"working" + (if .stage then ": " + .stage else "" end)' <<<"$s") — wait for its report"
 
   # The board's rule "ask me first" (require_human_before_pr set true): a new PR
   # only on his word. Pushing to a PR already open needs none.

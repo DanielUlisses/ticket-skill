@@ -47,9 +47,13 @@ Other tickets of this board run beside you, each in its own session and worktree
 
 {{TICKET}}
 
-**Wait for your subagents.** Run every subagent in the foreground and stay in your turn until it returns: never dispatch one in the background and end your turn. The project coordinator reads an ended turn with no report as a session that stopped.
+**Wait for your subagents.** Run every subagent in the foreground and stay in your turn until it returns: never dispatch one in the background and end your turn. The project coordinator reads an ended turn with no report as a session that stopped. Pass the same rule on: a subagent runs its commands (a test suite, a build) in the foreground too, never with `run_in_background`, and returns only once they have finished.
+
+**Say which stage you are in.** At the start of each phase below, write its one word to `{{STAGE_FILE}}` with the Write tool, replacing what is there: `implementing` (Phases 0 and 1), `testing` (the testers and criteria checkers), `reviewing` (`ticket-reviewer`), `fixing` (a fix round, before the checks run again: write `testing` and `reviewing` again as they start). The project coordinator and the hub show it as the ticket's stage. You are finished only when the report is saved (Phase 3): never write `done` or anything else here, and never say the ticket is finished before that.
 
 ## Phase 0 — Recon (parallel, cheap)
+
+Stage: write `implementing`.
 
 Before anything is written, find out what the implementer will need to know, **in one message with several Agent tool calls** so they run side by side:
 
@@ -79,14 +83,16 @@ Keep the summary it returns, and its `## Remember`.
 
 ## Phase 2 — Verify (parallel, then review)
 
+Stage: write `testing`.
+
 **First, fan out the mechanical checks — in one message:**
 
 - **`ticket-tester`** (`model: {{TEST_MODEL}}`), one per independent check the scouts found (`lint`, `typecheck`, the unit suite, one package of a monorepo…) — each told its slice. Where the checks are few or one command runs them all, one tester with no slice. With no suite, one tester given the implementer's direct-exercise commands to re-run.
 - **`ticket-criteria-checker`** (`model: {{CHECK_MODEL}}`), one per acceptance criterion in the ticket (group trivially small ones), each given its criterion and the base commit `{{BASE_COMMIT}}`.
 
-**Then review**, once those are back: `ticket-reviewer` (`model: {{REVIEW_MODEL}}`, `effort: {{REVIEW_EFFORT}}`), passing the ticket, the base commit `{{BASE_COMMIT}}` (the change is `git diff {{BASE_COMMIT}}` plus untracked files — nothing has been committed), the implementer's summary, and the testers' and checkers' tables, so it spends its attention on whether the code is right rather than re-running what has been run. **Where this repo has no test suite** (Phase 0), or the change only runs live, say so in the brief — the reviewer then works through its *When nothing runs the change* checklist and returns an **Expected plan**, which goes into your Phase 3 report as it stands. Its model is fixed by the developer's config and independent of the implementer's, so a ticket implemented on a cheaper model still gets the configured review.
+**Then review** (stage: write `reviewing`), once those are back: `ticket-reviewer` (`model: {{REVIEW_MODEL}}`, `effort: {{REVIEW_EFFORT}}`), passing the ticket, the base commit `{{BASE_COMMIT}}` (the change is `git diff {{BASE_COMMIT}}` plus untracked files — nothing has been committed), the implementer's summary, and the testers' and checkers' tables, so it spends its attention on whether the code is right rather than re-running what has been run. **Where this repo has no test suite** (Phase 0), or the change only runs live, say so in the brief — the reviewer then works through its *When nothing runs the change* checklist and returns an **Expected plan**, which goes into your Phase 3 report as it stands. Its model is fixed by the developer's config and independent of the implementer's, so a ticket implemented on a cheaper model still gets the configured review.
 
-**Fix loop.** Anything that is a **blocking** review finding, a test failure caused by the change, or a criterion **not met** goes back to `ticket-implementer` in one batch. Then re-run only what the fix could have changed: the failing tester slices, the affected criteria, and `ticket-reviewer` on the delta. At most **two** cycles; if something blocking remains, stop and put it in the report rather than looping. *Can't tell* criteria and pre-existing or environment failures are reported, not fixed.
+**Fix loop.** Anything that is a **blocking** review finding, a test failure caused by the change, or a criterion **not met** goes back to `ticket-implementer` in one batch (stage: write `fixing`). Then re-run (stage `testing`, then `reviewing`) only what the fix could have changed: the failing tester slices, the affected criteria, and `ticket-reviewer` on the delta. At most **two** cycles; if something blocking remains, stop and put it in the report rather than looping. *Can't tell* criteria and pre-existing or environment failures are reported, not fixed.
 
 ## Phase 3 — Hand back for review
 
@@ -133,7 +139,7 @@ knows you are done: until it exists, the ticket is not built.
 
 ## After the report
 
-Stay at your prompt. The coordinator may come back with the developer's review of the draft PR: requested changes go to `ticket-implementer` as a fix round (then the checks and the reviewer on the delta, as in Phase 2), and you save the report again with what changed. Nothing is committed by you, then either.
+Stay at your prompt. The coordinator may come back with the developer's review of the draft PR: requested changes go to `ticket-implementer` as a fix round (stage `fixing`, then the checks and the reviewer on the delta as `testing` and `reviewing`, as in Phase 2), and you save the report again with what changed. Nothing is committed by you, then either.
 
 ## Inviolable rules
 
