@@ -69,7 +69,8 @@ subagent still runs in the background" when the turn ended but one didn't); `--j
 the stage they stopped in. Only `built` is finished: the coordinator's brief says a working ticket is never
 called finished, and `loop.sh pr` refuses while the session is `busy`, a background subagent included.
 
-`loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, policy, running, next, tickets}`;
+`loop.sh status <board> --json` gives `{board, repo, base, forge, max_parallel, policy, running, next, tickets}`
+(`running` and `running_sessions`: the project's sessions holding a `max_parallel` slot; each ticket's `slot` says whether it holds one);
 each ticket carries its state, stage, busy, why, branch, worktree, session, PR, report and questions paths. It is
 what the new daemon reports to the hub.
 
@@ -138,7 +139,7 @@ status` prints them as one `RULES` line, `--json` as `policy`:
 
 | Key | The short loop |
 |---|---|
-| `max_parallel` | the coordinator starts ready tickets while fewer than this are working |
+| `max_parallel` | ticket sessions live at once across the project (every repo in its coordinator's `repos` file, and the board's own): every live session in a ticket worktree holds a slot (`idle`, `asking`, `built` too) except one waiting at its prompt on an open PR, as the hub's Working column counts them. `loop.sh start` refuses past it (`NOT STARTED`, exit 22) unless `--over-cap "<his words>"`; `status` prints `RUNNING n of N` |
 | `require_human_before_pr` | `true`: `loop.sh pr` opens a new PR only with `--his-word`. Unlike `tk.sh`, unset is `false`: the short loop's own rule is a draft PR as soon as a ticket is built, waiting on his review |
 | `auto_merge` | `true`: the coordinator merges an approved PR (green checks, no conflict) without waiting for his word. `loop.sh merge` still refuses anything not approved |
 | `skills` | `loop.sh start` links each catalog skill (`/opt/skills`) into the worktree's `.claude/skills/`, git-excluded, and records them on the ticket's `**Skills:**` line |
