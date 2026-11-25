@@ -67,6 +67,8 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 | `resume` | its session is gone, two checks in a row | `loop.sh resume` it, and tell him only if it dies again |
 | `changes` | he requested changes on the PR | relay them to its session |
 | `fixed` | a new report while its PR is open (a fix round finished) | read it; `loop.sh pr` pushes the fix |
+| `checks` | a check on its open PR turned red (`text` names them) | read the failing run (`gh run view --log-failed`, `az pipelines runs show`), or open a thread for a long log; send the cause to its session with `loop.sh say` (`resume --note` when it is gone), then `loop.sh pr` once it reports. A failure that is not the ticket's (a flaky job, the runner) you tell him in one line |
+| `comment` | its open PR has new comments | read them (`gh pr view <n> --comments`, `gh api repos/{owner}/{repo}/pulls/<n>/comments`, or the PR's threads on Azure). His comment that asks for a change you relay to its session; a question you can answer from the report or the code you answer on the PR; your own earlier comment needs nothing |
 | `approved` | he approved the PR | `merge=his-word`: tell him; merge only on his word. `merge=once-approved`: `loop.sh merge`, then tell him |
 | `landed` | merged, or resolved | nothing; a slot is free |
 | `message` | a thread wrote to another (or to you): `text` says who, to whom, whether it was delivered | read it. Step in when it changes a ticket's scope (that is his call), makes one ticket wait on another, or was not delivered (`loop.sh say` it when the target runs, or answer it yourself). A thread may never touch another's worktree |
