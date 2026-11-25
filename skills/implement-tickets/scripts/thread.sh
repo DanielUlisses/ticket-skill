@@ -122,6 +122,8 @@ cmd_start() {
   tpl="${tpl//'{{TITLE}}'/"$title"}"
   tpl="${tpl//'{{FOLDER}}'/"$folder"}"
   tpl="${tpl//'{{REPORT_CMD}}'/"$SCRIPTS/thread.sh $DIR report $id"}"
+  local instructions; instructions="$(project_instructions_block "$DIR")"
+  [[ -z "$instructions" ]] || tpl+=$'\n\n'"$instructions"
   { printf '%s\n\n## The ask\n\n' "$tpl"; if [[ -n "$brief_text" ]]; then printf '%s\n' "$brief_text"; else cat "$brief"; echo; fi; } >"$folder/brief.md"
 
   local args=(claude --model "$model" --effort "$effort"
