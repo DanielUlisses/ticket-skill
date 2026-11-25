@@ -85,7 +85,7 @@ whole (`2.0` prints as `2`).
 | `auto_merge` | bool | `false` | a ticket whose PR passes every gate may be merged without the developer naming it |
 | `night_shift` | bool | `false` | tk-hub: run the board as `auto` plus PR/push after review passes; merge only with `auto_merge` |
 | `autonomy` | `assist` \| `auto` | `assist` | tk-hub's scheduler: `auto` launches frontier tickets as they unblock, within the caps, stopping at `human` and `needs`; `assist` launches only on a click. `auto` is allowed on at most one board per devbox (enforced by tk-hub, ticket-board:40); ▶ Run waves acts only on `night_shift` boards |
-| `max_parallel` | whole number, 1–1000 | `4` | tk-hub: tickets running at once on the box |
+| `max_parallel` | whole number, 1–1000 | `4` | ticket sessions live at once across the project; `loop.sh start` refuses past it (docs/agents/short-loop.md) |
 | `usage_gate_pct` | number 0–100 | `90` | tk-hub: a Claude usage window at or above this stops automatic launches on the box |
 | `fix_rounds` | number 0–10 | `1` | tk-hub (K5, the CI fix loop): how many times a red PR goes back to its agent with the failing checks' full logs (fetched by the daemon as the developer: the agent has no forge access) before it is the developer's answer. The default `1`: the first red goes to the agent, red again after its fix comes to the developer. `0` is off — each round resumes an agent and spends usage |
 | `synthesis` | object | `{"backends": ["agy"], "timeout": 300}` | tk-hub's summary runner; passed through, not checked inside |

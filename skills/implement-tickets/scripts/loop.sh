@@ -21,9 +21,11 @@
 #   loop.sh take    <board> <NN> [--note f] a ticket the old loop left in its worktree (its agent gone): a
 #                                           new session there, as it stands
 #   loop.sh status  <board> [NN] [--json]   every ticket's state, derived; `next` lists the startable ones
-#   loop.sh start   <board> <NN> [--type feat|fix|...] [--model m] [--effort e] [--note f]
+#   loop.sh start   <board> <NN> [--type feat|fix|...] [--model m] [--effort e] [--note f] [--over-cap "<…>"]
 #                                           worktree + branch from the base, the thread brief, a runner
-#                                           session; only a ticket that is ready (or stopped)
+#                                           session; only a ticket that is ready (or stopped), and only
+#                                           while fewer than max_parallel tickets have a live session
+#                                           (exit 22, NOT STARTED); past it only with his words (--over-cap)
 #   loop.sh resume  <board> <NN> [--note f] the runner's resume of its session; with no session to
 #                                           resume, a fresh start in the worktree as it stands
 #   loop.sh say     <board> <NN> <file|->   a message to the ticket's session
@@ -372,6 +374,7 @@ derive() {
     '{nn: $nn, title: $title, state: $state, stage: (if $stage == "" then null else $stage end), busy: $busy, why: $why, owner: $owner, blockers: $blockers,
       branch: $branch, has_branch: $has_branch, worktree: $worktree, has_worktree: $has_worktree,
       session: $session, alive: ($runner.alive // false), last_turn: ($runner.last_turn // null),
+      slot: (($runner.alive // false) and ($busy or ($state | IN("review", "changes", "approved", "done") | not))),
       transcript: ($runner.transcript // null), pr: $pr, landed: $landed,
       report: $report, reported: $reported, questions: $questions, open_questions: $asking,
       suggested_model: $smodel, suggested_effort: $seffort}'
@@ -474,6 +477,32 @@ derive_all() {
 
 state_of() { jq -c --arg n "$1" 'map(select((.nn | tonumber) == ($n | tonumber))) | first // empty' <<<"$STATES"; }
 
+# The sessions holding one of the project's max_parallel slots: every live
+# ticket session in any of the project's repos (its coordinator's repos file,
+# and this one), whatever its state (working, idle at its prompt, asking,
+# built), except one waiting at its prompt on an open PR: what the hub draws
+# under Working. A ticket session runs in a worktree, <parent>/<repo>--<branch>,
+# so a coordinator or a discovery thread (in a main checkout) holds none.
+# One `devbox-run status --pr` call; names, space-separated.
+slots_held() {
+  local pdir repos=() r all
+  pdir="$(project_dir_of "$ROOT")"
+  repos+=("$(readlink -f "$ROOT" 2>/dev/null || echo "$ROOT")")
+  if [[ -n "$pdir" ]]; then
+    while IFS= read -r r; do [[ -n "$r" ]] && repos+=("$(readlink -f "$r" 2>/dev/null || echo "$r")"); done <"$pdir/repos"
+  fi
+  command -v "$RUNNER" >/dev/null 2>&1 || return 0
+  all="$("$RUNNER" status --pr 2>/dev/null)" || all='{"sessions": []}'
+  jq -r --args '
+    ($ARGS.positional) as $repos
+    | [(.sessions // [])[]
+       | select(.alive == true)
+       | select((.dir // "") | split("/") | last | contains("--"))
+       | select(((.dir | split("/") | .[:-1] | join("/")) + "/" + (.dir | split("/") | last | split("--") | first)) | IN($repos[]))
+       | select((.last_turn == "assistant_done" and .pr != null and ((.pr.state // "") | IN("open", ""))) | not)
+       | .name] | join(" ")' "${repos[@]}" <<<"$all" 2>/dev/null || true
+}
+
 # ---- verbs --------------------------------------------------------------------------
 
 cmd_adopt() {
@@ -551,16 +580,18 @@ cmd_status() {
   [[ -n "$one" ]] && out="$(jq -c --arg n "$one" '[.[] | select((.nn | tonumber) == ($n | tonumber))]' <<<"$STATES")"
   if (( json )); then
     jq -n --arg board "$BOARD_ID" --arg repo "$ROOT" --arg base "$BASE_BRANCH" --arg forge "$FORGE" \
-      --argjson policy "$(loop_policy)" --argjson t "$out" --arg offline "$OFFLINE" \
+      --argjson policy "$(loop_policy)" --argjson t "$out" --arg offline "$OFFLINE" --arg held "$(slots_held)" \
       '{board: $board, repo: $repo, base: $base, forge: $forge, max_parallel: $policy.max_parallel, policy: $policy,
         offline: (if $offline == "" then null else $offline end),
-        running: ([$t[] | select(.state == "working")] | length),
+        running: ($held | if . == "" then 0 else split(" ") | length end), running_sessions: ($held | if . == "" then [] else split(" ") end),
         next: [$t[] | select(.state == "ready") | .nn], tickets: $t}'
     return
   fi
   echo "BOARD $BOARD_ID  repo $ROOT  base $BASE_BRANCH  forge $FORGE"
   [[ -z "$OFFLINE" ]] || echo "OFFLINE runs on $OFFLINE — read only here: each state is the ticket file's own, as of the last pull ($(git -C "$ROOT" log -1 --format=%cr 2>/dev/null || echo unknown))"
   jq -r '"RULES max_parallel=\(.max_parallel) pr=\(if .require_human_before_pr then "ask-first" else "draft-when-built" end) merge=\(if .auto_merge then "once-approved" else "his-word" end) skills=\(if (.skills | length) == 0 then "none" else (.skills | join(",")) end) mcp=\(if (.mcp | length) == 0 then "none" else (.mcp | join(",")) end)"' <<<"$(loop_policy)"
+  local held; held="$(slots_held)"
+  echo "RUNNING $(wc -w <<<"$held") of $(jq -r .max_parallel <<<"$(loop_policy)") across the project's repos${held:+ — $held}"
   jq -r '.[] | "\(.nn)  \(.state + (if .stage and .state == "working" then ":" + .stage else "" end) | . + " " * (9 - length))  \(.title)\n      \(.why)\(if .pr then "  " + .pr.url else "" end)"' <<<"$out"
   [[ -n "$one" ]] || echo "NEXT $(jq -r '[.[] | select(.state == "ready") | .nn] | if length == 0 then "none" else join(" ") end' <<<"$STATES")"
 }
@@ -651,13 +682,14 @@ start_session() {
 }
 
 cmd_start() {
-  local usage="usage: loop.sh start <board> <NN> [--type feat|fix|...] [--model m] [--effort e] [--note f]"
+  local usage="usage: loop.sh start <board> <NN> [--type feat|fix|...] [--model m] [--effort e] [--note f] [--over-cap \"<his words>\"]"
   local board="${1:?$usage}" nn="${2:?$usage}"; shift 2
-  local type="" model="" effort="" note=""
+  local type="" model="" effort="" note="" over=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type) type="$2"; shift 2 ;; --model) model="$2"; shift 2 ;;
       --effort) effort="$2"; shift 2 ;; --note) note="$2"; shift 2 ;;
+      --over-cap) over="${2:?--over-cap needs his words}"; shift 2 ;;
       *) die "unknown argument: $1 — $usage" ;;
     esac
   done
@@ -668,6 +700,16 @@ cmd_start() {
   t="$(ticket_json "$nn")"; nn="$(jq -r .nn <<<"$t")"; s="$(state_of "$nn")"
   state="$(jq -r .state <<<"$s")"
   [[ "$state" == ready || "$state" == stopped ]] || die "ticket $nn is $state ($(jq -r .why <<<"$s")) — only a ready or stopped ticket starts"
+  # max_parallel, enforced here and not only in the coordinator's brief, over
+  # the whole project: every live ticket session holds a slot, at its prompt or not.
+  local cap held; cap="$(jq -r .max_parallel <<<"$(loop_policy)")"; held="$(slots_held)"
+  if [[ -n "$held" ]] && (( $(wc -w <<<"$held") >= cap )); then
+    if [[ -z "$over" ]]; then
+      echo "NOT STARTED — the project is at max_parallel=$cap: live sessions $held. Wait for one to finish (or stop an idle one on his word), or start past the cap only with his words: --over-cap \"<his words>\"" >&2
+      return 22
+    fi
+    log "over max_parallel=$cap ($held live) on his word: $over"
+  fi
   grep -qE '^# [0-9]+:' "$(jq -r .file <<<"$t")" || die "ticket $nn has no '# $nn: <Title>' heading — add one, then start"
   model="${model:-$(jq -r '.smodel // ""' <<<"$t")}"; model="${model:-$IMPL_MODEL}"
   effort="${effort:-$(jq -r '.seffort // ""' <<<"$t")}"; effort="${effort:-$IMPL_EFFORT}"

@@ -34,13 +34,13 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 | `loop.sh merge <board> <NN> [--his-word "<his words>"]` | on his word, or his forge approval on a `merge=once-approved` board: approved, checks green, no conflict; a draft is marked ready, then merged |
 | `loop.sh done <board> <NN> "<what>"` | his own ticket (a gate), when he says it is done |
 
-**Starting.** Start `ready` tickets yourself, in number order, while fewer than the policy's `max_parallel` are `working` (`loop.sh status --json` gives both). Never start a `blocked` or `yours` ticket, and never work around a refusal.
+**Starting.** Start `ready` tickets yourself, in number order, while fewer than the policy's `max_parallel` ticket sessions are live across the whole project (every board, every repo): `loop.sh status` prints `RUNNING n of N` (`--json`: `running`, `max_parallel`). Every live ticket session holds a slot, `idle`, `asking` and `built` ones too, except one waiting at its prompt on an open PR. `loop.sh start` refuses past the cap (`NOT STARTED`, exit 22): wait for a slot, and pass `--over-cap "<his words>"` only when he asked for that ticket now. Never start a `blocked` or `yours` ticket, and never work around a refusal.
 
 **Each board's rules.** `loop.sh status` prints them on its `RULES` line (`--json`: `policy`); he sets them per project in the hub's Project settings, which writes them to the board's policy file. Read them again before every PR and merge:
 
 | Rule | Means |
 |---|---|
-| `max_parallel=N` | start ready tickets while fewer than N are `working` |
+| `max_parallel=N` | start ready tickets while fewer than N ticket sessions are live across the project (`RUNNING n of N`); `loop.sh start` refuses past it |
 | `pr=draft-when-built` | open the draft PR as soon as a ticket is `built` (below) |
 | `pr=ask-first` | when a ticket is `built`, tell him it is built and what it did, and open the PR only once he says so: `loop.sh pr … --his-word "<his words>"` (the script refuses without them) |
 | `merge=his-word` | merge only when he says so in this chat |
@@ -60,7 +60,7 @@ Every command below runs as `{{LOOP}} -C <repo> …`; the table leaves that part
 
 | Event | Means | You |
 |---|---|---|
-| `start` | a blocker landed (or a new ticket appeared) and it is `ready` | start it if fewer than `max_parallel` are `working` |
+| `start` | a blocker landed (or a new ticket appeared) and it is `ready` | start it if `RUNNING` is under `max_parallel` |
 | `built` | its report is written beside real work | as under *The draft PR is yours* |
 | `question` | its session wrote a blocking question | as under *Questions*; answer with `loop.sh answer` |
 | `idle` | at its prompt with no report, two checks in a row | `loop.sh log`; then `say` or `resume` |
