@@ -32,6 +32,7 @@ tkc <project> [<repo>...]      # coordinator.sh; --print shows the command, --re
 | `state.md` | the handoff: open loops, decisions of the week, what to watch, a queue in progress. Rewritten at each handoff, about 150 lines at most |
 | `journal.log` | one line per event and action, appended, never loaded whole |
 | `inbox/*.json` | one event each, handed over by tk-hub's daemon; the session moves what it handled to `inbox/done/` |
+| `wakes.json` | the session's own wakes, set with `scripts/wake.sh` (see Check back later) |
 | `artifacts/` | files the session keeps for the developer (a report, a plan's output), one line on each in `<name>.note`; tk-hub's daemon sends them to the hub's Artifacts page |
 | `.brief.md` | the rendered brief of the last start |
 
@@ -74,6 +75,33 @@ it rewrite `state.md` and stop; the next `tkc <project>` is a fresh conversation
 reads the files. `--resume` continues the folder's last conversation instead, for one a
 restart cut short. A handoff by the session that knows beats an automatic compaction,
 so no `--autocompact` is passed unless `TICKET_PCOORD_AUTOCOMPACT` names a window.
+
+## Check back later
+
+The coordinator can ask to be woken: "look at this deploy in 20 minutes", "every
+weekday at 08:30, run the digests". `scripts/wake.sh <folder>` keeps them in
+`wakes.json`:
+
+- `add --in 20m <text>`, `add --at 14:30 <text>` (anything `date -d` reads, in the
+  box's time zone; devboxes sets it to the developer's), `add --every "weekday 08:30"
+  <text>` (`daily`, `weekday`, `weekend` or `mon,wed,...`, then `HH:MM`) or `--every 30m`
+  (10m to 7d), with `--max <n>` to end a repeating one after n firings;
+- `list [--json]`, `rm <id>...`;
+- `due`, which the inbox watcher runs every `TICKET_PCOORD_WAKE_POLL_S` seconds (default
+  30) while it waits, and the hook on each message: each wake whose time has come
+  becomes a `wake` event in `inbox/` (`id`, `text`, `due`, `late_min`, `repeat`,
+  `fired`, `next`), so the watcher ends and the session's turn starts, with no hub call.
+  A one-off wake is then gone; a repeating one moves to its next time.
+
+A wake only fires while the watcher runs. After a reboot or a crash, tk-hub's daemon
+resumes the coordinator, whose resume note starts the watcher again, and a wake missed
+meanwhile fires once then, its `late_min` saying how late (never once per missed
+time). The brief says when to set one (a pipeline, a deploy, a reviewer who has not
+answered), that the text is written for whichever session reads it, and the stop rule:
+a polling wake gets a `--max`, and after two or three firings that found nothing new
+the coordinator tells the developer what it waits on and removes it. tk-hub's daemon
+reports `wakes.json` with the coordinator's session and lists it on the project's
+page, where the developer can remove one.
 
 ## The inbox, and tk-hub starting it
 
