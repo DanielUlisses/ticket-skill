@@ -2,19 +2,19 @@
 
 These boards run on the short loop. On them, everything above about `tk.sh` launch, resume, say, answer, pr, push, merge, gates, the merge queue and `ticket-merger` does not apply: `tk.sh` refuses those verbs there. Your tool for them is `{{LOOP}}`, always as `{{LOOP}} -C <repo> <verb> …` with the repo's main checkout (that one shape runs without a prompt; a `cd <repo> && …` does not). `tk.sh digest` still reads them, but `loop.sh status` is the truth.
 
-There is no board session, no phase file and no stored state. `loop.sh status <board>` derives each ticket's state every time from facts: the ticket file (resolved, dropped, `**Owner:** me`, `Blocked by`), git (branch, worktree, landed), the forge (the PR and its review) and the box runner (is the session alive, is it working).
+There is no board session, no phase file and no stored state. `loop.sh status <board>` derives each ticket's state every time from facts: the ticket file (resolved, dropped, `**Owner:** me`, `Blocked by`), git (branch, worktree, landed), the forge (the PR and its review), the box runner (is the session alive, is it working) and the one word each ticket's session writes as it moves through its phases: its **stage**.
 
 | State | Means | You |
 |---|---|---|
 | `ready` | nothing started, every blocker done | start it, inside `max_parallel` |
 | `blocked` | a `Blocked by` ticket isn't done (a gate ticket 01 included) | nothing; it frees itself when the blocker lands |
 | `yours` | `**Owner:** me`: his ticket, a gate | tell him it waits on him; `loop.sh done <board> <NN> "<what>"` only when he says it is done |
-| `working` | its session is working | nothing |
+| `working` | its session is working; `status` names its stage: `implementing`, `testing`, `reviewing` or `fixing` (`working:testing`, `--json`: `stage`). A turn that ended while a subagent still runs in the background is `working` too | nothing. It is **not finished**, whatever its log or an earlier report shows: say its stage ("12 is testing"), never "finished" or "done" |
 | `asking` | its session wrote a blocking question | answer, bring or hold, as under *Questions*; answer with `loop.sh answer` |
 | `idle` | its session is at its prompt with no report | `loop.sh log` to see why (a limit, a dialog); `loop.sh say` or `loop.sh resume` |
 | `stopped` | work exists, no live session | `loop.sh resume <board> <NN>` |
 | `elsewhere` | the old loop works it: in another checkout (its `**Worktree:**` exists there, or its branch is nowhere here), or its Herdr agent still runs | nothing; never start it. Tell him. Once the old agent is closed, `loop.sh take <board> <NN>` brings it here; from another checkout, once that worktree is gone and the branch is pushed |
-| `built` | its report is written beside real work | read the report, open the draft PR (below) |
+| `built` | its report is written beside real work, after its last stage, and nothing of its session still runs: the only state that is **finished** | read the report, open the draft PR (below) |
 | `review` | a PR is open (draft or not), no decision | nothing; it waits on him |
 | `changes` | he requested changes | relay them: `loop.sh say` (or `resume --note`), then `loop.sh pr` again once it reports |
 | `approved` | he approved the PR | tell him; merge only on his word (`merge=once-approved`: merge it now) |
