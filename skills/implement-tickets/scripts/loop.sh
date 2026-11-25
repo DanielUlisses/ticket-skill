@@ -997,6 +997,21 @@ deliver_messages() {
   printf '%s\n' "$out"
 }
 
+# How many comments people left on PR <number> (the conversation's and the
+# inline ones on the diff), or nothing when the forge can't say: watch then
+# keeps the count it had. One call per open PR per pass.
+pr_comment_count() {
+  local id="$1" n=""
+  case "$FORGE" in
+    github) n="$(cd "$ROOT" && gh_ api "repos/{owner}/{repo}/pulls/$id" --jq '(.comments // 0) + (.review_comments // 0)' 2>/dev/null)" || n="" ;;
+    azure)  n="$(az_ devops invoke --area git --resource pullRequestThreads --api-version 7.1 \
+                   --route-parameters "project=$AZ_PROJECT" "repositoryId=$AZ_REPO" "pullRequestId=$id" 2>/dev/null \
+                 | jq '[.value[]? | select(.isDeleted != true) | .comments[]? | select(.commentType == "text" and .isDeleted != true)] | length' 2>/dev/null)" || n="" ;;
+  esac
+  [[ "$n" =~ ^[0-9]+$ ]] && echo "$n"
+  return 0
+}
+
 cmd_watch() {
   local usage="usage: loop.sh watch <board> --inbox <dir>"
   local board="${1:?$usage}" inbox=""; shift
@@ -1013,13 +1028,17 @@ cmd_watch() {
   fi
   local seen='null'
   [[ -s "$sd/seen.json" ]] && seen="$(jq -c . "$sd/seen.json" 2>/dev/null || echo null)"
-  local now; now="$(jq -c '[.[] | {nn, state, why, title, report, reported, questions, open_questions, pr: (.pr.url // null)}]' <<<"$STATES")"
+  local now; now="$(jq -c '[.[] | {nn, state, why, title, report, reported, questions, open_questions, pr: (.pr.url // null),
+    pr_number: (.pr.number // null), bad: ([.pr.checks[]? | select(.s == "bad") | .n] | unique)}]' <<<"$STATES")"
   # Each report's mtime: a new report under an open PR is a fix round finished.
-  local rows="" row rf mt
+  # And each open PR's count of comments: one more is news for the coordinator.
+  local rows="" row rf mt prn cm
   while IFS= read -r row; do
     rf="$(jq -r .report <<<"$row")"; mt=0
     [[ "$(jq -r .reported <<<"$row")" == true && -f "$rf" ]] && mt="$(stat -c %Y "$rf" 2>/dev/null || echo 0)"
-    rows+="$(jq -c --argjson mt "$mt" '. + {report_at: $mt}' <<<"$row")"$'\n'
+    prn="$(jq -r '.pr_number // ""' <<<"$row")"; cm=""
+    [[ -n "$prn" ]] && cm="$(pr_comment_count "$prn")"
+    rows+="$(jq -c --argjson mt "$mt" --argjson cm "${cm:-null}" '. + {report_at: $mt, comments: $cm}' <<<"$row")"$'\n'
   done < <(jq -c '.[]' <<<"$now")
   now="$(jq -s . <<<"$rows")"
   local out
@@ -1041,7 +1060,8 @@ cmd_watch() {
         # idle/stopped: news only on the second pass in a row.
         | (($t.state | confirm) and $t.state != $from and ($old.pending // null) != $t.state) as $hold
         | .seen[$t.nn] = (if $hold then ($old // {}) + {pending: $t.state}
-                          else {state: $t.state, report_at: $t.report_at, open_questions: $t.open_questions, pending: null} end)
+                          else {state: $t.state, report_at: $t.report_at, open_questions: $t.open_questions, pending: null,
+                                bad: $t.bad, comments: ($t.comments // (if $t.pr then $old.comments else null end) // null)} end)
         | if $first or $hold then . else
             (if $t.state != $from then kind($from; $t.state) else null end) as $k
             | ([if $k then {kind: $k, text: $t.why} else empty end]
@@ -1051,6 +1071,14 @@ cmd_watch() {
                      and ($old.report_at // 0) > 0 and $t.report_at > $old.report_at
                   then {kind: (if $t.state == "built" then "built" else "fixed" end),
                         text: "a new report: \($t.report)\(if $t.state == "built" then "" else " — read it; loop.sh pr pushes the fix to the open PR" end)"}
+                  else empty end]
+               # A check that turned red since the last pass (one already red is old news).
+               + [($t.bad - ($old.bad // [])) as $red
+                  | if $old != null and $t.pr != null and ($red | length) > 0
+                    then {kind: "checks", text: "red checks on the PR: \($red | join(", ")) — read the failing run and send the fix to its session"}
+                    else empty end]
+               + [if $t.comments != null and ($old.comments // null) != null and $t.comments > $old.comments
+                  then {kind: "comment", text: "\($t.comments - $old.comments) new comment(s) on the PR — read them (gh pr view --comments / az repos pr show) and answer or relay"}
                   else empty end]) as $evs
             | .events += [$evs[] | . + {board: $board, repo: $repo, nn: $t.nn, title: $t.title, state: $t.state, from: $from, pr: $t.pr}]
           end)
