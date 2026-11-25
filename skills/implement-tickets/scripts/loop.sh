@@ -525,6 +525,8 @@ render_brief() {
   tpl="${tpl//'{{RESEARCH_MODEL}}'/"$RESEARCH_MODEL"}"
   tpl="${tpl//'{{TEST_MODEL}}'/"$TEST_MODEL"}"
   tpl="${tpl//'{{CHECK_MODEL}}'/"$CHECK_MODEL"}"
+  local pdir; pdir="$(project_dir_of "$ROOT")"
+  fill_prose '{{PROJECT_INSTRUCTIONS}}' "$([[ -z "$pdir" ]] || project_instructions_block "$pdir")"
   fill_prose '{{PROJECT_MEMORY}}' "${MEMORY_BLOCK:-}"
   fill_prose '{{ANSWERS_LEDGER}}' "$(answers_ledger_block "$BOARD_ID" "$(jq -r .nn <<<"$t")")"
   fill_prose '{{TICKET}}' "$(cat "$file")"

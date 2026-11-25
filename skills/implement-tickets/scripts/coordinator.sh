@@ -24,6 +24,11 @@
 #                inbox/ by the watcher
 #   artifacts/   files the session keeps for the developer (a report, a plan's
 #                output); tk-hub's daemon sends them to the hub's Artifacts page
+#   instructions.md  the developer's instructions for the project, written by
+#                tk-hub's daemon from Project settings; the brief carries them
+#                (and thread.sh's and loop.sh's briefs)
+#   memory-proposals.json  lines the session proposes for a repo's project
+#                memory (memory.sh), accepted or rejected in Project settings
 # Every start is a fresh conversation that reads state.md; --resume continues
 # the folder's last conversation instead (one cut short by a restart).
 # docs/agents/project-coordinator.md.
@@ -197,6 +202,9 @@ if [[ -n "$short_boards" ]]; then
   fi
   tpl+=$'\n\n'"$sec"
 fi
+instructions="$(project_instructions_block "$DIR")"
+[[ -z "$instructions" ]] || tpl+=$'\n\n'"$instructions"
+tpl="${tpl//'{{MEMORY}}'/"$SCRIPTS/memory.sh $DIR"}"
 printf '%s\n' "$tpl" >"$PROMPT"
 
 # Each message the developer sends carries the inbox events still untold. Under
@@ -242,7 +250,7 @@ cmd=(claude "$first"
 for r in "${REPOS[@]}"; do cmd+=(--add-dir "$r"); done
 [[ -n "$SESSION_AGENTS_JSON" ]] && cmd+=(--agents "$SESSION_AGENTS_JSON")
 # Its own scripts run without a prompt each time; anything else asks.
-cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)" "Bash($SCRIPTS/wake.sh *)")
+cmd+=(--allowedTools "Bash($SCRIPTS/loop.sh *)" "Bash($SCRIPTS/tk.sh *)" "Bash($LAUNCHER_PATH *)" "Bash($SCRIPTS/merge-conflict.sh *)" "Bash($SCRIPTS/pr-open.sh *)" "Bash($SCRIPTS/coordinator-inbox.sh *)" "Bash($SCRIPTS/thread.sh *)" "Bash($SCRIPTS/wake.sh *)" "Bash($SCRIPTS/memory.sh *)")
 
 log "project coordinator $PROJECT on $PCOORD_MODEL @ $PCOORD_EFFORT, threads on $THREAD_MODEL @ $THREAD_EFFORT — ${#REPOS[@]} repo(s), folder $DIR — subagents: $SESSION_AGENTS_STATUS${short_boards:+ — short loop: $short_boards} — MCP: ${mcp_names:-none}"
 if (( as_json )); then
