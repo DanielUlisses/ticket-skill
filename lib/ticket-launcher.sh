@@ -223,6 +223,54 @@ fill_prose() {
   tpl="$out$rest"
 }
 
+# ---- project instructions ----------------------------------------------------------
+# Daniel's instructions for a project (tk-hub's Project settings), which tk-hub's
+# daemon writes to instructions.md in the project coordinator's folder. Every brief
+# of the project carries them: the coordinator's (coordinator.sh), its discovery
+# threads' (thread.sh) and its ticket threads' (loop.sh). Absent or blank: no
+# section at all.
+
+# The section for a brief, from <folder>/instructions.md; nothing when there are none.
+project_instructions_block() {
+  local f="$1/instructions.md" body
+  [[ -f "$f" && -r "$f" ]] || return 0
+  body="$(cat "$f")"
+  [[ -n "${body//[[:space:]]/}" ]] || return 0
+  printf '## Project instructions\n\nThe developer'"'"'s standing instructions for this project, from tk-hub'"'"'s Project settings. Follow them in everything you do here; when he says otherwise in this conversation, his message wins.\n\n%s\n' "$body"
+}
+
+# The project coordinator folder whose repos file lists <repo root>: $TICKET_PROJECT_DIR
+# when set, else the current directory when it is such a folder (the coordinator runs
+# its scripts from its own), else the only such folder under the coordinators' homes.
+# Prints nothing when none, or more than one, fits.
+project_dir_of() {
+  local want d pdirs=()
+  want="$(readlink -f "$1" 2>/dev/null || echo "$1")"
+  if [[ -n "${TICKET_PROJECT_DIR:-}" ]]; then
+    [[ -f "$TICKET_PROJECT_DIR/repos" ]] && echo "$TICKET_PROJECT_DIR"
+    return 0
+  fi
+  if _lists_repo "$PWD/repos" "$want"; then echo "$PWD"; return 0; fi
+  for d in "${TICKET_PCOORD_HOME:-$HOME/work/.coordinators}"/*/ "$HOME/pilot/.coordinators"/*/; do
+    _lists_repo "$d/repos" "$want" || continue
+    d="$(readlink -f "$d")"
+    [[ " ${pdirs[*]-} " == *" $d "* ]] || pdirs+=("$d")
+  done
+  (( ${#pdirs[@]} == 1 )) && echo "${pdirs[0]}"
+  return 0
+}
+
+# Whether a coordinator's repos file lists <root> (both resolved).
+_lists_repo() {
+  local file="$1" want="$2" r
+  [[ -f "$file" ]] || return 1
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    [[ "$(readlink -f "$r" 2>/dev/null || echo "$r")" == "$want" ]] && return 0
+  done <"$file"
+  return 1
+}
+
 # ---- Remote Control -----------------------------------------------------------------
 # Whether the agent starts with `claude --remote-control <name>`, so its
 # session opens in the Claude app (tk-hub's Sessions page links it, read from the pane).
