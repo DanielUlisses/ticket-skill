@@ -74,7 +74,7 @@ notification cursor, not ticket state; deleting it only makes the next pass reco
 | `resume` | `stopped` two passes in a row, coming from working, idle, asking or built |
 | `changes`, `approved` | the PR's review says so |
 | `checks` | a check on the open PR turned red since the last pass (its names in the text); one already red is not repeated |
-| `comment` | the open PR has more comments than last pass (conversation and inline; GitHub's REST counts, Azure's PR threads). A count the forge would not give keeps the old one |
+| `comment` | the open PR has more comments than last pass (conversation, inline and, on GitHub, reviews with a body; GitHub's REST counts, Azure's PR threads). A count the forge would not give keeps the old one |
 | `fixed` | a newer report while the PR is in `review` or `changes` |
 | `landed` | `done` from anything but dropped |
 | `message` | a thread added a message to its `messages.json` (below) |

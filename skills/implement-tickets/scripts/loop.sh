@@ -997,13 +997,17 @@ deliver_messages() {
   printf '%s\n' "$out"
 }
 
-# How many comments people left on PR <number> (the conversation's and the
-# inline ones on the diff), or nothing when the forge can't say: watch then
-# keeps the count it had. One call per open PR per pass.
+# How many comments people left on PR <number> (the conversation's, the inline
+# ones on the diff and, on GitHub, reviews submitted with a body), or nothing
+# when the forge can't say: watch then keeps the count it had. One or two calls
+# per open PR per pass.
 pr_comment_count() {
-  local id="$1" n=""
+  local id="$1" n="" r=""
   case "$FORGE" in
-    github) n="$(cd "$ROOT" && gh_ api "repos/{owner}/{repo}/pulls/$id" --jq '(.comments // 0) + (.review_comments // 0)' 2>/dev/null)" || n="" ;;
+    github)
+      n="$(cd "$ROOT" && gh_ api "repos/{owner}/{repo}/pulls/$id" --jq '(.comments // 0) + (.review_comments // 0)' 2>/dev/null)" || n=""
+      r="$(cd "$ROOT" && gh_ api "repos/{owner}/{repo}/pulls/$id/reviews?per_page=100" --jq '[.[] | select((.body // "") != "")] | length' 2>/dev/null)" || r=""
+      [[ "$n" =~ ^[0-9]+$ && "$r" =~ ^[0-9]+$ ]] && n=$((n + r)) || n="" ;;
     azure)  n="$(az_ devops invoke --area git --resource pullRequestThreads --api-version 7.1 \
                    --route-parameters "project=$AZ_PROJECT" "repositoryId=$AZ_REPO" "pullRequestId=$id" 2>/dev/null \
                  | jq '[.value[]? | select(.isDeleted != true) | .comments[]? | select(.commentType == "text" and .isDeleted != true)] | length' 2>/dev/null)" || n="" ;;
