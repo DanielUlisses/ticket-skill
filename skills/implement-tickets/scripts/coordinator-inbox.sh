@@ -15,7 +15,11 @@
 #                6 h) with "no new events", so the session starts it again.
 #   hook <dir>   A UserPromptSubmit hook (coordinator.sh's settings): each
 #                message the developer sends carries, as context, the events
-#                still waiting that the session was not told of.
+#                still waiting that the session was not told of, and one line
+#                on routing: anything beyond what the coordinator already has
+#                goes to a thread (thread.sh). A long session drifts from its
+#                brief; a reminder beside each of his asks keeps the coordinator
+#                from doing the work in its own context.
 #
 # What was announced is kept in <dir>/inbox/.announced (one name per line), so
 # an event is announced once, by whichever comes first.
@@ -47,6 +51,7 @@ LOOP_POLL_S="${TICKET_PCOORD_LOOP_POLL_S:-120}"
 WAKE_POLL_S="${TICKET_PCOORD_WAKE_POLL_S:-30}"
 LOOP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/loop.sh"
 WAKE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wake.sh"
+THREAD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/thread.sh"
 
 # Is a watcher alive for this folder?
 watching() { local p; p="$(cat "$WATCHER" 2>/dev/null)" && [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; }
@@ -139,6 +144,7 @@ case "$mode" in
     ;;
   hook)
     cat >/dev/null  # the hook's JSON on stdin: not needed
+    echo "Routing (your brief, Threads): answer him from what you already have (state.md, a digest, the ledger, a report, this chat) or with one of your own verbs. Anything else, ticket or not, goes to a thread: $THREAD $DIR start --title ... --brief ... (a follow-up on the same subject: say <id> <file>), and you tell him in one line. Only his \"you do it\" for this ask makes it yours."
     fire_wakes
     mapfile -t new < <(fresh)
     if (( ${#new[@]} )); then
