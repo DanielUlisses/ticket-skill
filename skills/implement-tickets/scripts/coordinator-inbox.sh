@@ -35,10 +35,26 @@
 # each hook, `wake.sh <dir> due` writes a `wake` event for each one due, which
 # this then announces like any other. docs/agents/project-coordinator.md, Check
 # back later.
+#
+#   tick <dir>   What the watcher does on its own between announcements, once,
+#                without waiting or announcing: loop.sh watch on the short-loop
+#                boards, the wakes due, and the inbox's upkeep. tk-hub's daemon
+#                runs it on every pass, so events are written while the session
+#                runs no watcher (it forgot to start it again, a compact, a
+#                resume): until 2026-11-28 nothing was written then, and the
+#                coordinator heard of a finished ticket only once the developer
+#                asked. A stamp per job (inbox/.ticked-watch, .ticked-wake) keeps
+#                the watcher and the daemon to one run per interval between them.
+#
+# An event is delivered when the session moves it to inbox/done/, not when it
+# is announced: one announced TICKET_PCOORD_REANNOUNCE_S ago (default 900) and
+# still in inbox/ is announced again (a turn lost to a compact or a restart
+# never handled it). inbox/done/ keeps a handled event TICKET_PCOORD_DONE_KEEP_H
+# hours (default 24) for a look back, then it is deleted.
 # docs/agents/project-coordinator.md, The inbox.
 set -euo pipefail
 
-usage="usage: coordinator-inbox.sh wait|hook <dir>"
+usage="usage: coordinator-inbox.sh wait|hook|tick <dir>"
 mode="${1:-}"; DIR="${2:-}"
 [[ -n "$mode" && -n "$DIR" ]] || { echo "$usage" >&2; exit 2; }
 INBOX="$DIR/inbox"
@@ -49,12 +65,25 @@ POLL_S="${TICKET_PCOORD_POLL_S:-5}"
 WAIT_S="${TICKET_PCOORD_WAIT_S:-21600}"
 LOOP_POLL_S="${TICKET_PCOORD_LOOP_POLL_S:-120}"
 WAKE_POLL_S="${TICKET_PCOORD_WAKE_POLL_S:-30}"
+REANNOUNCE_S="${TICKET_PCOORD_REANNOUNCE_S:-900}"
+DONE_KEEP_H="${TICKET_PCOORD_DONE_KEEP_H:-24}"
 LOOP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/loop.sh"
 WAKE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wake.sh"
 THREAD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/thread.sh"
 
 # Is a watcher alive for this folder?
 watching() { local p; p="$(cat "$WATCHER" 2>/dev/null)" && [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; }
+
+# Is job <name>'s stamp at least <seconds> old (or missing)? Then it is touched
+# and the job is due: the watcher and the daemon's tick share the stamp.
+due_now() {
+  local stamp="$INBOX/.ticked-$1" age
+  if [[ -f "$stamp" ]]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$stamp" 2>/dev/null || echo 0) ))
+    (( age >= $2 )) || return 1
+  fi
+  touch "$stamp"
+}
 
 # Every short-loop board of the folder's repos, as "<repo path>\t<board>".
 short_boards() {
@@ -95,28 +124,52 @@ fire_wakes() {
   printf '%s wake.sh due failed: %s\n' "$(date -u +%FT%TZ)" "$(tail -n1 <<<"$out")" >>"$DIR/journal.log"
 }
 
-# The events in the inbox not announced yet, one name per line.
+# The events in the inbox not announced yet, or announced REANNOUNCE_S ago and
+# still not handled, one name per line. The ledger's lines are "<name>\t<epoch>"
+# (a bare name, from before 2026-11-28, reads as announced long ago).
 fresh() {
-  local f name
+  local f name at now; now="$(date +%s)"
+  declare -A told=()
+  if [[ -f "$ANNOUNCED" ]]; then
+    while IFS=$'\t' read -r name at; do
+      [[ -n "$name" ]] && told["$name"]="${at:-0}"
+    done <"$ANNOUNCED"
+  fi
   for f in "$INBOX"/*.json; do
     [[ -f "$f" ]] || continue
     name="${f##*/}"
-    [[ -f "$ANNOUNCED" ]] && grep -qxF -- "$name" "$ANNOUNCED" && continue
+    if [[ -n "${told[$name]+x}" ]]; then
+      at="${told[$name]}"; [[ "$at" =~ ^[0-9]+$ ]] || at=0
+      (( now - at >= REANNOUNCE_S )) || continue
+    fi
     echo "$name"
   done
 }
 
-# Notes names as announced; the ledger keeps only names still in the inbox.
+# Notes names as announced now; the ledger keeps only names still in the inbox.
 announce() {
-  local tmp name
-  tmp="$(mktemp "$INBOX/.announced.XXXXXX")"
-  {
-    [[ -f "$ANNOUNCED" ]] && while IFS= read -r name; do
-      [[ -f "$INBOX/$name" ]] && echo "$name"
+  local tmp name at now; now="$(date +%s)"
+  declare -A keep=()
+  if [[ -f "$ANNOUNCED" ]]; then
+    while IFS=$'\t' read -r name at; do
+      [[ -n "$name" && -f "$INBOX/$name" ]] && keep["$name"]="${at:-0}"
     done <"$ANNOUNCED"
-    printf '%s\n' "$@"
-  } | sort -u >"$tmp"
+  fi
+  for name in "$@"; do keep["$name"]="$now"; done
+  tmp="$(mktemp "$INBOX/.announced.XXXXXX")"
+  for name in "${!keep[@]}"; do printf '%s\t%s\n' "$name" "${keep[$name]}"; done | sort >"$tmp"
   mv "$tmp" "$ANNOUNCED"
+}
+
+# How many events wait in the inbox (not moved to done/).
+inbox_pending() { find "$INBOX" -maxdepth 1 -type f -name '*.json' | wc -l; }
+
+# Handled events older than DONE_KEEP_H hours, and stamps of failures an hour
+# old, are deleted: nothing in the inbox is kept once it served its turn.
+tidy() {
+  [[ -d "$INBOX/done" ]] && find "$INBOX/done" -maxdepth 1 -type f -name '*.json' -mmin "+$(( DONE_KEEP_H * 60 ))" -delete 2>/dev/null
+  find "$INBOX" -maxdepth 1 -type f \( -name '.watch-failed-*' -o -name '.wake-failed' -o -name '.announced.*' \) -mmin +120 -delete 2>/dev/null
+  return 0
 }
 
 case "$mode" in
@@ -124,9 +177,10 @@ case "$mode" in
     echo $$ >"$WATCHER"
     trap 'rm -f "$WATCHER"' EXIT
     waited=0; next_watch=0; next_wake=0
+    tidy
     while :; do
-      if (( waited >= next_watch )); then watch_boards; next_watch=$(( waited + LOOP_POLL_S )); fi
-      if (( waited >= next_wake )); then fire_wakes; next_wake=$(( waited + WAKE_POLL_S )); fi
+      if (( waited >= next_watch )); then due_now watch "$LOOP_POLL_S" && watch_boards; next_watch=$(( waited + LOOP_POLL_S )); fi
+      if (( waited >= next_wake )); then due_now wake "$WAKE_POLL_S" && fire_wakes; next_wake=$(( waited + WAKE_POLL_S )); fi
       mapfile -t new < <(fresh)
       if (( ${#new[@]} )); then
         announce "${new[@]}"
@@ -153,6 +207,14 @@ case "$mode" in
     fi
     # A restart (a resume, a reboot) ends the background watcher with the old process.
     watching || echo "The inbox watcher is not running (a restart ends it): after answering him, start it again in the background: $0 wait $DIR"
+    ;;
+  tick)
+    # One pass of the watcher's own jobs, nothing announced: tk-hub's daemon
+    # runs it on every pass and tells the session of what waits itself.
+    due_now watch "$LOOP_POLL_S" && watch_boards
+    due_now wake "$WAKE_POLL_S" && fire_wakes
+    tidy
+    echo "TICKED $(fresh | wc -l) unannounced, $(inbox_pending) pending in $INBOX"
     ;;
   *) echo "$usage" >&2; exit 2 ;;
 esac
