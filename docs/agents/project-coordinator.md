@@ -160,6 +160,33 @@ it and moves the file to `inbox/done/`. A folder started by hand gets the same i
 when the box runs the daemon. On short-loop boards the watcher itself writes the events (`loop.sh watch`), and the session can run under
 the box runner instead of a terminal (`coordinator.sh --runner`): docs/agents/short-loop.md.
 
+### Delivery: written, then handled (2026-11-28)
+
+Until 2026-11-28 the coordinator sometimes never heard that a thread or a ticket
+finished until the developer asked for status. Three gaps, each closed in the script,
+not the brief:
+
+- **Nothing was written without a watcher.** `loop.sh watch` and the wakes ran only
+  inside `wait`, which ends at every announcement; a session that didn't start it
+  again (a compact, a resume, a forgotten step) got no events at all. Now
+  `coordinator-inbox.sh tick <dir>` runs those jobs once, and tk-slim runs it for every
+  coordinator on each pass; a stamp per job (`inbox/.ticked-watch`, `.ticked-wake`)
+  keeps the watcher and the daemon to one run per interval between them.
+- **Announced counted as handled.** An event is delivered when the session moves it
+  to `inbox/done/`. The ledger keeps when each was announced (`<name>\t<epoch>`), and
+  one still in `inbox/` `TICKET_PCOORD_REANNOUNCE_S` later (default 900) is announced
+  again. tk-slim also types one line into an idle session whose events have waited a
+  few minutes, backing off while the same ones wait (tk-hub's docs/coordinator.md,
+  Delivery), and reports one left 6 hours as a leftover the hub raises.
+- **A thread that finished without `thread.sh report`** (it forgot, hit a limit,
+  died) wrote nothing. tk-slim now compares each thread's session with its report and
+  writes the `thread` event itself, once per turn.
+
+Events are files on the box's disk, written whole before anyone is told, so nothing
+else is kept: `inbox/done/` keeps a handled event `TICKET_PCOORD_DONE_KEEP_H` hours
+(default 24) for a look back, then deletes it. An event the hub hands over carries a
+`key`, and the daemon writes a key once, so a resend is no duplicate.
+
 `coordinator.sh --json <project> [<repo>...]` starts nothing: it makes the folder and
 the brief and prints `{"project", "dir", "prompt", "args"}`, the folder, the first
 prompt and claude's arguments. tk-hub's daemon starts the session from that as a Herdr

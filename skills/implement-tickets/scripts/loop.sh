@@ -264,7 +264,7 @@ derive() {
   local landed_ans="-" state why has_branch=false has_wt=false open_blockers
   nn="$(jq -r .nn <<<"$t")"; status="$(jq -r .status <<<"$t")"; owner="$(jq -r .owner <<<"$t")"
   branch="$(ticket_branch "$t")"; wt="$(worktree_of "$branch")"
-  dir="$(ticket_dir "$nn")"; sess="$(session_name "$nn")"
+  dir="$(board_state_dir)/loop/$BOARD_SLUG/$nn"; sess="$(session_name "$nn")"  # read only: no folder made for a ticket never started
   rf="$dir/report.md"; qf="$dir/questions.json"
   [[ -s "$rf" ]] && report=true
   stage="$(ticket_stage "$dir/stage" "$rf")"
@@ -1079,15 +1079,22 @@ fi
 # a file shorter than the count (a fresh start) counts from zero. The first pass
 # only counts. Prints <out> with the message events and counts added.
 
+# A thread may relay at most TICKET_LOOP_RELAY_MAX messages (default 6) to
+# other threads in an hour: past that they go to the coordinator only, held, so
+# two threads can't bounce a message back and forth (a guardrail in the script,
+# not the brief). seen.json keeps each sender's relay times of the last hour.
 deliver_messages() {
   local seen="$1" out="$2" row nn title mf len prev i m to text tgt sess alive why line rc
+  local relay_max="${TICKET_LOOP_RELAY_MAX:-6}" now_s relays
+  now_s="$(date +%s)"
   while IFS= read -r row; do
     nn="$(jq -r .nn <<<"$row")"; title="$(jq -r .title <<<"$row")"
-    mf="$(ticket_dir "$nn")/messages.json"; len=0
+    mf="$(board_state_dir)/loop/$BOARD_SLUG/$nn/messages.json"; len=0
     [[ -s "$mf" ]] && len="$(jq 'if type == "array" then length else 0 end' "$mf" 2>/dev/null || echo 0)"
     prev="$(jq -r --arg n "$nn" '.tickets[$n].msgs // 0' <<<"$seen" 2>/dev/null || echo 0)"
     [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
     (( len < prev )) && prev=0
+    relays="$(jq -c --arg n "$nn" --argjson now "$now_s" '[.tickets[$n].relays // [] | .[] | numbers | select(. > $now - 3600)]' <<<"$seen" 2>/dev/null || echo '[]')"
     if [[ "$seen" != null ]]; then
       for (( i = prev; i < len; i++ )); do
         m="$(jq -c --argjson i "$i" '.[$i]' "$mf")"
@@ -1100,7 +1107,10 @@ deliver_messages() {
           else
             sess="$(jq -r .session <<<"$tgt")"; alive="$(jq -r .alive <<<"$tgt")"
             if [[ "$alive" != true ]]; then why="not delivered: $to has no live session ($(jq -r .state <<<"$tgt")) — deliver it when it starts, or answer it yourself"
+            elif (( $(jq length <<<"$relays") >= relay_max )); then
+              why="not delivered: held, $nn relayed $relay_max messages to other threads in the last hour (a loop?) — pass it on yourself only if it is needed"
             else
+              relays="$(jq -c --argjson now "$now_s" '. + [$now]' <<<"$relays")"
               rc=0; relay_message "$(jq -r .session <<<"$row")" "$sess" "Thread $nn ($title): $text" || rc=$?
               case "$rc" in
                 0) why="delivered to $to" ;;
@@ -1116,7 +1126,7 @@ deliver_messages() {
                         nn: $nn, title: $title, to: $to, delivered: ($why | startswith("delivered"))}]' <<<"$out")"
       done
     fi
-    out="$(jq -c --arg nn "$nn" --argjson len "$len" '.seen.tickets[$nn].msgs = $len' <<<"$out")"
+    out="$(jq -c --arg nn "$nn" --argjson len "$len" --argjson r "$relays" '.seen.tickets[$nn].msgs = $len | .seen.tickets[$nn].relays = $r' <<<"$out")"
   done < <(jq -c '.[]' <<<"$STATES")
   printf '%s\n' "$out"
 }
@@ -1210,6 +1220,105 @@ cmd_publish() {
   else echo "PUBLISHED $BOARD_ID — an earlier commit pushed"; fi
 }
 
+# ---- tidy: what a finished ticket leaves on the box --------------------------------
+#
+# A ticket that landed (done) or was dropped leaves its worktree, its local
+# branch, its runner session and its files beside the report. Until 2026-11-28
+# nothing removed them: a landed ticket's session was stopped and the rest
+# stayed. Each watch pass now takes them, but only what holds nothing that
+# exists on this box alone:
+#   - a session still working is left to finish (the next pass looks again); one
+#     at its prompt is stopped, and a stopped one forgotten (devbox-run forget);
+#   - the worktree goes only when `git status` shows nothing (tracked or
+#     untracked; ignored files such as node_modules don't count), and the local
+#     branch only when every commit on it is on a remote ref or the base, or all
+#     its changes are in a commit on the base (a squash merge whose branch the
+#     forge deleted);
+#   - anything else is kept and named in <state>/leftovers.json, which tk-hub's
+#     daemon reports, so the hub raises it for the developer. Nothing is forced.
+# The ticket's own files (brief, report, questions, stage, messages) go
+# TICKET_LOOP_KEEP_DAYS (default 7) days after its worktree did.
+# TICKET_LOOP_TIDY=0 turns it off.
+
+# What of <branch> exists only here, as words; empty when nothing does.
+only_here() {
+  local branch="$1" wt="$2" base="$3" n=0 c=0 words="" ref
+  if [[ -d "$wt" ]]; then
+    n="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c . || true)"
+  fi
+  ref="refs/heads/$branch"
+  if git -C "$ROOT" show-ref --verify --quiet "$ref"; then
+    if (( HAS_REMOTE )); then
+      c="$(git -C "$ROOT" rev-list --count "$ref" --not --remotes "$BASE_REF" 2>/dev/null || echo 1)"
+    else
+      c="$(git -C "$ROOT" rev-list --count "$ref" --not "$BASE_REF" 2>/dev/null || echo 1)"
+    fi
+    if (( c > 0 )); then
+      [[ -n "$base" ]] || base="$(git -C "$ROOT" merge-base "$ref" "$BASE_REF" 2>/dev/null || true)"
+      [[ -n "$base" && -n "$(landing_commit "$ref" "$BASE_REF" "$base" 2>/dev/null)" ]] && c=0
+    fi
+  fi
+  (( ${n:-0} > 0 )) && words="$n uncommitted file$( (( n == 1 )) || echo s) in $wt"
+  (( ${c:-0} > 0 )) && words="${words:+$words, }$c commit$( (( c == 1 )) || echo s) on $branch on no remote"
+  printf '%s' "$words"
+}
+
+# Tidies every done or dropped ticket of STATES; prints one line per thing it
+# did and writes <sd>/leftovers.json ([{nn, title, branch, worktree, why}]).
+tidy_finished() {
+  local sd="$1" row nn branch wt sess alive turn why base dir keep_days="${TICKET_LOOP_KEEP_DAYS:-7}" t out
+  local left='[]'
+  [[ "${TICKET_LOOP_TIDY:-1}" == 0 ]] && { printf '[]\n' >"$sd/leftovers.json"; return 0; }
+  while IFS= read -r row; do
+    nn="$(jq -r .nn <<<"$row")"; branch="$(jq -r .branch <<<"$row")"; wt="$(jq -r .worktree <<<"$row")"
+    sess="$(jq -r .session <<<"$row")"; alive="$(jq -r .alive <<<"$row")"; turn="$(jq -r '.last_turn // ""' <<<"$row")"
+    t="$(ticket_json "$nn" 2>/dev/null)" || continue
+    base="$(jq -r '.base // ""' <<<"$t")"
+    dir="$(board_state_dir)/loop/$BOARD_SLUG/$nn"
+    # The session first: nothing is taken from under a turn still under way.
+    if [[ "$alive" == true ]]; then
+      if [[ "$turn" == assistant_done ]] && ! subagents_running "$(runner_status "$sess")" "$sess"; then
+        "$RUNNER" stop "$sess" >/dev/null 2>&1 && echo "TIDIED $nn: stopped its finished session $sess"
+      fi
+      continue
+    fi
+    if command -v "$RUNNER" >/dev/null 2>&1 && [[ -n "$(runner_status "$sess" | jq -r '.name // empty')" ]]; then
+      "$RUNNER" forget "$sess" >/dev/null 2>&1 && echo "TIDIED $nn: forgot its session $sess"
+    fi
+    if [[ -d "$wt" ]] || git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      why="$(only_here "$branch" "$wt" "$base")"
+      if [[ -n "$why" ]]; then
+        left="$(jq -c --arg nn "$nn" --arg title "$(jq -r .title <<<"$row")" --arg b "$branch" --arg wt "$wt" \
+          --arg why "$why" --arg state "$(jq -r .state <<<"$row")" \
+          '. + [{nn: $nn, title: $title, state: $state, branch: $b, worktree: $wt, why: $why}]' <<<"$left")"
+        continue
+      fi
+      if [[ -d "$wt" ]]; then
+        if out="$(git -C "$ROOT" worktree remove --force "$wt" 2>&1)"; then
+          echo "TIDIED $nn: removed its worktree $wt"
+          touch "$dir/.tidied" 2>/dev/null || true
+        else
+          left="$(jq -c --arg nn "$nn" --arg title "$(jq -r .title <<<"$row")" --arg b "$branch" --arg wt "$wt" \
+            --arg why "git worktree remove failed: $(tail -n1 <<<"$out")" --arg state "$(jq -r .state <<<"$row")" \
+            '. + [{nn: $nn, title: $title, state: $state, branch: $b, worktree: $wt, why: $why}]' <<<"$left")"
+          continue
+        fi
+      fi
+      git -C "$ROOT" worktree prune 2>/dev/null || true
+      if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch" \
+         && git -C "$ROOT" branch -D "$branch" >/dev/null 2>&1; then
+        echo "TIDIED $nn: deleted its local branch $branch"
+      fi
+      [[ -d "$dir" ]] && touch "$dir/.tidied" 2>/dev/null
+    fi
+    # Its own files, a few days after the rest went.
+    if [[ -f "$dir/.tidied" && -n "$(find "$dir/.tidied" -mtime "+$keep_days" 2>/dev/null)" ]]; then
+      rm -rf -- "$dir" && echo "TIDIED $nn: removed its files under $dir"
+    fi
+  done < <(jq -c '.[] | select(.state | IN("done", "dropped"))' <<<"$STATES")
+  jq . <<<"$left" >"$sd/leftovers.json.tmp" && mv "$sd/leftovers.json.tmp" "$sd/leftovers.json"
+}
+
 cmd_watch() {
   local usage="usage: loop.sh watch <board> --inbox <dir>"
   local board="${1:?$usage}" inbox=""; shift
@@ -1291,6 +1400,8 @@ cmd_watch() {
     n=$((n + 1))
   done < <(jq -c '.events[]' <<<"$out")
   jq '.seen' <<<"$out" >"$sd/seen.json.tmp" && mv "$sd/seen.json.tmp" "$sd/seen.json"
+  # After the events: a landed ticket's `landed` is written before its worktree goes.
+  [[ -n "$OFFLINE" ]] || tidy_finished "$sd"
   if [[ "$seen" == null ]]; then echo "RECORDED $BOARD_ID — first pass, $(jq length <<<"$now") ticket(s), no events"
   else echo "WATCHED $BOARD_ID — $n event(s)"; fi
   # An offline board this box runs: every pass publishes it (status just wrote

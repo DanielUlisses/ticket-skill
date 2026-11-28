@@ -96,6 +96,9 @@ notification cursor, not ticket state; deleting it only makes the next pass reco
 | `landed` | `done` from anything but dropped |
 | `message` | a thread added a message to its `messages.json` (below) |
 
+`watch` runs from the coordinator's watcher and, since 2026-11-28, from tk-slim on every pass
+(`coordinator-inbox.sh tick`), so events are written whether or not the session keeps its watcher.
+
 Threads talk to each other through it. Each thread's brief (`templates/thread-prompt.md`, *The other threads*)
 lists the board's other open tickets as it started, and a thread that depends on another appends
 `{"to": "<NN>|coordinator", "text": …}` to its own `messages.json` (beside its report; a shared copy with the agent
@@ -166,3 +169,18 @@ lines, the reviewer on `TICKET_REVIEW_*` (`_UNTESTED` for a Seams `None` ticket)
 
 No suite: exercise it on a throwaway repo with a fake `devbox-run` and `gh` on PATH (the PR that added
 it lists the runs).
+
+## Tidying a finished ticket
+
+Each `watch` pass also tidies what a `done` or `dropped` ticket left on the box (`tidy_finished`): a
+session at its prompt is stopped and a stopped one forgotten (`devbox-run forget`); the worktree goes
+(`git worktree remove`) only when `git status` shows nothing in it, and the local branch only when every
+commit on it is on a remote ref or the base, or all its changes are in a commit on the base (a squash
+whose branch the forge deleted). Anything else is kept, never forced, and named in
+`<state>/loop/<board>/leftovers.json`, which tk-slim reports as `health.leftovers` and tk-hub raises as one
+item per box. The ticket's own files beside its report go `TICKET_LOOP_KEEP_DAYS` (default 7) days after
+its worktree; `TICKET_LOOP_TIDY=0` turns tidying off. Until 2026-11-28 only the session was stopped, and
+every landed ticket's worktree stayed.
+
+A thread relays at most `TICKET_LOOP_RELAY_MAX` messages (default 6) an hour to other threads; past that
+they reach the coordinator only, held as a likely loop.
